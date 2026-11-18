@@ -445,5 +445,5 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | # | Status | PR | Notes |
 | --- | --- | --- | --- |
 | M0 | Done | #1 | OCCT, Eigen, Manifold and Qt are optional vcpkg features (decision 0000) |
-| M1 | In review | | Branch `m1-kernel`. OCCT 8.0.1; tolerance findings in decision 0001 |
+| M1 | In review | #2 | Branch `m1-kernel`. OCCT 8.0.1; tolerance findings in decision 0001 |
 | M2–M17 | Not started | | |
