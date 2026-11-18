@@ -1,0 +1,51 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "volumetric-studio",
+  "version-semver": "0.1.0",
+  "description": "Volumetric CAD Studio",
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489",
+  "dependencies": [
+    "blake3",
+    "catch2",
+    "fmt",
+    "nlohmann-json",
+    "spdlog"
+  ],
+  "features": {
+    "kernel": {
+      "description": "Open CASCADE for vs_kernel (M1 onward)",
+      "dependencies": [
+        {
+          "name": "opencascade",
+          "default-features": false
+        }
+      ]
+    },
+    "sketch": {
+      "description": "Eigen for the vendored PlaneGCS solver in vs_sketch (M2 onward)",
+      "dependencies": [
+        "eigen3"
+      ]
+    },
+    "proc": {
+      "description": "Manifold mesh booleans for vs_proc (M12 onward)",
+      "dependencies": [
+        "manifold"
+      ]
+    },
+    "app": {
+      "description": "Qt 6 Widgets for the desktop application (vs_app)",
+      "dependencies": [
+        {
+          "name": "qtbase",
+          "default-features": false,
+          "features": [
+            "gui",
+            "widgets",
+            "opengl"
+          ]
+        }
+      ]
+    }
+  }
+}

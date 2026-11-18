@@ -444,4 +444,5 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 
 | # | Status | PR | Notes |
 | --- | --- | --- | --- |
-| M0–M17 | Not started | | Repo to be created by Dallas |
+| M0 | In review | | Branch `m0-foundations`. OCCT, Eigen, Manifold and Qt are optional vcpkg features (decision 0000) |
+| M1–M17 | Not started | | |

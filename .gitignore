@@ -1,0 +1,13 @@
+# Build output
+/build/
+/out/
+vcpkg_installed/
+
+# Local overrides
+CMakeUserPresets.json
+
+# Editors and IDEs
+.vs/
+.vscode/
+.idea/
+*.user
