@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "kernel_commands.hpp"
 #include "selftest.hpp"
 #include "vs/core/log.hpp"
 #include "vs/core/version.hpp"
@@ -15,6 +16,8 @@ constexpr std::string_view kUsage = R"(usage: vstudio-cli [options] <command> [a
 
 Commands:
   selftest          Run built-in smoke checks of the linked libraries
+  kernel-demo [f]   Build the sample part and write it as STEP (default: kernel-demo.step)
+  tolerance-spike   Run the M1 kernel tolerance spike and print its measurements
   version           Print the version (same as --version)
   help              Print this message
 
@@ -78,6 +81,12 @@ int main(int argc, char** argv) {
   if (command == "selftest") {
     print_version(std::cout);
     return vs::cli::run_selftest(std::cout) ? 0 : 1;
+  }
+  if (command == "kernel-demo") {
+    return vs::cli::run_kernel_demo(rest, std::cout, std::cerr);
+  }
+  if (command == "tolerance-spike") {
+    return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);
   }
 
   std::cerr << "vstudio-cli: unknown command '" << command << "'\n" << kUsage;

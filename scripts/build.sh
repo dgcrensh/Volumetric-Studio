@@ -7,7 +7,10 @@
 #   scripts/build.sh --skip-tests [preset]
 #
 # Needs: git, cmake (3.25+), ninja, a C++20 compiler (GCC 12+ or Clang 16+),
-# and the usual vcpkg prerequisites (curl, zip, unzip, tar, pkg-config).
+# the usual vcpkg prerequisites (curl, zip, unzip, tar, pkg-config), and the
+# OpenGL and X11 development headers that Open CASCADE builds against (on
+# Debian or Ubuntu: libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev
+# libx11-dev libxext-dev libxi-dev libxmu-dev).
 #
 # Uses $VCPKG_ROOT when it is a git clone of vcpkg. Otherwise clones vcpkg into
 # ${XDG_CACHE_HOME:-~/.cache}/vstudio/vcpkg at the commit pinned in vcpkg.json
@@ -24,7 +27,7 @@ for arg in "$@"; do
   case "$arg" in
     --clean) clean=1 ;;
     --skip-tests) skip_tests=1 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     -*) echo "build.sh: unknown option '$arg'" >&2; exit 2 ;;
     *) preset="$arg" ;;
   esac

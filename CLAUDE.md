@@ -18,7 +18,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Preset windows-msvc-
 ```
 
 ```bash
-# Linux (git, cmake 3.25+, ninja, GCC 12+ or Clang 16+, curl, zip, unzip, tar, pkg-config)
+# Linux (git, cmake 3.25+, ninja, GCC 12+ or Clang 16+, curl, zip, unzip, tar, pkg-config,
+# and OpenGL/X11 headers for OCCT: libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev
+# libx11-dev libxext-dev libxi-dev libxmu-dev)
 scripts/build.sh                    # linux-gcc-release
 scripts/build.sh linux-clang-debug
 ```
@@ -27,8 +29,8 @@ Both scripts accept `--clean`/`-Clean` and `--skip-tests`/`-SkipTests`. They
 use `VCPKG_ROOT` if it points at a git clone of vcpkg; otherwise they clone
 vcpkg into a per-user cache (`%LOCALAPPDATA%\vstudio\vcpkg` or
 `~/.cache/vstudio/vcpkg`) at the commit pinned by `builtin-baseline` in
-`vcpkg.json`. The first build installs dependencies and takes several
-minutes; later builds reuse vcpkg's binary cache.
+`vcpkg.json`. The first build installs dependencies; Open CASCADE alone takes
+well over an hour on a desktop. Later builds reuse vcpkg's binary cache.
 
 After the first run, the presets work directly (from a VS developer shell on
 Windows, with `VCPKG_ROOT` set):
@@ -56,6 +58,7 @@ installs only what it uses (see `docs/decisions/0000-optional-vcpkg-features.md`
 `kernel` (OCCT, from M1), `sketch` (Eigen, from M2), `proc` (Manifold, from
 M12) and `app` (Qt). A milestone that starts using one appends it to
 `VCPKG_MANIFEST_FEATURES` in the top-level `CMakeLists.txt`, before `project()`.
+`kernel` is on in every build since M1.
 
 ## Layout
 
@@ -130,6 +133,24 @@ so they are registered. A new library must also be added to
 - **Determinism.** Floating-point contraction (FMA) is off on every compiler.
   Don't hash values that went through libm (`sin`, `cos`, ...) in golden tests;
   they may differ in the last bit between platforms.
+
+## vs_kernel essentials
+
+- **Handles, not OCCT types.** `Shape`, `Solid`, `Shell`, `Face` and `Edge` are
+  cheap, immutable, reference-counted handles. `Solid` may hold several lumps
+  (`solid_count()`). OCCT is linked privately; ctest compiles every public
+  header without it and scans them for `.hxx` includes.
+- **Never throws.** Every operation returns `Result<T>` or `Diagnostics` with a
+  `kernel.*` code. Results of booleans, transforms and fillets have already
+  passed `check_validity`.
+- **Settings in, not constants.** Builders take `ProductSettings` and reject
+  sizes under the minimum feature size and shapes outside the working space.
+  `audit_tolerances()` compares OCCT's per-entity tolerances with the
+  product tolerance; call it after each feature (M3).
+- **Exchange.** STEP (AP242, mm) and IGES go through `exchange.hpp`; calls
+  are serialised because OCCT's exchange layer has global state.
+- **Tolerance findings** are in `docs/decisions/0001-working-space-and-tolerance.md`;
+  `vstudio-cli tolerance-spike` reruns the measurements.
 
 ## Code style
 
