@@ -1,0 +1,73 @@
+{
+  "format": "vstudio.graph",
+  "version": 1,
+  "parameters": [],
+  "nodes": [
+    {
+      "id": "9bbf81da3abeafb0c4394a483409340c",
+      "type": "math.add",
+      "name": "A",
+      "settings": {}
+    },
+    {
+      "id": "edaac646df484b8359109f86cc0870ae",
+      "type": "math.multiply",
+      "name": "B",
+      "settings": {}
+    },
+    {
+      "id": "0fc0449e9823a344f162165a222726f2",
+      "type": "field.constant",
+      "name": "C",
+      "settings": {}
+    },
+    {
+      "id": "9cc66d497a18ccd0a23e0594c159e361",
+      "type": "output",
+      "name": "Output",
+      "settings": {}
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "node": "9bbf81da3abeafb0c4394a483409340c",
+        "port": "value"
+      },
+      "to": {
+        "node": "edaac646df484b8359109f86cc0870ae",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "edaac646df484b8359109f86cc0870ae",
+        "port": "value"
+      },
+      "to": {
+        "node": "9bbf81da3abeafb0c4394a483409340c",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "edaac646df484b8359109f86cc0870ae",
+        "port": "value"
+      },
+      "to": {
+        "node": "0fc0449e9823a344f162165a222726f2",
+        "port": "value"
+      }
+    },
+    {
+      "from": {
+        "node": "0fc0449e9823a344f162165a222726f2",
+        "port": "field"
+      },
+      "to": {
+        "node": "9cc66d497a18ccd0a23e0594c159e361",
+        "port": "contents"
+      }
+    }
+  ]
+}

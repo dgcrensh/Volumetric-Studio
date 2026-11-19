@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "eval_commands.hpp"
+#include "proc_commands.hpp"
 #include "feature_commands.hpp"
 #include "kernel_commands.hpp"
 #include "model_commands.hpp"
@@ -52,6 +53,10 @@ Commands:
                     Evaluate a project with the engine: regenerate what changed, check
                     containment, publish outputs; print statuses, cache use and the
                     output hash. Exits 1 on errors
+  nodes             List the procedural node library: types, ports and properties
+  graph <graph.json>
+                    Check a procedural graph (types, loops, settings) and print its
+                    nodes in evaluation order. Exits 1 on errors
   version           Print the version (same as --version)
   help              Print this message
 
@@ -142,6 +147,12 @@ int main(int argc, char** argv) {
   }
   if (command == "rebuild") {
     return vs::cli::run_rebuild(rest, std::cout, std::cerr);
+  }
+  if (command == "nodes") {
+    return vs::cli::run_nodes(rest, std::cout, std::cerr);
+  }
+  if (command == "graph") {
+    return vs::cli::run_graph(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

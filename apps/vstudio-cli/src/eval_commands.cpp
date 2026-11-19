@@ -13,6 +13,7 @@
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
 #include "vs/model/project.hpp"
+#include "vs/proc/generator.hpp"
 
 namespace vs::cli {
 
@@ -46,6 +47,10 @@ void print(const eval::Evaluation& ev, double ms, std::ostream& out) {
     out << fmt::format("  {:<14} {:<9} {:<12} key {}{}\n", v.name, model::to_string(r.status),
                        how(r), r.key ? r.key->to_hex().substr(0, 12) : std::string("-"),
                        r.stale_contents ? "  (showing stale contents)" : "");
+    if (const proc::FieldContents* fc = proc::field_contents(r)) {
+      const auto& g = fc->samples.grid;
+      out << fmt::format("    field {} x {} x {} samples, {} mm apart\n", g.nx, g.ny, g.nz, g.cell);
+    }
     if (r.contents) {
       for (const auto& o : r.contents->outputs) {
         const model::PublishedOutput* po = v.find_output(o.output);
@@ -148,6 +153,7 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
 
   const auto settings = core::ProductSettings::defaults();
   eval::Engine engine(settings, engine_options);
+  proc::install(engine);  // procedural volumes (M10)
   const std::size_t volumes = loaded->document.volumes.size();
   out << fmt::format("project     {} ({} volume{}, {} thread{}{})\n", loaded->document.name,
                      volumes, volumes == 1 ? "" : "s", engine.pool().size(),

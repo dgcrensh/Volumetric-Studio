@@ -10,6 +10,7 @@ vs_add_application(vstudio-cli
     src/main.cpp
     src/mesh_commands.cpp
     src/model_commands.cpp
+    src/proc_commands.cpp
     src/sketch_commands.cpp
     src/selftest.cpp
     src/validate_commands.cpp
@@ -182,4 +183,26 @@ if(VS_BUILD_TESTS)
   set_tests_properties("vstudio-cli: rebuild evaluates an imported STEP volume" PROPERTIES
     PASS_REGULAR_EXPRESSION "Demo +current +regenerated.*validate\\.overlap\\] 'Base' and 'Demo'.*result +errors"
     FIXTURES_REQUIRED imported_step)
+endif()
+
+if(VS_BUILD_TESTS)
+  set(proc_data "${PROJECT_SOURCE_DIR}/libs/vs_proc/tests/data")
+  add_test(NAME "vstudio-cli: nodes lists the node library" COMMAND vstudio-cli nodes)
+  set_tests_properties("vstudio-cli: nodes lists the node library" PROPERTIES
+    PASS_REGULAR_EXPRESSION "field\\.shell.*in  field: field, thickness: scalar = 1.*input\\.surface.*property surface.*output")
+  add_test(NAME "vstudio-cli: graph checks the sample graph"
+    COMMAND vstudio-cli graph "${proc_data}/shell_and_ball.vgraph.json")
+  set_tests_properties("vstudio-cli: graph checks the sample graph" PROPERTIES
+    PASS_REGULAR_EXPRESSION "graph +6 nodes, 5 edges, 1 parameters.*Shell +field\\.shell.*field <- Boundary\\.field.*thickness <- Wall\\.value.*Output +output.*result +ok")
+  add_test(NAME "vstudio-cli: graph rejects a loop"
+    COMMAND vstudio-cli graph "${proc_data}/loop.vgraph.json")
+  set_tests_properties("vstudio-cli: graph rejects a loop" PROPERTIES
+    PASS_REGULAR_EXPRESSION "proc\\.graph\\.loop.*result +errors")
+  add_test(NAME "vstudio-cli: graph exits 1 on a loop"
+    COMMAND vstudio-cli graph "${proc_data}/loop.vgraph.json")
+  set_tests_properties("vstudio-cli: graph exits 1 on a loop" PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME "vstudio-cli: rebuild samples a procedural volume"
+    COMMAND vstudio-cli rebuild "${proc_data}/shell_and_ball.vsproj" --threads 4 --check-determinism)
+  set_tests_properties("vstudio-cli: rebuild samples a procedural volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Shelled +current +regenerated.*field 41 x 31 x 21 samples, 1 mm apart.*result +ok")
 endif()

@@ -27,11 +27,13 @@
 //                                              holds it; in contents when the
 //                                              document says so)
 //   ConnectionSurface                          ConnectionSurface
-//   Node                                       Node
+//   Node                                       Node (the volume: the first
+//                                              Volume subject after it, M10)
 //   Variable                                   Layout, or Feature when a
 //                                              volume's contents own it
-//   Volume, with a model.contents.* code, or   Contents
-//   an eval.* code (the engine, M9)
+//   Volume, with a model.contents.* code, an   Contents
+//   eval.* code (the engine, M9) or a proc.*
+//   code (a procedural graph, M10)
 //   anything else, or no subject               Layout
 //
 // A diagnostic with no subject routes to the layout as a whole.

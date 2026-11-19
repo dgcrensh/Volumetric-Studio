@@ -58,6 +58,15 @@ using core::Hash256;
 std::optional<Hash256> cache_key(const model::Document& document,
                                  const model::DocumentBuild& layout, std::size_t index);
 
+// Contents made by a generator outside vs_eval (generator.hpp), such as a
+// procedural graph's sampled field (vs_proc, M10). Opaque here: the engine
+// only shares it and hashes it. Immutable once made.
+struct ExtraContents {
+  virtual ~ExtraContents() = default;
+  // A digest of the contents, for output hashes and the determinism check.
+  [[nodiscard]] virtual Hash256 hash() const = 0;
+};
+
 // What one generation of a volume produced. Immutable once made, and
 // shared between the cache, the engine's state and evaluations.
 struct GeneratedContents {
@@ -69,10 +78,11 @@ struct GeneratedContents {
   kernel::Solid solid;                                    // B-rep contents
   std::optional<mesh::Mesh> mesh;                         // static mesh contents
   std::optional<feature::RebuildResult> rebuild;          // parametric, memory only
+  std::shared_ptr<const ExtraContents> extra;             // a generator's, memory only
   std::vector<model::OutputResult> outputs;
   core::Diagnostics diagnostics;  // generation, then containment
   // BLAKE3 of the status, the contents (kernel::shape_hash, or the mesh's
-  // positions and triangles) and the outputs' values: what the
+  // positions and triangles, or the extra contents' hash) and the outputs' values: what the
   // determinism check compares.
   Hash256 output_hash;
 
@@ -105,6 +115,7 @@ class ContentsCache {
 
 // The output hash of contents (see GeneratedContents::output_hash).
 Hash256 output_hash(model::VolumeStatus status, const kernel::Solid& solid,
-                    const mesh::Mesh* mesh, const std::vector<model::OutputResult>& outputs);
+                    const mesh::Mesh* mesh, const std::vector<model::OutputResult>& outputs,
+                    const ExtraContents* extra = nullptr);
 
 }  // namespace vs::eval

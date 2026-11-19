@@ -37,9 +37,10 @@
 //                 last valid contents, marked stale (`stale_contents`), and
 //                 blocks only the volumes downstream of it.
 //   Stale         not regenerated in this evaluation: blocked by a failed
-//                 volume upstream, cancelled, a preview, or contents no
-//                 milestone generates yet (procedural graphs, M10). It
-//                 shows its last valid contents, if any.
+//                 volume upstream, cancelled, a preview, or contents of a
+//                 kind with no generator (procedural graphs, unless vs_proc
+//                 installed one: proc::install(), M10). It shows its last
+//                 valid contents, if any.
 //   Regenerating  only while an evaluation runs (states(), progress).
 //
 // Preview tier. preview() (or `generate = false`) does steps 1 to 3
@@ -82,6 +83,7 @@
 #include "vs/core/settings.hpp"
 #include "vs/eval/cache.hpp"
 #include "vs/eval/cancel.hpp"
+#include "vs/eval/generator.hpp"
 #include "vs/eval/thread_pool.hpp"
 #include "vs/mesh/combine.hpp"
 #include "vs/model/build.hpp"
@@ -185,6 +187,11 @@ class Engine {
   // Forgets every volume's last valid contents and the memory cache.
   void reset();
 
+  // Generates contents of `kind` with `generator` (generator.hpp) from now
+  // on; null removes it. Not while an evaluation runs.
+  void set_generator(model::VolumeKind kind, std::shared_ptr<ContentsGenerator> generator);
+  [[nodiscard]] std::shared_ptr<ContentsGenerator> generator(model::VolumeKind kind) const;
+
  private:
   ProductSettings settings_;
   EngineOptions options_;
@@ -194,6 +201,7 @@ class Engine {
   mutable std::mutex state_mutex_;
   std::map<Id, VolumeStatus> states_;
   std::map<Id, ContentsPtr> last_valid_;
+  std::map<model::VolumeKind, std::shared_ptr<ContentsGenerator>> generators_;
 };
 
 // The determinism check on its own: evaluates `project` with fresh engines
