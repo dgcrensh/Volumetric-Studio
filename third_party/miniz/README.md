@@ -1,8 +1,9 @@
 # miniz (vendored)
 
 Deflate and zip archives for `.vsproj` zip files, used by `vs_model`'s
-`src/zip.cpp`. Only `vs_model` links it, privately; no public header outside
-this directory includes it.
+`src/zip.cpp`, and for 3MF packages, used by `vs_mesh`'s `src/io.cpp`
+(M8). Both link it privately; no public header outside this directory
+includes it.
 
 - **Source:** miniz 3.0.2, the amalgamated `miniz.c` and `miniz.h` from the
   release asset `miniz-3.0.2.zip`
@@ -14,4 +15,4 @@ this directory includes it.
 
 It is vendored rather than a vcpkg port because cloud sessions can't
 download vcpkg port sources (decision 0006). To update it, replace the two
-files in `src/` with those of a newer release and rerun `vs_model_tests`.
+files in `src/` with those of a newer release and rerun `vs_model_tests` and `vs_mesh_tests`.

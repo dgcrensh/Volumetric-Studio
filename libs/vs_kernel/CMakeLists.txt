@@ -9,7 +9,7 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 # The OCCT toolkits vs_kernel uses, bottom up.
 set(VS_KERNEL_OCCT_TOOLKITS
   TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKPrim
-  TKShHealing TKBO TKBool TKFillet TKOffset TKFeat TKXSBase TKDE TKDESTEP TKDEIGES)
+  TKShHealing TKMesh TKBO TKBool TKFillet TKOffset TKFeat TKXSBase TKDE TKDESTEP TKDEIGES)
 
 vs_add_library(vs_kernel
   SOURCES
@@ -21,6 +21,7 @@ vs_add_library(vs_kernel
     src/primitives.cpp
     src/queries.cpp
     src/shape.cpp
+    src/tessellate.cpp
     src/tolerance_spike.cpp
   PUBLIC_LINKS
     vs::vs_core
@@ -37,6 +38,7 @@ vs_add_library_tests(vs_kernel
     tests/test_queries.cpp
     tests/test_shape.cpp
     tests/test_sweep_loft_shell.cpp
+    tests/test_tessellate.cpp
     tests/test_tolerance_spike.cpp)
 
 if(VS_BUILD_TESTS)

@@ -21,7 +21,8 @@
 //   4. removes internal faces: a seam triangle that two different volumes
 //      both have, facing opposite ways, is where they are bonded, so both
 //      copies go. A one-sided surface (a volume and the outside) keeps its
-//      triangles;
+//      triangles. Hole fills (Seam::hole_fills, where neither volume has
+//      the hole) pair off the same way;
 //   5. drops vertices no triangle uses (the patch's interior) and checks
 //      the result is watertight and manifold (topology.hpp).
 //

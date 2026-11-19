@@ -125,9 +125,14 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
   // 3. Conformity, per seam and volume.
   // Each seam's triangles, as sorted seam vertex indices.
   std::vector<std::vector<std::array<std::uint32_t, 3>>> expected(lib.seams.size());
+  std::vector<std::vector<std::array<std::uint32_t, 3>>> fills(lib.seams.size());
   for (std::uint32_t s = 0; s < lib.seams.size(); ++s) {
     for (const Triangle& t : lib.seams[s].triangles) expected[s].push_back(sorted(t));
     std::sort(expected[s].begin(), expected[s].end());
+    for (const auto& fill : lib.seams[s].hole_fills) {
+      for (const Triangle& t : fill) fills[s].push_back(sorted(t));
+    }
+    std::sort(fills[s].begin(), fills[s].end());
   }
   // Seam triangles: one of a seam's triangles, all three corners on it.
   // Other triangles may join three seam vertices too (a ring round a
@@ -135,6 +140,7 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
   // +1 when it winds like the seam's triangulation (counter-clockwise
   // about the normal), -1 when turned, 0 when flat.
   std::vector<std::uint32_t> tri_seam(out.triangle_count(), kNoSeam);
+  std::vector<bool> tri_fill(out.triangle_count(), false);  // one of a seam's hole fills
   std::vector<int> tri_side(out.triangle_count(), 0);
   // (seam, volume) -> the seam triangles it has, and which way each faces.
   std::map<std::pair<std::uint32_t, Id>, std::vector<std::pair<std::array<std::uint32_t, 3>, int>>>
@@ -144,14 +150,20 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
     const std::uint32_t s = seam_of[tri[0]];
     if (s == kNoSeam || seam_of[tri[1]] != s || seam_of[tri[2]] != s) continue;
     const auto corners = sorted({seam_index[tri[0]], seam_index[tri[1]], seam_index[tri[2]]});
-    if (!std::binary_search(expected[s].begin(), expected[s].end(), corners)) continue;
+    const bool is_seam = std::binary_search(expected[s].begin(), expected[s].end(), corners);
+    const bool is_fill = !is_seam && std::binary_search(fills[s].begin(), fills[s].end(), corners);
+    if (!is_seam && !is_fill) continue;
     const Seam& seam = lib.seams[s];
     const dvec2& a = seam.vertices[seam_index[tri[0]]].uv;
     const dvec2& b = seam.vertices[seam_index[tri[1]]].uv;
     const dvec2& c = seam.vertices[seam_index[tri[2]]].uv;
     const double o = core::cross(b - a, c - a);
-    tri_seam[t] = s;
     tri_side[t] = o > 0 ? 1 : (o < 0 ? -1 : 0);
+    if (is_fill) {
+      tri_fill[t] = true;
+      continue;
+    }
+    tri_seam[t] = s;
     observed[{s, out.triangle_volumes[t]}].emplace_back(corners, tri_side[t]);
   }
   for (std::uint32_t s = 0; s < lib.seams.size(); ++s) {
@@ -198,10 +210,11 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
     }
   }
 
-  // 4. Internal faces: a seam triangle two volumes share, facing opposite ways.
+  // 4. Internal faces: a seam triangle (or hole fill triangle) two volumes
+  // share, facing opposite ways.
   std::map<std::array<std::uint32_t, 3>, std::vector<std::uint32_t>> by_corners;
   for (std::uint32_t t = 0; t < out.triangle_count(); ++t) {
-    if (tri_seam[t] != kNoSeam) by_corners[sorted(out.triangle(t))].push_back(t);
+    if (tri_seam[t] != kNoSeam || tri_fill[t]) by_corners[sorted(out.triangle(t))].push_back(t);
   }
   std::vector<bool> keep(out.triangle_count(), true);
   for (const auto& [corners, ts] : by_corners) {

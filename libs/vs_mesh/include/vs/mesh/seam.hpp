@@ -136,6 +136,12 @@ struct Seam {
   std::size_t outline_vertex_count = 0;
   std::vector<SeamLoop> loops;   // [0] outer (counter-clockwise), then holes (clockwise)
   std::vector<Triangle> triangles;  // counter-clockwise about the normal
+  // hole_fills[h - 1] covers hole loops[h] with triangles over its own
+  // vertices only (counter-clockwise about the normal): what a volume
+  // whose face has no hole there uses to close it (M8). Two volumes that
+  // both fill a hole fill it identically, so the weld removes the pair as
+  // it does the seam's own triangles.
+  std::vector<std::vector<Triangle>> hole_fills;
 
   [[nodiscard]] dvec3 normal() const { return frame.normal(); }
   // The index of the vertex with this id, if it is one of this seam's.

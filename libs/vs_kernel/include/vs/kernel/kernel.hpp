@@ -11,4 +11,5 @@
 #include "vs/kernel/primitives.hpp"
 #include "vs/kernel/queries.hpp"
 #include "vs/kernel/shape.hpp"
+#include "vs/kernel/tessellate.hpp"
 #include "vs/kernel/tolerance_spike.hpp"

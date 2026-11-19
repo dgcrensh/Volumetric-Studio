@@ -111,3 +111,36 @@ if(VS_BUILD_TESTS)
     COMMAND vstudio-cli seams "${CMAKE_CURRENT_BINARY_DIR}/no-such.vsproj")
   set_tests_properties("vstudio-cli: seams fails on a missing project" PROPERTIES WILL_FAIL TRUE)
 endif()
+
+if(VS_BUILD_TESTS)
+  set(bracket_project "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj")
+  add_test(NAME "vstudio-cli: export writes the bracket as one watertight 3MF"
+    COMMAND vstudio-cli export "${bracket_project}" --3mf "${CMAKE_CURRENT_BINARY_DIR}/bracket.3mf"
+            --stl "${CMAKE_CURRENT_BINARY_DIR}/bracket.stl")
+  set_tests_properties("vstudio-cli: export writes the bracket as one watertight 3MF" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Base +[0-9]+ triangles, 1 seam.*Upright +[0-9]+ triangles, 1 seam.*combined +[0-9]+ triangles, [0-9]+ vertices, 1 shell, watertight yes, manifold yes, volume 48000 mm.*wrote.*STL.*wrote.*3MF, 1 object.*result +ok")
+  add_test(NAME "vstudio-cli: export writes one 3MF object per volume"
+    COMMAND vstudio-cli export "${bracket_project}" --per-volume
+            --3mf "${CMAKE_CURRENT_BINARY_DIR}/bracket-volumes.3mf")
+  set_tests_properties("vstudio-cli: export writes one 3MF object per volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "3MF, 2 objects.*result +ok")
+  add_test(NAME "vstudio-cli: export needs a format"
+    COMMAND vstudio-cli export "${bracket_project}")
+  set_tests_properties("vstudio-cli: export needs a format" PROPERTIES WILL_FAIL TRUE)
+
+  # import, then export what it made: the imported volume is its own shell.
+  add_test(NAME "vstudio-cli: import adds a mesh as a static volume"
+    COMMAND vstudio-cli import "${bracket_project}"
+            "${PROJECT_SOURCE_DIR}/libs/vs_mesh/tests/data/hex_prism.stl" --name Hex
+            --out "${CMAKE_CURRENT_BINARY_DIR}/imported.vsproj")
+  set_tests_properties("vstudio-cli: import adds a mesh as a static volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "imported +hex_prism.stl as static volume 'Hex'"
+    FIXTURES_SETUP imported_project)
+  add_test(NAME "vstudio-cli: export includes an imported mesh volume"
+    COMMAND vstudio-cli export "${CMAKE_CURRENT_BINARY_DIR}/imported.vsproj"
+            --stl "${CMAKE_CURRENT_BINARY_DIR}/imported.stl")
+  set_tests_properties("vstudio-cli: export includes an imported mesh volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Hex +20 triangles, 0 seams.*combined.* 2 shells, watertight yes, manifold yes.*result +ok"
+    FIXTURES_REQUIRED imported_project)
+endif()
+
