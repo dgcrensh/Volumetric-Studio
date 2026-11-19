@@ -201,7 +201,7 @@ TEST_CASE("Broken graph JSON fails the volume", "[proc][engine]") {
   CHECK(target.volume == b.volumes[0]);
 }
 
-TEST_CASE("Field contents measure nothing yet", "[proc][engine]") {
+TEST_CASE("Procedural contents are a mesh that measures nothing yet", "[proc][engine]") {
   auto b = scenes::boxes({scenes::shell_and_ball().graph});
   eval::Engine engine(kSettings, threads(1));
   install(engine);
@@ -212,5 +212,7 @@ TEST_CASE("Field contents measure nothing yet", "[proc][engine]") {
   REQUIRE(c->outputs.size() == 1);
   CHECK_FALSE(c->outputs[0].value.has_value());
   CHECK(c->solid.is_empty());
-  CHECK_FALSE(c->mesh.has_value());
+  REQUIRE(c->mesh.has_value());  // M11
+  CHECK_FALSE(c->mesh->empty());
+  CHECK(contents_mesh(ev.volumes[0]) == &*c->mesh);
 }

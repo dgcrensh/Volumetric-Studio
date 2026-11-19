@@ -21,8 +21,12 @@
 // the pool's tasks runs inline, so results never depend on the thread
 // count.
 //
-// Generated contents with only `extra` set aren't checked for containment
-// (the engine knows no geometry in them) and never go to the disk cache.
+// Generated contents with a `mesh` (vs_proc's, from M11) are checked for
+// containment like a static mesh, and go into the combined mesh as they
+// are (mesh::combine()'s `generated`), so they must already conform to
+// the seams of the surfaces joining the volume. Contents with only `extra`
+// set aren't checked (the engine knows no geometry in them). Generated
+// contents never go to the disk cache.
 
 #include <cstddef>
 #include <functional>

@@ -63,8 +63,11 @@ core::Result<SeamOutline> seam_outline(const model::ConnectionSurface& surface,
                                        const model::ConnectionBuild& build);
 
 // One seam for every surface that needs one and was built; surfaces whose
-// build failed are skipped (model::build() has already said why).
+// build failed are skipped (model::build() has already said why). With
+// `volume`, only the surfaces joining that volume (a mesher's own seams,
+// identical to the library's).
 SeamLibrary build_seams(const model::Document& document, const model::DocumentBuild& build,
-                        const core::ProductSettings& settings);
+                        const core::ProductSettings& settings,
+                        const std::optional<core::Id>& volume = std::nullopt);
 
 }  // namespace vs::mesh

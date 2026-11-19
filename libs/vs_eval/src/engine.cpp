@@ -444,7 +444,17 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
 
   // 5. weld
   if (options.weld && options.generate && !ev.cancelled) {
-    ev.combined = mesh::combine(ev.document, ev.build, &project.blobs, settings_, options.combine);
+    // Meshes a generator made (procedural contents) go in as they are.
+    mesh::GeneratedMeshes generated;
+    for (std::size_t i = 0; i < n; ++i) {
+      const VolumeResult& r = ev.volumes[i];
+      if (r.contents && r.contents->mesh &&
+          !std::holds_alternative<model::StaticContents>(ev.document.volumes[i].contents)) {
+        generated.emplace(r.volume, &*r.contents->mesh);
+      }
+    }
+    ev.combined = mesh::combine(ev.document, ev.build, &project.blobs, settings_, options.combine,
+                                generated);
     ev.diagnostics.append(ev.combined->diagnostics);
   }
 

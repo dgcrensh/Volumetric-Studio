@@ -7,7 +7,9 @@
 
 #include <fmt/format.h>
 
+#include "vs/mesh/topology.hpp"
 #include "vs/proc/field.hpp"
+#include "vs/proc/mesher.hpp"
 
 namespace vs::proc {
 
@@ -566,11 +568,65 @@ void add_lists(NodeRegistry& r) {
              }));
 }
 
+void add_conversions(NodeRegistry& r) {
+  r.add(make(
+      "convert.field_to_mesh", "convert",
+      "Meshes a field's region (where it is negative) by surface nets on a grid over the "
+      "boundary's box, `cell_size` apart (0: 64 cells along its longest side). The cost grows "
+      "with the cube of 1 / cell_size; `samples` says how many grid points it evaluated",
+      {in("field", P::Field), in("cell_size", P::Scalar, num(0))},
+      {out("mesh", P::Mesh), out("samples", P::Scalar, "grid points evaluated (the cost)"),
+       out("triangles", P::Scalar)},
+      [](NodeContext& ctx) {
+        const double cell = ctx.scalar("cell_size");
+        if (!(cell >= 0.0) || !std::isfinite(cell)) {
+          ctx.infeasible({"cell_size"}, "the cell size can't be negative");
+          return;
+        }
+        if (cell > 0.0 && !check_size(ctx, "cell_size", cell)) return;
+        auto grid = grid_covering(ctx.inputs().bounds, cell);
+        if (!grid) {
+          if (grid.error().code == "proc.sample.too_large") {
+            ctx.infeasible({"cell_size"}, grid.error().message);
+          } else {
+            ctx.fail(grid.error().message);
+          }
+          return;
+        }
+        const SampledField samples = sample(*ctx.field("field"), *grid, ctx.pool());
+        auto m = std::make_shared<mesh::Mesh>(to_mesh(surface_nets(samples), ctx.inputs().volume));
+        const auto triangles = static_cast<double>(m->triangle_count());
+        ctx.set("mesh", MeshValue(std::move(m)));
+        ctx.set("samples", static_cast<double>(grid->size()));
+        ctx.set("triangles", triangles);
+      }));
+  r.add(make(
+      "convert.mesh_to_field", "convert",
+      "Distance to a mesh, found with a bounding volume hierarchy: signed (negative inside) when "
+      "the mesh is closed and manifold, unsigned otherwise",
+      {in("mesh", P::Mesh)},
+      {out("field", P::Field), out("closed", P::Scalar, "1 when the distance is signed")},
+      [](NodeContext& ctx) {
+        const MeshValue& m = std::get<MeshValue>(ctx.input("mesh"));
+        if (!m || m->empty()) {
+          ctx.infeasible({"mesh"}, "the mesh is empty");
+          return;
+        }
+        const mesh::TopologyReport topology = mesh::analyse(*m);
+        const bool closed = topology.watertight() && topology.manifold();
+        auto distance = std::make_shared<const TriangleDistance>(*m, closed);
+        ctx.set("field", closed ? mesh_signed_field(std::move(distance))
+                                : mesh_unsigned_field(std::move(distance)));
+        ctx.set("closed", closed ? 1.0 : 0.0);
+      }));
+}
+
 void add_output(NodeRegistry& r) {
-  r.add(make("output", "output", "The volume's contents", {in("contents", P::Field)}, {},
-             [](NodeContext&) {},
+  r.add(make("output", "output", "The volume's contents, meshed against its boundary and seams",
+             {in("contents", P::Field)}, {}, [](NodeContext&) {},
              {{"cell_size", PropertyKind::Number, Setting(0.0), {},
-               "the sampling grid's cell, mm (0: 64 cells along the boundary's longest side)"}}));
+               "the sampling and meshing grid's cell, mm (0: 64 cells along the boundary's "
+               "longest side)"}}));
 }
 
 NodeRegistry make_library() {
@@ -583,6 +639,7 @@ NodeRegistry make_library() {
   add_logic(r);
   add_vector(r);
   add_lists(r);
+  add_conversions(r);
   add_output(r);
   return r;
 }

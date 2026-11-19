@@ -1,7 +1,7 @@
 # vs_proc: procedural node graphs (M10: graph model, type system, node
-# library, fields and sampling, the engine's procedural generator; M11
-# meshes fields, M12 adds the rest of the node library and baking). See
-# include/vs/proc/*.hpp and docs/decisions/0010.
+# library, fields and sampling, the engine's procedural generator; M11:
+# field-to-mesh against seams; M12 adds the rest of the node library and
+# baking). See include/vs/proc/*.hpp and docs/decisions/0010 and 0011.
 
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -14,6 +14,7 @@ vs_add_library(vs_proc
     src/generator.cpp
     src/graph.cpp
     src/inputs.cpp
+    src/mesher.cpp
     src/module.cpp
     src/nodes.cpp
     src/types.cpp
@@ -39,6 +40,8 @@ vs_add_library_tests(vs_proc
     tests/test_engine.cpp
     tests/test_field.cpp
     tests/test_graph.cpp
+    tests/test_mesh_acceptance.cpp
+    tests/test_mesher.cpp
     tests/test_module.cpp
     tests/test_nodes.cpp)
 

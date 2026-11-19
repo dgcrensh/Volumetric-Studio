@@ -43,6 +43,7 @@
 //   logic.compare, logic.and, logic.or, logic.not, logic.select
 //   vector.compose, .decompose, .add, .scale, .length
 //   list.range, list.sum, list.count, list.get
+//   convert.field_to_mesh, convert.mesh_to_field             conversions (M11)
 //   output                                                   the contents
 //
 // Input and query nodes read the volume's inputs; they are cheap and never

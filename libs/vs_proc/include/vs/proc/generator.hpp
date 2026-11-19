@@ -8,21 +8,25 @@
 // procedural volume the engine regenerates, it
 //
 //   1. (prepare, calling thread) parses the graph's JSON, checks it against
-//      the document (check_volume_graph()) and gathers its inputs
-//      (gather_inputs(), which tessellates the boundary and patches);
+//      the document (check_volume_graph()), gathers its inputs
+//      (gather_inputs(), which tessellates the boundary and patches) and
+//      makes the seams of the surfaces joining the volume (M11);
 //   2. (job, worker thread) evaluates the graph with the generator's node
-//      cache and samples the contents field on the grid covering the
-//      boundary's bounding box.
+//      cache, samples the contents field on the grid covering the
+//      boundary's bounding box, and meshes it (mesher.hpp: clipped to the
+//      boundary, surface nets, seams stitched in).
 //
-// The result is FieldContents (an eval::ExtraContents): the field and its
-// samples. Its hash covers the samples and the grid, which is what the
-// engine's output hashes and determinism check compare. Field contents
-// have no geometry yet, so there's no containment check and published
-// outputs have no value until meshing (M11) and measuring (M12).
+// The result is the mesh (GeneratedContents::mesh), which the engine
+// checks for containment and the weld takes as it is, plus FieldContents
+// (an eval::ExtraContents): the field and its samples. The output hash
+// covers the mesh, the samples and the grid, which is what the engine's
+// output hashes and determinism check compare. Published outputs have no
+// value until measuring (M12).
 //
 // Codes (the volume last unless said otherwise):
 //   proc.json.*, proc.graph.*, proc.reference.*, proc.input.*, proc.node.*
 //   proc.sample.*            the grid (output node first)
+//   proc.mesh.*              the mesh (mesher.hpp)
 //
 // A job, once started, runs to the end, like a kernel operation: the
 // engine's cancellation starts no new volumes, and a finished job's
@@ -31,17 +35,21 @@
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <vector>
 
 #include "vs/eval/engine.hpp"
 #include "vs/eval/generator.hpp"
 #include "vs/proc/evaluate.hpp"
 #include "vs/proc/field.hpp"
+#include "vs/proc/mesher.hpp"
 
 namespace vs::proc {
 
 struct FieldContents final : eval::ExtraContents {
   Field field;
-  SampledField samples;
+  SampledField samples;                // the contents field, not clipped
+  std::vector<core::Id> stitched;      // surfaces whose seams the mesh conforms to
+  std::size_t moved_vertices = 0;      // moved inward for containment (mesher.hpp)
   [[nodiscard]] Hash256 hash() const override;
 };
 
@@ -70,5 +78,7 @@ std::shared_ptr<ProceduralGenerator> install(eval::Engine& engine);
 
 // The field contents a volume shows, if it has any.
 const FieldContents* field_contents(const eval::VolumeResult& result);
+// The mesh a volume shows (procedural or static), if it has one.
+const mesh::Mesh* contents_mesh(const eval::VolumeResult& result);
 
 }  // namespace vs::proc

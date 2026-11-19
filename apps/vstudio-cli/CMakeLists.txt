@@ -204,5 +204,10 @@ if(VS_BUILD_TESTS)
   add_test(NAME "vstudio-cli: rebuild samples a procedural volume"
     COMMAND vstudio-cli rebuild "${proc_data}/shell_and_ball.vsproj" --threads 4 --check-determinism)
   set_tests_properties("vstudio-cli: rebuild samples a procedural volume" PROPERTIES
-    PASS_REGULAR_EXPRESSION "Shelled +current +regenerated.*field 41 x 31 x 21 samples, 1 mm apart.*result +ok")
+    PASS_REGULAR_EXPRESSION "Shelled +current +regenerated.*field 41 x 31 x 21 samples, 1 mm apart.*mesh [0-9]+ triangles.*result +ok")
+  add_test(NAME "vstudio-cli: rebuild meshes a procedural volume and writes STL"
+    COMMAND vstudio-cli rebuild "${proc_data}/shell_and_ball.vsproj" --stl
+            "${CMAKE_CURRENT_BINARY_DIR}/shell_and_ball.stl")
+  set_tests_properties("vstudio-cli: rebuild meshes a procedural volume and writes STL" PROPERTIES
+    PASS_REGULAR_EXPRESSION "weld +[0-9]+ triangles, 3 shells, watertight yes, manifold yes.*wrote .*shell_and_ball\\.stl.*result +ok")
 endif()

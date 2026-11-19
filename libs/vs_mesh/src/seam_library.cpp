@@ -1,5 +1,6 @@
 #include "vs/mesh/seam_library.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -100,13 +101,18 @@ Result<SeamOutline> seam_outline(const model::ConnectionSurface& surface,
 }
 
 SeamLibrary build_seams(const model::Document& document, const model::DocumentBuild& build,
-                        const core::ProductSettings& settings) {
+                        const core::ProductSettings& settings,
+                        const std::optional<core::Id>& volume) {
   SeamLibrary library;
   for (const model::Volume& v : document.volumes) {
     library.volume_names.emplace(v.id, document.volume_subject(v.id).label);
   }
   for (const model::ConnectionSurface& surface : document.connections) {
     if (surface.type() == model::ConnectionType::Clearance) continue;
+    if (volume && std::find(surface.volumes.begin(), surface.volumes.end(), *volume) ==
+                      surface.volumes.end()) {
+      continue;
+    }
     const model::ConnectionBuild* cb = build.find_connection(surface.id);
     if (cb == nullptr || !cb->ok || cb->patch.is_empty()) continue;
     Result<SeamOutline> outline = seam_outline(surface, *cb);

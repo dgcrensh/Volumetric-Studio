@@ -14,8 +14,11 @@
 //     weld as non-conforming, naming the surface;
 //   - a placeholder is left out, or with `placeholders` set its boundary is
 //     tessellated instead (a blocked-out layout, for a quick print);
-//   - anything else (procedural contents, which M10 generates, or a volume
-//     whose build failed) is left out with an info.
+//   - generated meshes (procedural contents, M11) come from the caller,
+//     which made them (vs_eval's engine, from vs_proc's generator) already
+//     conforming to the seams: `generated` maps a volume to its mesh;
+//   - anything else (procedural contents with no mesh, or a volume whose
+//     build failed) is left out with an info.
 //
 // The seams come from build_seams(); the weld (weld.hpp) joins everything
 // and checks it is watertight and manifold. Each volume's own mesh is
@@ -28,6 +31,7 @@
 //   mesh.combine.empty        no volume has geometry to mesh
 //   mesh.io.*, mesh.tessellate.*, mesh.seam.*, mesh.weld.*   passed through
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -66,8 +70,11 @@ struct CombinedMesh {
   [[nodiscard]] bool ok() const { return !diagnostics.has_errors(); }
 };
 
+// Meshes made outside vs_mesh, by volume (see above).
+using GeneratedMeshes = std::map<core::Id, const Mesh*>;
+
 CombinedMesh combine(const model::Document& document, const model::DocumentBuild& build,
                      const model::BlobStore* blobs, const core::ProductSettings& settings,
-                     const CombineOptions& options = {});
+                     const CombineOptions& options = {}, const GeneratedMeshes& generated = {});
 
 }  // namespace vs::mesh

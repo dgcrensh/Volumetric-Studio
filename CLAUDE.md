@@ -409,7 +409,7 @@ so they are registered. A new library must also be added to
   evaluates from a `NodeContext` (inputs, properties, graph inputs,
   derived seed); `infeasible(ports, msg)` / `fail(msg)` report
   `proc.node.*` naming the node, its inputs and the volume. `library()`
-  has input, query, field, math, logic, vector and list nodes; `vstudio-cli
+  has input, query, field, math, logic, vector, list and convert nodes; `vstudio-cli
   nodes` lists them.
 - **Inputs and evaluation** (`inputs.hpp`, `evaluate.hpp`):
   `gather_inputs()` tessellates the boundary and joining patches on the
@@ -417,12 +417,25 @@ so they are registered. A new library must also be added to
   a `NodeCache` keyed by type, settings, seed and input hashes (input and
   query nodes always run).
 - **Engine** (`generator.hpp`): `proc::install(engine)` registers the
-  procedural `eval::ContentsGenerator`; contents are `FieldContents`
-  (field and samples, `field_contents()`), with no containment check or
-  output values until M11/M12. Decision 0010.
-- **Tests** build box rows in code (`tests/scenes.*`); sample files in
+  procedural `eval::ContentsGenerator`; contents are a mesh
+  (`GeneratedContents::mesh`, `contents_mesh()`), which the engine checks
+  for containment and welds as it is, plus `FieldContents` (field,
+  samples, stitched surfaces; `field_contents()`). Outputs have no value
+  until M12. Decision 0010.
+- **Meshing** (`mesher.hpp`, M11): `surface_nets()` is surface nets on
+  the grid's tetrahedra (always closed and manifold), merged per cube by
+  link-condition edge collapses. `mesh_contents()` clips the field
+  `kContentsInset` inside the boundary, meshes it, replaces each joining
+  seam's patch with the seam's triangles stitched to the rim (or warns
+  `proc.mesh.seam_uncovered`), then moves vertices inward until every
+  vertex and centroid is contained. `convert.field_to_mesh` (with its
+  `samples` cost) and `convert.mesh_to_field` convert inside graphs.
+  `mesh::combine()` takes generated meshes from the engine. Decision 0011.
+- **Tests** build box rows in code (`tests/scenes.*`, and `mixed()`: a
+  procedural box bonded or bolted to a parametric one); sample files in
   `tests/data` (regenerate with `vs_proc_tests "[.generate]"`);
-  `vstudio-cli graph <file>` checks one.
+  `vstudio-cli graph <file>` checks one; `rebuild --stl <out>` writes the
+  welded mesh.
 
 ## Code style
 
