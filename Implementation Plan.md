@@ -452,5 +452,5 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | M5 | Done | #7 | First milestone from a cloud session. Connection surface types fixed, contents see inputs through `ExternalInputs`, stored-only zips (decision 0005; deflated since M6) |
 | M6 | Done | #8 | Overlap depth is the region's thinnest side, edge-only touches warn, a fifth routing target (contents), meshes checked through a view, miniz vendored for deflated zips (decision 0006) |
 | M7 | Done | #9 | Spacing set per surface (derived: a sixteenth of the diagonal), own constrained Delaunay triangulator, clearance surfaces get no seam, flange bolt holes are seam holes, weld removes paired seam faces (decision 0007) |
-| M8 | In review | | BRepMesh's points, re-triangulated where seams meet faces; vertices between seam vertices snap; seams carry hole fills for holes a solid doesn't have; own 3MF writer and reader over miniz (decision 0008) |
+| M8 | In review | | BRepMesh's points, re-triangulated where seams meet faces; vertices between seam vertices snap; seams carry hole fills for holes a solid doesn't have; own 3MF writer and reader over miniz (decision 0008); the bracket's 3MF was opened in a slicer by hand on Nov 19, 2026 and loaded cleanly |
 | M9–M17 | Not started | | |

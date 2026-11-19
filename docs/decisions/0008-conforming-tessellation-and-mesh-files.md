@@ -118,5 +118,5 @@ volume whose boundary is its bounding box, between two new datum points.
   bracket exports a single watertight, manifold 3MF of exactly 48,000 mm³
   that reads back bit for bit (and an independent Python check of the
   file agrees); the sample STL imports with 20 triangles and its bounds.
-- Not checked here: opening the exported 3MF in a slicer, which the plan
-  asks for once, by hand.
+- Checked by hand once, as the plan asks: the exported bracket 3MF opens
+  cleanly in a slicer (Nov 19, 2026).
