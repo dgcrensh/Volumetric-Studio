@@ -7,6 +7,7 @@
 
 #include "feature_commands.hpp"
 #include "kernel_commands.hpp"
+#include "model_commands.hpp"
 #include "sketch_commands.hpp"
 #include "selftest.hpp"
 #include "vs/core/log.hpp"
@@ -24,6 +25,9 @@ Commands:
                     Solve a sketch file, report it and its profiles, optionally write it
   build <in.json> [out.step]
                     Rebuild a feature tree file, report it, optionally write the body as STEP
+  info <project.vsproj> [--build]
+                    Print a project's volumes, connection surfaces and dependencies;
+                    with --build, also build it and print statuses and outputs
   version           Print the version (same as --version)
   help              Print this message
 
@@ -96,6 +100,9 @@ int main(int argc, char** argv) {
   }
   if (command == "build") {
     return vs::cli::run_build(rest, std::cout, std::cerr);
+  }
+  if (command == "info") {
+    return vs::cli::run_info(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

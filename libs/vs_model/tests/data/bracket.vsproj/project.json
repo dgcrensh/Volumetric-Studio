@@ -1,0 +1,791 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "d787621ece2ca2621020dbd059c890c1",
+    "name": "Bracket",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [
+        {
+          "id": "2d66d293f148983cd4794a7580cc87fd",
+          "name": "width",
+          "expression": "60 mm"
+        },
+        {
+          "id": "f78146911ddc9131da158c81bc9671be",
+          "name": "depth",
+          "expression": "40 mm"
+        },
+        {
+          "id": "312895577399d3725dd0f99c38253316",
+          "name": "base_h",
+          "expression": "10 mm"
+        },
+        {
+          "id": "3433cec2d379e0c0c211154232f92af6",
+          "name": "upright_t",
+          "expression": "10 mm"
+        },
+        {
+          "id": "8a68f4b8e86b74bd2d9080e91bea372c",
+          "name": "upright_h",
+          "expression": "40 mm"
+        }
+      ],
+      "features": [
+        {
+          "id": "a938a0ad366fc0564f9bb447f4f6fc08",
+          "type": "sketch",
+          "plane": {
+            "principal": "xy"
+          },
+          "sketch": {
+            "constraints": [
+              {
+                "id": "481c8881890fd826165f6a0fbf57e499",
+                "refs": [
+                  "e5169a0673ffb27b4019285ee50cfa02"
+                ],
+                "type": "fix"
+              },
+              {
+                "id": "73606d406af1992216153b49796b4bdd",
+                "refs": [
+                  "364203a8fb12a418377f2ea79f848f59"
+                ],
+                "type": "horizontal"
+              },
+              {
+                "id": "7459b05287e4ab251f8d03f430c111c1",
+                "refs": [
+                  "7cb623ebdc0ddb09f6e5608c7f698860"
+                ],
+                "type": "horizontal"
+              },
+              {
+                "id": "1329fc45b1296da6548c89e3879591e2",
+                "refs": [
+                  "f009cdfc18808568dbfcdac1e3286267"
+                ],
+                "type": "vertical"
+              },
+              {
+                "id": "fe6979f1cfff3bde8d880f02b7490789",
+                "refs": [
+                  "0a17d5252b884676afdb6ee3ae8967fb"
+                ],
+                "type": "vertical"
+              },
+              {
+                "expression": "width",
+                "id": "b4590e03de45fa6962df5483a3011dd2",
+                "refs": [
+                  "364203a8fb12a418377f2ea79f848f59"
+                ],
+                "type": "distance",
+                "value": 60.0
+              },
+              {
+                "expression": "depth",
+                "id": "fa60606884c5e30f230ba926cd917415",
+                "refs": [
+                  "f009cdfc18808568dbfcdac1e3286267"
+                ],
+                "type": "distance",
+                "value": 40.0
+              }
+            ],
+            "entities": [
+              {
+                "id": "e5169a0673ffb27b4019285ee50cfa02",
+                "position": [
+                  0.0,
+                  0.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "0bc879499fbc28041ebbb40c8e3638e9",
+                "position": [
+                  60.0,
+                  0.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "3d6e9fdeaa17704d5d81f243a9d1df74",
+                "position": [
+                  60.0,
+                  40.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "02e82278d10b14695ff689e06cbc00dc",
+                "position": [
+                  0.0,
+                  40.0
+                ],
+                "type": "point"
+              },
+              {
+                "end": "0bc879499fbc28041ebbb40c8e3638e9",
+                "id": "364203a8fb12a418377f2ea79f848f59",
+                "start": "e5169a0673ffb27b4019285ee50cfa02",
+                "type": "line"
+              },
+              {
+                "end": "3d6e9fdeaa17704d5d81f243a9d1df74",
+                "id": "f009cdfc18808568dbfcdac1e3286267",
+                "start": "0bc879499fbc28041ebbb40c8e3638e9",
+                "type": "line"
+              },
+              {
+                "end": "02e82278d10b14695ff689e06cbc00dc",
+                "id": "7cb623ebdc0ddb09f6e5608c7f698860",
+                "start": "3d6e9fdeaa17704d5d81f243a9d1df74",
+                "type": "line"
+              },
+              {
+                "end": "e5169a0673ffb27b4019285ee50cfa02",
+                "id": "0a17d5252b884676afdb6ee3ae8967fb",
+                "start": "02e82278d10b14695ff689e06cbc00dc",
+                "type": "line"
+              }
+            ],
+            "format": "vstudio.sketch",
+            "id": "a938a0ad366fc0564f9bb447f4f6fc08",
+            "name": "Base outline",
+            "plane": {
+              "origin": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "x_axis": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "y_axis": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            },
+            "version": 1
+          }
+        },
+        {
+          "id": "8101a7a2c15714500b0455aa0b56d078",
+          "name": "Base block",
+          "type": "extrude",
+          "sketch": "a938a0ad366fc0564f9bb447f4f6fc08",
+          "operation": "add",
+          "extent": "blind",
+          "depth": {
+            "value": 0.0,
+            "expression": "base_h"
+          }
+        },
+        {
+          "id": "89008902d7f44b81e1afd3818e81dc4f",
+          "name": "Top of base",
+          "type": "datum_plane",
+          "offset": {
+            "base": {
+              "principal": "xy"
+            },
+            "distance": {
+              "value": 0.0,
+              "expression": "base_h"
+            }
+          }
+        },
+        {
+          "id": "9a500029d6caf84edeea7e927eeea5b6",
+          "type": "sketch",
+          "plane": {
+            "feature": "89008902d7f44b81e1afd3818e81dc4f"
+          },
+          "sketch": {
+            "constraints": [
+              {
+                "id": "5696f5a4f0803d7fe81447962f382f22",
+                "refs": [
+                  "c7ad231f5e8dae3ee38655a2216f503c"
+                ],
+                "type": "fix"
+              },
+              {
+                "id": "a06025a338f721c7f7c05ce8462460a8",
+                "refs": [
+                  "7434cc8a5e54939dc168f48f6b711d8a"
+                ],
+                "type": "horizontal"
+              },
+              {
+                "id": "c648a0bd86726a4eef2fcfad2ba48097",
+                "refs": [
+                  "57e1bdfa58c8313c10d8142008638f80"
+                ],
+                "type": "horizontal"
+              },
+              {
+                "id": "84f5f079e7f44140d6b33c4aa55b1868",
+                "refs": [
+                  "30263eaed1abc003f1466515543a9808"
+                ],
+                "type": "vertical"
+              },
+              {
+                "id": "362c58a748498772dab5286f86bcd4ef",
+                "refs": [
+                  "86c98482e7e726d311da2791637455f5"
+                ],
+                "type": "vertical"
+              },
+              {
+                "expression": "width",
+                "id": "d430f19f703f4fec86a345dd8fb2dec0",
+                "refs": [
+                  "7434cc8a5e54939dc168f48f6b711d8a"
+                ],
+                "type": "distance",
+                "value": 60.0
+              },
+              {
+                "expression": "upright_t",
+                "id": "68046d06b964383c7313782f405928f4",
+                "refs": [
+                  "30263eaed1abc003f1466515543a9808"
+                ],
+                "type": "distance",
+                "value": 10.0
+              }
+            ],
+            "entities": [
+              {
+                "id": "c7ad231f5e8dae3ee38655a2216f503c",
+                "position": [
+                  0.0,
+                  0.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "657315a8ac451b547302dd46bd46f8e0",
+                "position": [
+                  60.0,
+                  0.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "493e19aa61d776490c2f8e7f5d087e07",
+                "position": [
+                  60.0,
+                  10.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "ec4df4011eb3120af16e31c893051768",
+                "position": [
+                  0.0,
+                  10.0
+                ],
+                "type": "point"
+              },
+              {
+                "end": "657315a8ac451b547302dd46bd46f8e0",
+                "id": "7434cc8a5e54939dc168f48f6b711d8a",
+                "start": "c7ad231f5e8dae3ee38655a2216f503c",
+                "type": "line"
+              },
+              {
+                "end": "493e19aa61d776490c2f8e7f5d087e07",
+                "id": "30263eaed1abc003f1466515543a9808",
+                "start": "657315a8ac451b547302dd46bd46f8e0",
+                "type": "line"
+              },
+              {
+                "end": "ec4df4011eb3120af16e31c893051768",
+                "id": "57e1bdfa58c8313c10d8142008638f80",
+                "start": "493e19aa61d776490c2f8e7f5d087e07",
+                "type": "line"
+              },
+              {
+                "end": "c7ad231f5e8dae3ee38655a2216f503c",
+                "id": "86c98482e7e726d311da2791637455f5",
+                "start": "ec4df4011eb3120af16e31c893051768",
+                "type": "line"
+              }
+            ],
+            "format": "vstudio.sketch",
+            "id": "9a500029d6caf84edeea7e927eeea5b6",
+            "name": "Upright outline",
+            "plane": {
+              "origin": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "x_axis": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "y_axis": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            },
+            "version": 1
+          }
+        },
+        {
+          "id": "92c595588334fc90ff5fdfb868a18015",
+          "name": "Upright block",
+          "type": "extrude",
+          "sketch": "9a500029d6caf84edeea7e927eeea5b6",
+          "operation": "add",
+          "extent": "blind",
+          "depth": {
+            "value": 0.0,
+            "expression": "upright_h"
+          }
+        },
+        {
+          "id": "d3451c4698ecd3d54b5fb01cc2fd85dc",
+          "type": "sketch",
+          "plane": {
+            "feature": "89008902d7f44b81e1afd3818e81dc4f"
+          },
+          "sketch": {
+            "constraints": [
+              {
+                "id": "8694058fae9822805a1826eb3aecebe5",
+                "refs": [
+                  "d32df69c0205845cc71fe472ad5517f5"
+                ],
+                "type": "fix"
+              },
+              {
+                "id": "bb1a493c2cd4b6a31eddf5575a939871",
+                "refs": [
+                  "49ed05813a11ae958eadc463f8fd1348"
+                ],
+                "type": "horizontal"
+              },
+              {
+                "id": "f6c2b9a61927bdaa648f10959b3dba28",
+                "refs": [
+                  "19bf6344ab307a0651d301dd1fbbfcc8"
+                ],
+                "type": "horizontal"
+              },
+              {
+                "id": "9f9f6b71f2b698089ba20d20d3bc78a6",
+                "refs": [
+                  "6edb43730094474b5ebffc11ad67afc7"
+                ],
+                "type": "vertical"
+              },
+              {
+                "id": "a3ed8a9946a0bae99655df896f942c72",
+                "refs": [
+                  "4156604f50ad47cd49c7f853d2dad030"
+                ],
+                "type": "vertical"
+              },
+              {
+                "expression": "width",
+                "id": "5b94d43d55cf0746503d08ba9fcd8ceb",
+                "refs": [
+                  "49ed05813a11ae958eadc463f8fd1348"
+                ],
+                "type": "distance",
+                "value": 60.0
+              },
+              {
+                "expression": "upright_t",
+                "id": "a849e44d1b762e8f7e5d40c12541a0b0",
+                "refs": [
+                  "6edb43730094474b5ebffc11ad67afc7"
+                ],
+                "type": "distance",
+                "value": 10.0
+              }
+            ],
+            "entities": [
+              {
+                "id": "d32df69c0205845cc71fe472ad5517f5",
+                "position": [
+                  0.0,
+                  0.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "8de3e12e8e9d76593cb832ac12ecd82e",
+                "position": [
+                  60.0,
+                  0.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "b9cf3d10a7573169ce5d7cc546203977",
+                "position": [
+                  60.0,
+                  10.0
+                ],
+                "type": "point"
+              },
+              {
+                "id": "cff7175890508798bcb8fd7d411b93ba",
+                "position": [
+                  0.0,
+                  10.0
+                ],
+                "type": "point"
+              },
+              {
+                "end": "8de3e12e8e9d76593cb832ac12ecd82e",
+                "id": "49ed05813a11ae958eadc463f8fd1348",
+                "start": "d32df69c0205845cc71fe472ad5517f5",
+                "type": "line"
+              },
+              {
+                "end": "b9cf3d10a7573169ce5d7cc546203977",
+                "id": "6edb43730094474b5ebffc11ad67afc7",
+                "start": "8de3e12e8e9d76593cb832ac12ecd82e",
+                "type": "line"
+              },
+              {
+                "end": "cff7175890508798bcb8fd7d411b93ba",
+                "id": "19bf6344ab307a0651d301dd1fbbfcc8",
+                "start": "b9cf3d10a7573169ce5d7cc546203977",
+                "type": "line"
+              },
+              {
+                "end": "d32df69c0205845cc71fe472ad5517f5",
+                "id": "4156604f50ad47cd49c7f853d2dad030",
+                "start": "cff7175890508798bcb8fd7d411b93ba",
+                "type": "line"
+              }
+            ],
+            "format": "vstudio.sketch",
+            "id": "d3451c4698ecd3d54b5fb01cc2fd85dc",
+            "name": "Flange outline",
+            "plane": {
+              "origin": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "x_axis": [
+                1.0,
+                0.0,
+                0.0
+              ],
+              "y_axis": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            },
+            "version": 1
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "a3732a10b50d2bd82f33cba566817084",
+        "name": "Base",
+        "boundary": {
+          "features": [
+            "8101a7a2c15714500b0455aa0b56d078"
+          ]
+        },
+        "contents": {
+          "kind": "parametric",
+          "tree": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "639fe76401368e96a67e42e4c735e25e",
+                "type": "sketch",
+                "plane": {
+                  "feature": "af0416c81ee65dd6dff1fe4a61fb8735"
+                },
+                "sketch": {
+                  "constraints": [
+                    {
+                      "id": "1906dd5eb784bcac9bdc33a2a65ca7a5",
+                      "refs": [
+                        "cd5d8c864ce66e9c7eb66e8135ccd1ef"
+                      ],
+                      "type": "fix"
+                    },
+                    {
+                      "id": "35ed9ebb2ff2e75e757e5213425a9fe2",
+                      "refs": [
+                        "3988073eba6fd983415161832c71da95"
+                      ],
+                      "type": "horizontal"
+                    },
+                    {
+                      "id": "79780149ccd26bf6f576440683e6e727",
+                      "refs": [
+                        "bd128209fbdcf20e29dc1f75ea5e8835"
+                      ],
+                      "type": "horizontal"
+                    },
+                    {
+                      "id": "21612a786fea9669254e054381ea5a10",
+                      "refs": [
+                        "9a7e9372e0ed5ede07ec80702b5f87c0"
+                      ],
+                      "type": "vertical"
+                    },
+                    {
+                      "id": "228e30a9e1cc0e34aeb3c197d31060cf",
+                      "refs": [
+                        "a3e636fcb1e6c2b875b540dcbacbfc0b"
+                      ],
+                      "type": "vertical"
+                    },
+                    {
+                      "expression": "60",
+                      "id": "0be16fb93069986eee389a430570112b",
+                      "refs": [
+                        "3988073eba6fd983415161832c71da95"
+                      ],
+                      "type": "distance",
+                      "value": 60.0
+                    },
+                    {
+                      "expression": "40",
+                      "id": "ad536a575a12404ce03b81ecbe925558",
+                      "refs": [
+                        "9a7e9372e0ed5ede07ec80702b5f87c0"
+                      ],
+                      "type": "distance",
+                      "value": 40.0
+                    }
+                  ],
+                  "entities": [
+                    {
+                      "id": "cd5d8c864ce66e9c7eb66e8135ccd1ef",
+                      "position": [
+                        0.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "44206bca47de62e426509b8609115e17",
+                      "position": [
+                        60.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "10f184f456bbcdc48b433a55cfb23ad8",
+                      "position": [
+                        60.0,
+                        40.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "1f52389973ef594853461ba14f2fd3f4",
+                      "position": [
+                        0.0,
+                        40.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "end": "44206bca47de62e426509b8609115e17",
+                      "id": "3988073eba6fd983415161832c71da95",
+                      "start": "cd5d8c864ce66e9c7eb66e8135ccd1ef",
+                      "type": "line"
+                    },
+                    {
+                      "end": "10f184f456bbcdc48b433a55cfb23ad8",
+                      "id": "9a7e9372e0ed5ede07ec80702b5f87c0",
+                      "start": "44206bca47de62e426509b8609115e17",
+                      "type": "line"
+                    },
+                    {
+                      "end": "1f52389973ef594853461ba14f2fd3f4",
+                      "id": "bd128209fbdcf20e29dc1f75ea5e8835",
+                      "start": "10f184f456bbcdc48b433a55cfb23ad8",
+                      "type": "line"
+                    },
+                    {
+                      "end": "cd5d8c864ce66e9c7eb66e8135ccd1ef",
+                      "id": "a3e636fcb1e6c2b875b540dcbacbfc0b",
+                      "start": "1f52389973ef594853461ba14f2fd3f4",
+                      "type": "line"
+                    }
+                  ],
+                  "format": "vstudio.sketch",
+                  "id": "639fe76401368e96a67e42e4c735e25e",
+                  "name": "Fill outline",
+                  "plane": {
+                    "origin": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "x_axis": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "y_axis": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "version": 1
+                }
+              },
+              {
+                "id": "21dc53fbc9a7d3dc0a587f2b90230e92",
+                "name": "Fill",
+                "type": "extrude",
+                "sketch": "639fe76401368e96a67e42e4c735e25e",
+                "operation": "add",
+                "extent": "blind",
+                "depth": {
+                  "value": 0.0,
+                  "expression": "thickness"
+                },
+                "reverse": true
+              }
+            ]
+          }
+        },
+        "parameters": [
+          {
+            "id": "21929d4878531c1d43d71e0dcf38f6a8",
+            "name": "thickness",
+            "value": {
+              "value": 0.0,
+              "expression": "base_h"
+            }
+          }
+        ],
+        "seed": 42,
+        "outputs": [
+          {
+            "id": "5650aa4cf882700d9821664c0f4f81e3",
+            "name": "mass",
+            "quantity": "mass",
+            "density": 1.24
+          },
+          {
+            "id": "2003f32084a126655cafa158c133ba22",
+            "name": "volume",
+            "quantity": "volume"
+          }
+        ]
+      },
+      {
+        "id": "8ea78f04ae22a5b4be93a44e5e845a73",
+        "name": "Upright",
+        "boundary": {
+          "features": [
+            "92c595588334fc90ff5fdfb868a18015"
+          ]
+        },
+        "contents": {
+          "kind": "static",
+          "blob": "blobs/a2399d86fbac92eae3544382b5ec1ef1.step",
+          "format": "step"
+        },
+        "parameters": [
+          {
+            "id": "592924bf32792bb27c4e7eb56cbdb915",
+            "name": "load",
+            "value": 0.0
+          }
+        ],
+        "outputs": [
+          {
+            "id": "db0dbeac9d55ba1156c962cc62e5ca9c",
+            "name": "envelope",
+            "quantity": "envelope"
+          }
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "id": "af0416c81ee65dd6dff1fe4a61fb8735",
+        "name": "Flange",
+        "volumes": [
+          "a3732a10b50d2bd82f33cba566817084",
+          "8ea78f04ae22a5b4be93a44e5e845a73"
+        ],
+        "geometry": {
+          "sketch": "d3451c4698ecd3d54b5fb01cc2fd85dc"
+        },
+        "type": "bolted_flange",
+        "holes": {
+          "grid": {
+            "columns": 2.0,
+            "rows": 1.0,
+            "pitch_x": 40.0,
+            "pitch_y": 20.0
+          },
+          "u": {
+            "value": 0.0,
+            "expression": "width / 2"
+          },
+          "v": {
+            "value": 0.0,
+            "expression": "upright_t / 2"
+          }
+        },
+        "thread": "M4",
+        "min_wall": 2.0,
+        "seam": {
+          "spacing": 0.0
+        }
+      }
+    ],
+    "keep_outs": [],
+    "links": [
+      {
+        "id": "ac72dc538e4c814bdf5c0e633f64f591",
+        "source": {
+          "volume": "a3732a10b50d2bd82f33cba566817084",
+          "output": "5650aa4cf882700d9821664c0f4f81e3"
+        },
+        "target": "592924bf32792bb27c4e7eb56cbdb915"
+      }
+    ]
+  },
+  "blobs": [
+    {
+      "path": "blobs/a2399d86fbac92eae3544382b5ec1ef1.step",
+      "size": 15415,
+      "blake3": "a2399d86fbac92eae3544382b5ec1ef1628a019069ea154ad167cd48e583c869"
+    }
+  ]
+}

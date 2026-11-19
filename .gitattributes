@@ -3,3 +3,7 @@
 
 # Shell scripts must keep LF endings to run on Linux.
 *.sh text eol=lf
+
+# Project folders are checked byte for byte (their manifests list each blob's
+# BLAKE3 hash), so line endings must never be converted.
+**/*.vsproj/** -text

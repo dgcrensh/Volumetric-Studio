@@ -77,6 +77,11 @@ scripts/vcpkg-cache.sh fetch        # only refresh the cache (uses GH_TOKEN or G
 The cache only hits with the same compiler as CI (Ubuntu 24.04, GCC 13.3);
 anywhere else vcpkg falls back to building OCCT from source.
 
+A cloud session can't download port sources (its network reaches only this
+repository on GitHub), so a **new vcpkg dependency can't be added from a
+cloud session**: land it from a desktop or let CI on `main` build and
+publish it first (decision 0005).
+
 ## Layout
 
 ```
@@ -226,6 +231,36 @@ so they are registered. A new library must also be added to
   as `feature.fallback.works`; the body is never left invalid.
 - **Files.** `to_json()` / `feature_tree_from_json()` round-trip exactly.
   `vstudio-cli build <file> [out.step]` rebuilds one and writes STEP.
+
+## vs_model essentials
+
+- **Document.** `Document` holds the layout (a `FeatureTree`), the volumes
+  under it (one level), and the connection surfaces, keep-outs and links the
+  root owns. Ids are unique across the whole document, contents included.
+  A `Volume` has a boundary (layout solid features' tools, or a box between
+  two layout points), a keep-out flag, contents (static file, parametric
+  tree, procedural graph JSON), parameters, a seed and published outputs.
+- **Authoring.** Change a document through `edit(doc, fn)` (`check.hpp`): it
+  applies `fn` to a copy and keeps it only if `check()` finds no errors.
+  `check()` covers structure (`model.*`), encapsulation
+  (`model.reference.contents` / `.sibling` / `.not_input` / `.parent`, all
+  judged by `resolve()` in `references.hpp`) and dependency loops
+  (`model.dependency.loop`, path with the link first, `dependency.hpp`).
+- **Contents see inputs, nothing else.** A parametric tree is rebuilt with
+  `feature::ExternalInputs`: the boundary by the volume's id (faces
+  `<layout feature id>:<name>`, or `-x`..`+z` for a box), each joining
+  connection surface by its id (a plane, face `patch`), and parameters as
+  values. Published outputs reach anything only through a `Link` to a layout
+  variable or parameter.
+- **Build.** `build(doc, settings, &blobs)` rebuilds the layout, boundaries
+  (keep-outs cut), patches (with bolt hole centres) and contents, and
+  measures outputs. Status (`VolumeStatus`) is on the result, never saved.
+- **Files.** `.vsproj` is a folder or a stored-only zip of `project.json`
+  plus `blobs/<hash>.<ext>` (`project.hpp`, decision 0005). Loading checks
+  blob hashes and runs `check()`. `content_hash()` hashes the document's
+  JSON plus the blobs. `vstudio-cli info <project> [--build]` prints one.
+  `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the sample
+  with `vs_model_tests "[.generate]"`.
 
 ## Code style
 

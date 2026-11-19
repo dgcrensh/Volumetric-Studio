@@ -95,6 +95,7 @@
 // and the variables' values are unchanged; otherwise everything rebuilds.
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -162,11 +163,40 @@ struct RebuildResult {
   [[nodiscard]] std::size_t rebuilt_count() const;
 };
 
+// Inputs from outside the tree, for a tree that lives inside something else
+// (vs_model: a parametric volume's contents see their boundary and connection
+// surfaces, and the volume's parameters).
+//
+// Each reference input stands in for a feature that isn't in the tree:
+// a FeatureRef or FaceRef to its id resolves to its `result` (its plane,
+// axis, point or named faces) as if a feature above everything had made it.
+// A sketch or datum on one of its named planar faces takes the face's plane
+// directly, without needing a face of the body there; shells, fillets and
+// chamfers still find the body's faces on it. An id that is both a feature
+// of the tree and an input refers to the feature.
+//
+// `values` are numbers that Params and sketch dimensions can use by name, as
+// if they were variables. A variable of the tree with the same name wins.
+// The variable table itself doesn't see them: variables can't use them.
+struct ExternalInput {
+  core::SubjectRef subject;  // its id is the id references use
+  FeatureResult result;      // `feature` and `status` are ignored
+};
+struct ExternalInputs {
+  std::vector<ExternalInput> references;
+  std::map<std::string, double, std::less<>> values;
+
+  [[nodiscard]] const ExternalInput* find(const Id& id) const;
+};
+
 struct RebuildOptions {
   // Rebuild from `start` onwards, reusing `previous` for the features above
-  // it (see the top of this header). Both or neither.
+  // it (see the top of this header). Both or neither. Nothing is reused when
+  // `inputs` has references, because the rebuild can't tell whether they
+  // changed.
   const RebuildResult* previous = nullptr;
   Id start;
+  const ExternalInputs* inputs = nullptr;
 };
 
 RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,

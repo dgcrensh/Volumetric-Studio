@@ -28,6 +28,9 @@ std::string_view to_string(SubjectKind kind) {
     case SubjectKind::Node: return "Node";
     case SubjectKind::File: return "File";
     case SubjectKind::Setting: return "Setting";
+    case SubjectKind::KeepOut: return "KeepOut";
+    case SubjectKind::Parameter: return "Parameter";
+    case SubjectKind::Link: return "Link";
   }
   return "Unknown";
 }

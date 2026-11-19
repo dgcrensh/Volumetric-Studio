@@ -118,8 +118,9 @@ dvec3 tangent(const kernel::ProfileSegment& s, bool at_end) {
 class Builder {
  public:
   Builder(const FeatureTree& tree, const ProductSettings& settings, RebuildResult& out,
-          std::size_t index)
+          std::size_t index, const ExternalInputs* inputs)
       : tree_(tree),
+        inputs_(inputs),
         settings_(settings),
         out_(out),
         index_(index),
@@ -154,6 +155,7 @@ class Builder {
 
  private:
   const FeatureTree& tree_;
+  const ExternalInputs* inputs_;
   const ProductSettings& settings_;
   RebuildResult& out_;
   std::size_t index_;
@@ -220,13 +222,25 @@ class Builder {
 
   // --- references ----------------------------------------------------------
 
+  // An input from outside the tree, when `id` names one and no feature.
+  const ExternalInput* external(const Id& id) const {
+    if (!inputs_ || tree_.index_of(id)) return nullptr;
+    return inputs_->find(id);
+  }
+
+  SubjectRef subject_of(const Id& id) const {
+    if (const ExternalInput* in = external(id)) return in->subject;
+    return tree_.subject(id);
+  }
+
   Result<const FeatureResult*> use(const Id& id, std::string_view what) {
+    if (const ExternalInput* in = external(id)) return &in->result;
     const auto at = tree_.index_of(id);
     if (!at) {
       return error("feature.reference.broken",
                    fmt::format("the {} it uses no longer exists", what));
     }
-    const SubjectRef other = tree_.subject(id);
+    const SubjectRef other = subject_of(id);
     if (*at >= index_) {
       return error("feature.reference.forward",
                    fmt::format("it uses '{}', which comes after it; move '{}' above it",
@@ -249,7 +263,7 @@ class Builder {
     auto r = use(id, "sketch");
     if (!r) return r;
     if (!(*r)->sketch) {
-      const SubjectRef other = tree_.subject(id);
+      const SubjectRef other = subject_of(id);
       return error("feature.reference.wrong_kind",
                    fmt::format("'{}' is not a sketch", other.label), {other});
     }
@@ -262,17 +276,35 @@ class Builder {
       auto r = use(f->feature, "plane");
       if (!r) return r.error();
       if (!(*r)->plane) {
-        const SubjectRef other = tree_.subject(f->feature);
+        const SubjectRef other = subject_of(f->feature);
         return error("feature.reference.wrong_kind",
                      fmt::format("'{}' is not a plane or a sketch", other.label), {other});
       }
       return *(*r)->plane;
     }
     const auto& face = std::get<FaceRef>(ref);
+    if (const ExternalInput* in = external(face.feature)) {
+      // An input's face gives its plane directly; the body needn't touch it.
+      const auto named = std::find_if(in->result.faces.begin(), in->result.faces.end(),
+                                      [&](const NamedFace& n) { return n.name == face.name; });
+      if (named == in->result.faces.end()) {
+        return error("feature.reference.broken",
+                     fmt::format("the face '{}' of '{}' no longer exists", face.name,
+                                 in->subject.label),
+                     {in->subject});
+      }
+      if (named->cylinder) {
+        return error("feature.reference.wrong_kind",
+                     fmt::format("the face '{}' of '{}' is curved; it needs a flat face",
+                                 face.name, in->subject.label),
+                     {in->subject});
+      }
+      return frame_for(named->plane);
+    }
     auto found = faces_of(face);
     if (!found) return found.error();
     if (found->named->cylinder) {
-      const SubjectRef other = tree_.subject(face.feature);
+      const SubjectRef other = subject_of(face.feature);
       return error("feature.reference.wrong_kind",
                    fmt::format("the face '{}' of '{}' is curved; it needs a flat face",
                                face.name, other.label),
@@ -290,7 +322,7 @@ class Builder {
   Result<FoundFaces> faces_of(const FaceRef& face) {
     auto r = use(face.feature, "face's feature");
     if (!r) return r.error();
-    const SubjectRef other = tree_.subject(face.feature);
+    const SubjectRef other = subject_of(face.feature);
     const auto named = std::find_if((*r)->faces.begin(), (*r)->faces.end(),
                                     [&](const NamedFace& n) { return n.name == face.name; });
     if (named == (*r)->faces.end()) {
@@ -344,8 +376,8 @@ class Builder {
       }
     }
     if (out.empty()) {
-      const SubjectRef fa = tree_.subject(ref.face.feature);
-      const SubjectRef fb = tree_.subject(ref.other->feature);
+      const SubjectRef fa = subject_of(ref.face.feature);
+      const SubjectRef fb = subject_of(ref.other->feature);
       std::vector<SubjectRef> more{fa};
       if (!(ref.other->feature == ref.face.feature)) more.push_back(fb);
       return error("feature.reference.broken",
@@ -369,7 +401,7 @@ class Builder {
       auto r = use(f->feature, "axis");
       if (!r) return r.error();
       if (!(*r)->axis) {
-        const SubjectRef other = tree_.subject(f->feature);
+        const SubjectRef other = subject_of(f->feature);
         return error("feature.reference.wrong_kind",
                      fmt::format("'{}' is not an axis", other.label), {other});
       }
@@ -379,7 +411,7 @@ class Builder {
     auto r = use_sketch(e.sketch);
     if (!r) return r.error();
     const sketch::Sketch& sk = *(*r)->sketch;
-    const SubjectRef other = tree_.subject(e.sketch);
+    const SubjectRef other = subject_of(e.sketch);
     const auto line = sketch::line_geometry(sk, e.entity);
     if (!line) {
       if (sk.find_entity(e.entity)) {
@@ -409,7 +441,7 @@ class Builder {
       auto r = use(f->feature, "point");
       if (!r) return r.error();
       if (!(*r)->point) {
-        const SubjectRef other = tree_.subject(f->feature);
+        const SubjectRef other = subject_of(f->feature);
         return error("feature.reference.wrong_kind",
                      fmt::format("'{}' is not a point", other.label), {other});
       }
@@ -419,7 +451,7 @@ class Builder {
     auto r = use_sketch(e.sketch);
     if (!r) return r.error();
     const sketch::Sketch& sk = *(*r)->sketch;
-    const SubjectRef other = tree_.subject(e.sketch);
+    const SubjectRef other = subject_of(e.sketch);
     const auto p = sk.point(e.entity);
     if (!p) {
       if (sk.find_entity(e.entity)) {
@@ -807,7 +839,7 @@ class Builder {
     auto sr = use_sketch(ex.sketch);
     if (!sr) return one(sr.error());
     const sketch::Sketch& sk = *(*sr)->sketch;
-    const SubjectRef sketch_subject = tree_.subject(ex.sketch);
+    const SubjectRef sketch_subject = subject_of(ex.sketch);
     auto profiles = profiles_of(sk, sketch_subject);
     if (!profiles) return one(profiles.error());
 
@@ -937,7 +969,7 @@ class Builder {
     auto sr = use_sketch(rv.sketch);
     if (!sr) return one(sr.error());
     const sketch::Sketch& sk = *(*sr)->sketch;
-    const SubjectRef sketch_subject = tree_.subject(rv.sketch);
+    const SubjectRef sketch_subject = subject_of(rv.sketch);
     auto axis = axis_of(rv.axis);
     if (!axis) return one(axis.error());
     auto angle = eval(rv.angle, "angle");
@@ -1163,12 +1195,12 @@ class Builder {
     auto pa = use_sketch(sw.path);
     if (!pa) return one(pa.error());
     const sketch::Sketch& profile_sketch = *(*pr)->sketch;
-    const SubjectRef profile_subject = tree_.subject(sw.profile);
+    const SubjectRef profile_subject = subject_of(sw.profile);
     auto profiles = profiles_of(profile_sketch, profile_subject);
     if (!profiles) return one(profiles.error());
     const auto centre = kernel::face_plane(profiles->faces.front());
     const dvec3 near = centre ? centre->origin : profile_sketch.plane().origin;
-    auto path = path_of(*(*pa)->sketch, tree_.subject(sw.path), near);
+    auto path = path_of(*(*pa)->sketch, subject_of(sw.path), near);
     if (!path) return one(path.error());
 
     const auto orientation = sw.orientation == SweepOrientation::Fixed
@@ -1215,7 +1247,7 @@ class Builder {
     for (const Id& id : lf.sections) {
       auto sr = use_sketch(id);
       if (!sr) return one(sr.error());
-      const SubjectRef subject = tree_.subject(id);
+      const SubjectRef subject = subject_of(id);
       auto profiles = profiles_of(*(*sr)->sketch, subject);
       if (!profiles) return one(profiles.error());
       if (profiles->faces.size() != 1 || profiles->holes.front() != 0) {
@@ -1360,7 +1392,7 @@ class Builder {
       auto r = use(id, "feature to copy");
       if (!r) return one(r.error());
       if (!(*r)->operation || (*r)->tool.is_empty()) {
-        const SubjectRef other = tree_.subject(id);
+        const SubjectRef other = subject_of(id);
         return one(error("feature.pattern.not_solid_feature",
                          fmt::format("'{}' doesn't add or cut material, so it can't be copied; "
                                      "pattern extrudes, revolves, sweeps and lofts",
@@ -1462,6 +1494,13 @@ std::string_view to_string(FeatureStatus status) {
   return "ok";
 }
 
+const ExternalInput* ExternalInputs::find(const Id& id) const {
+  for (const auto& in : references) {
+    if (in.subject.id == id) return &in;
+  }
+  return nullptr;
+}
+
 const FeatureResult* RebuildResult::find(const Id& feature) const {
   for (const auto& r : features) {
     if (r.feature == feature) return &r;
@@ -1503,11 +1542,18 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
   RebuildResult out;
   out.variables = tree.variables().evaluate();
   out.diagnostics.append(out.variables.diagnostics);
+  if (options.inputs) {
+    // Variables of the tree win over input values of the same name.
+    for (const auto& [name, value] : options.inputs->values) {
+      out.variables.values.try_emplace(name, value);
+    }
+  }
   const auto& features = tree.features();
   out.features.reserve(features.size());
 
   std::size_t first = 0;
-  if (options.previous && !options.start.is_null()) {
+  const bool has_inputs = options.inputs && !options.inputs->references.empty();
+  if (options.previous && !options.start.is_null() && !has_inputs) {
     const RebuildResult& prev = *options.previous;
     const auto k = tree.index_of(options.start);
     bool reusable = k.has_value() && prev.variables == out.variables &&
@@ -1526,7 +1572,7 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
   }
 
   for (std::size_t i = first; i < features.size(); ++i) {
-    Builder builder(tree, settings, out, i);
+    Builder builder(tree, settings, out, i, options.inputs);
     out.features.push_back(builder.run());
   }
   for (const auto& r : out.features) out.diagnostics.append(r.diagnostics);

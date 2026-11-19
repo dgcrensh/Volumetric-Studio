@@ -1,0 +1,595 @@
+#include "vs/model/build.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <numbers>
+
+#include <fmt/format.h>
+
+#include "vs/feature/expression.hpp"
+#include "vs/kernel/check.hpp"
+#include "vs/kernel/exchange.hpp"
+#include "vs/kernel/operations.hpp"
+#include "vs/kernel/primitives.hpp"
+#include "vs/kernel/queries.hpp"
+#include "vs/sketch/profile.hpp"
+
+namespace vs::model {
+
+using core::dvec2;
+using core::SubjectKind;
+using feature::FeatureResult;
+using feature::NamedFace;
+using kernel::Solid;
+using sketch::SketchPlane;
+
+std::string_view to_string(VolumeStatus status) {
+  switch (status) {
+    case VolumeStatus::Current: return "current";
+    case VolumeStatus::Stale: return "stale";
+    case VolumeStatus::Regenerating: return "regenerating";
+    case VolumeStatus::Failed: return "failed";
+  }
+  return "stale";
+}
+
+const VolumeBuild* DocumentBuild::find_volume(const Id& volume) const {
+  for (const auto& v : volumes) {
+    if (v.volume == volume) return &v;
+  }
+  return nullptr;
+}
+
+const ConnectionBuild* DocumentBuild::find_connection(const Id& surface) const {
+  for (const auto& c : connections) {
+    if (c.surface == surface) return &c;
+  }
+  return nullptr;
+}
+
+namespace {
+
+Diagnostic about(const SubjectRef& subject, Diagnostic d) {
+  d.message = fmt::format("'{}': {}", subject.label, d.message);
+  d.subjects.insert(d.subjects.begin(), subject);
+  return d;
+}
+
+Diagnostic error(const SubjectRef& subject, std::string code, std::string message,
+                 std::vector<SubjectRef> more = {}) {
+  std::vector<SubjectRef> subjects{subject};
+  subjects.insert(subjects.end(), more.begin(), more.end());
+  return Diagnostic::error(std::move(code), fmt::format("'{}': {}", subject.label, message),
+                           std::move(subjects));
+}
+
+class DocumentBuilder {
+ public:
+  DocumentBuilder(const Document& doc, const ProductSettings& settings, const BlobStore* blobs)
+      : doc_(doc), settings_(settings), blobs_(blobs) {}
+
+  DocumentBuild run() {
+    out_.layout = feature::rebuild(doc_.layout, settings_);
+    out_.diagnostics.append(out_.layout.diagnostics);
+
+    raw_.resize(doc_.volumes.size());
+    out_.volumes.resize(doc_.volumes.size());
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
+      out_.volumes[i].volume = doc_.volumes[i].id;
+      raw_[i] = raw_boundary(doc_.volumes[i], out_.volumes[i].diagnostics);
+    }
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) cut_keep_outs(i);
+
+    out_.connections.reserve(doc_.connections.size());
+    for (const auto& c : doc_.connections) out_.connections.push_back(connection(c));
+
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) contents(i);
+
+    for (const auto& v : out_.volumes) out_.diagnostics.append(v.diagnostics);
+    for (const auto& c : out_.connections) out_.diagnostics.append(c.diagnostics);
+    return std::move(out_);
+  }
+
+ private:
+  const Document& doc_;
+  const ProductSettings& settings_;
+  const BlobStore* blobs_;
+  DocumentBuild out_;
+  std::vector<Solid> raw_;  // boundaries before keep-outs
+
+  kernel::BooleanOptions fuzzy() const { return {settings_.linear_tolerance_mm}; }
+
+  // --- layout lookups ------------------------------------------------------------
+
+  Result<double> eval(const Param& p, const SubjectRef& by, std::string_view what) const {
+    if (p.expression.empty()) {
+      if (!std::isfinite(p.value)) {
+        return error(by, "feature.expression.not_finite",
+                     fmt::format("the {} isn't a finite number", what));
+      }
+      return p.value;
+    }
+    auto v = feature::evaluate_expression(p.expression, out_.layout.variables.lookup());
+    if (!v) {
+      Diagnostic d = v.error();
+      d.message = fmt::format("the {}: {}", what, d.message);
+      return about(by, std::move(d));
+    }
+    return *v;
+  }
+
+  // A layout feature's result, if it built.
+  Result<const FeatureResult*> layout_result(const Id& id, const SubjectRef& by,
+                                             std::string_view code) const {
+    const FeatureResult* r = out_.layout.find(id);
+    const SubjectRef other = doc_.layout.subject(id);
+    if (!r) {
+      return error(by, std::string(code), "a layout feature it uses no longer exists");
+    }
+    if (!r->ok()) {
+      return error(by, std::string(code),
+                   fmt::format("it uses '{}', which {}", other.label,
+                               r->status == feature::FeatureStatus::Suppressed
+                                   ? "is suppressed"
+                                   : "failed to rebuild"),
+                   {other});
+    }
+    return r;
+  }
+
+  Result<dvec3> point_of(const feature::PointRef& ref, const SubjectRef& by) const {
+    if (const auto* f = std::get_if<feature::FeatureRef>(&ref)) {
+      auto r = layout_result(f->feature, by, "model.boundary.point_failed");
+      if (!r) return r.error();
+      if (!(*r)->point) {
+        return error(by, "model.boundary.point_failed",
+                     fmt::format("'{}' is not a point", doc_.layout.subject(f->feature).label));
+      }
+      return *(*r)->point;
+    }
+    const auto& e = std::get<feature::SketchEntityRef>(ref);
+    auto r = layout_result(e.sketch, by, "model.boundary.point_failed");
+    if (!r) return r.error();
+    const auto* sk = (*r)->sketch.get();
+    const auto p = sk ? sk->point(e.entity) : std::nullopt;
+    if (!p) {
+      return error(by, "model.boundary.point_failed",
+                   fmt::format("the sketch point it uses isn't in '{}'",
+                               doc_.layout.subject(e.sketch).label));
+    }
+    return sk->plane().to_model(*p);
+  }
+
+  Result<SketchPlane> plane_of(const feature::PlaneRef& ref, const SubjectRef& by) const {
+    if (const auto* p = std::get_if<feature::PrincipalPlane>(&ref)) {
+      return feature::principal_frame(*p);
+    }
+    const Id& id = std::holds_alternative<feature::FeatureRef>(ref)
+                       ? std::get<feature::FeatureRef>(ref).feature
+                       : std::get<feature::FaceRef>(ref).feature;
+    auto r = layout_result(id, by, "model.connection.plane_failed");
+    if (!r) return r.error();
+    if (std::holds_alternative<feature::FeatureRef>(ref)) {
+      if (!(*r)->plane) {
+        return error(by, "model.connection.plane_failed",
+                     fmt::format("'{}' is not a plane or a sketch", doc_.layout.subject(id).label));
+      }
+      return *(*r)->plane;
+    }
+    const auto& face = std::get<feature::FaceRef>(ref);
+    for (const auto& n : (*r)->faces) {
+      if (n.name == face.name && !n.cylinder) return feature::frame_for(n.plane);
+    }
+    return error(by, "model.connection.plane_failed",
+                 fmt::format("'{}' has no flat face '{}'", doc_.layout.subject(id).label,
+                             face.name));
+  }
+
+  // --- boundaries ------------------------------------------------------------------
+
+  Solid raw_boundary(const Volume& v, Diagnostics& diags) const {
+    const SubjectRef by = doc_.boundary_subject(v.id);
+    if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
+      std::vector<Solid> tools;
+      for (const auto& id : fb->features) {
+        auto r = layout_result(id, by, "model.boundary.feature_failed");
+        if (!r) {
+          diags.add(r.error());
+          return {};
+        }
+        if ((*r)->tool.is_empty()) {
+          diags.add(error(by, "model.boundary.feature_failed",
+                          fmt::format("'{}' makes no solid", doc_.layout.subject(id).label),
+                          {doc_.layout.subject(id)}));
+          return {};
+        }
+        tools.push_back((*r)->tool);
+      }
+      if (tools.empty()) return {};
+      if (tools.size() == 1) return tools.front();
+      auto u = kernel::unite(tools.front(), std::span<const Solid>(tools).subspan(1), fuzzy());
+      if (!u) {
+        diags.add(about(by, u.error()));
+        return {};
+      }
+      return *u;
+    }
+    const auto& box = std::get<BoxBoundary>(v.boundary);
+    auto a = point_of(box.min, by);
+    auto b = point_of(box.max, by);
+    if (!a || !b) {
+      diags.add(!a ? a.error() : b.error());
+      return {};
+    }
+    const dvec3 lo{std::min(a->x, b->x), std::min(a->y, b->y), std::min(a->z, b->z)};
+    const dvec3 hi{std::max(a->x, b->x), std::max(a->y, b->y), std::max(a->z, b->z)};
+    const double min_size = settings_.min_feature_size_mm();
+    if (hi.x - lo.x < min_size || hi.y - lo.y < min_size || hi.z - lo.z < min_size) {
+      diags.add(error(by, "model.boundary.degenerate",
+                      "its two corners don't span a box with volume"));
+      return {};
+    }
+    auto s = kernel::make_box(core::dbox3::from_min_max(lo, hi), settings_);
+    if (!s) {
+      diags.add(about(by, s.error()));
+      return {};
+    }
+    return *s;
+  }
+
+  void cut_keep_outs(std::size_t i) {
+    const Volume& v = doc_.volumes[i];
+    VolumeBuild& vb = out_.volumes[i];
+    vb.boundary = raw_[i];
+    if (vb.boundary.is_empty()) return;
+    const SubjectRef by = doc_.boundary_subject(v.id);
+    std::vector<Solid> cutters;
+    for (const auto& k : doc_.keep_outs) {
+      if (std::find(k.volumes.begin(), k.volumes.end(), v.id) == k.volumes.end()) continue;
+      const SubjectRef ks = doc_.keep_out_subject(k.id);
+      for (const auto& id : k.cutters) {
+        if (doc_.find_volume(id)) {
+          for (std::size_t j = 0; j < doc_.volumes.size(); ++j) {
+            if (doc_.volumes[j].id == id && !raw_[j].is_empty()) cutters.push_back(raw_[j]);
+          }
+          continue;
+        }
+        auto r = layout_result(id, ks, "model.boundary.feature_failed");
+        if (!r || (*r)->tool.is_empty()) {
+          vb.diagnostics.add(r ? error(ks, "model.boundary.feature_failed",
+                                       "a cutter makes no solid")
+                               : r.error());
+          vb.boundary = Solid{};
+          return;
+        }
+        cutters.push_back((*r)->tool);
+      }
+    }
+    if (cutters.empty()) return;
+    auto cut = kernel::cut(vb.boundary, cutters, fuzzy());
+    if (!cut && cut.error().code == "kernel.boolean.empty_result") {
+      vb.diagnostics.add(error(by, "model.boundary.cut_away",
+                               "its keep-out regions remove the whole boundary"));
+      vb.boundary = Solid{};
+      return;
+    }
+    if (!cut) {
+      vb.diagnostics.add(about(by, cut.error()));
+      vb.boundary = Solid{};
+      return;
+    }
+    const auto mass = kernel::mass_properties(*cut);
+    if (cut->is_empty() || !mass || mass->volume <= 0.0) {
+      vb.diagnostics.add(error(by, "model.boundary.cut_away",
+                               "its keep-out regions remove the whole boundary"));
+      vb.boundary = Solid{};
+      return;
+    }
+    vb.boundary = *cut;
+  }
+
+  // The boundary's named faces, for the contents' rebuild.
+  std::vector<NamedFace> boundary_faces(const Volume& v, const Solid& boundary) const {
+    std::vector<NamedFace> faces;
+    if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
+      for (const auto& id : fb->features) {
+        const FeatureResult* r = out_.layout.find(id);
+        if (!r) continue;
+        for (const auto& n : r->faces) {
+          NamedFace copy = n;
+          copy.name = fmt::format("{}:{}", id.to_string(), n.name);
+          faces.push_back(std::move(copy));
+        }
+      }
+      return faces;
+    }
+    const auto raw_box = kernel::bounding_box(boundary);
+    faces.push_back({"-x", {raw_box.min, {-1, 0, 0}}, std::nullopt});
+    faces.push_back({"+x", {raw_box.max, {1, 0, 0}}, std::nullopt});
+    faces.push_back({"-y", {raw_box.min, {0, -1, 0}}, std::nullopt});
+    faces.push_back({"+y", {raw_box.max, {0, 1, 0}}, std::nullopt});
+    faces.push_back({"-z", {raw_box.min, {0, 0, -1}}, std::nullopt});
+    faces.push_back({"+z", {raw_box.max, {0, 0, 1}}, std::nullopt});
+    return faces;
+  }
+
+  // --- connection surfaces -----------------------------------------------------------
+
+  ConnectionBuild connection(const ConnectionSurface& c) const {
+    ConnectionBuild cb;
+    cb.surface = c.id;
+    const SubjectRef by = doc_.connection_subject(c.id);
+    auto fail = [&](Diagnostic d) {
+      cb.diagnostics.add(std::move(d));
+      cb.ok = false;
+      return cb;
+    };
+
+    if (const auto* sp = std::get_if<SketchPatch>(&c.geometry)) {
+      auto r = layout_result(sp->sketch, by, "model.connection.sketch_failed");
+      if (!r) return fail(r.error());
+      const sketch::Sketch* sk = (*r)->sketch.get();
+      if (!sk) {
+        return fail(error(by, "model.connection.sketch_failed",
+                          fmt::format("'{}' is not a sketch", doc_.layout.subject(sp->sketch).label)));
+      }
+      auto profiles = sketch::extract_profiles(*sk, settings_);
+      if (!profiles) return fail(about(by, profiles.error()));
+      if (profiles->size() != 1) {
+        return fail(error(by, "model.connection.profiles",
+                          fmt::format("its sketch '{}' has {} closed profiles; a connection "
+                                      "surface needs exactly one",
+                                      doc_.layout.subject(sp->sketch).label, profiles->size()),
+                          {doc_.layout.subject(sp->sketch)}));
+      }
+      auto face = sketch::make_face(*sk, profiles->front(), settings_);
+      if (!face) return fail(about(by, face.error()));
+      cb.patch = *face;
+      cb.frame = sk->plane();
+      cb.area = profiles->front().area();
+    } else {
+      const auto& dp = std::get<DatumPatch>(c.geometry);
+      auto frame = plane_of(dp.plane, by);
+      if (!frame) return fail(frame.error());
+      auto u = eval(dp.u, by, "patch centre u");
+      auto v = eval(dp.v, by, "patch centre v");
+      auto w = eval(dp.width, by, "patch width");
+      auto h = eval(dp.height, by, "patch height");
+      for (const auto* r : {&u, &v, &w, &h}) {
+        if (!*r) return fail(r->error());
+      }
+      if (*w < settings_.min_feature_size_mm() || *h < settings_.min_feature_size_mm()) {
+        return fail(error(by, "model.connection.bad_size",
+                          fmt::format("its rectangle is {} x {} mm; both sides must be at least "
+                                      "{} mm",
+                                      *w, *h, settings_.min_feature_size_mm())));
+      }
+      const std::array<dvec2, 4> corners{dvec2{*u - *w / 2, *v - *h / 2},
+                                         dvec2{*u + *w / 2, *v - *h / 2},
+                                         dvec2{*u + *w / 2, *v + *h / 2},
+                                         dvec2{*u - *w / 2, *v + *h / 2}};
+      std::array<dvec3, 4> points{};
+      for (std::size_t i = 0; i < 4; ++i) points[i] = frame->to_model(corners[i]);
+      auto face = kernel::make_face(kernel::Loop::polygon(points), settings_);
+      if (!face) return fail(about(by, face.error()));
+      cb.patch = *face;
+      cb.frame = *frame;
+      cb.area = *w * *h;
+    }
+
+    if (const auto* b = std::get_if<BoltedFlangeParams>(&c.params)) {
+      auto u = eval(b->holes.u, by, "hole pattern centre u");
+      auto v = eval(b->holes.v, by, "hole pattern centre v");
+      if (!u) return fail(u.error());
+      if (!v) return fail(v.error());
+      auto whole = [&](const Param& p, std::string_view what) -> Result<int> {
+        auto n = eval(p, by, what);
+        if (!n) return n.error();
+        if (*n < 1 || *n > 1000 || std::abs(*n - std::round(*n)) > 1e-9) {
+          return error(by, "model.connection.bad_pattern",
+                       fmt::format("the {} must be a whole number from 1 to 1000", what));
+        }
+        return static_cast<int>(std::lround(*n));
+      };
+      if (const auto* bc = std::get_if<BoltCircle>(&b->holes.layout)) {
+        auto n = whole(bc->count, "hole count");
+        auto d = eval(bc->diameter, by, "pitch circle diameter");
+        auto a0 = eval(bc->start_angle, by, "start angle");
+        if (!n) return fail(n.error());
+        if (!d) return fail(d.error());
+        if (!a0) return fail(a0.error());
+        for (int k = 0; k < *n; ++k) {
+          const double a = *a0 + 2.0 * std::numbers::pi * k / *n;
+          cb.hole_centres.push_back(
+              cb.frame.to_model({*u + *d / 2 * std::cos(a), *v + *d / 2 * std::sin(a)}));
+        }
+      } else {
+        const auto& g = std::get<BoltGrid>(b->holes.layout);
+        auto cols = whole(g.columns, "column count");
+        auto rows = whole(g.rows, "row count");
+        auto px = eval(g.pitch_x, by, "x pitch");
+        auto py = eval(g.pitch_y, by, "y pitch");
+        if (!cols) return fail(cols.error());
+        if (!rows) return fail(rows.error());
+        if (!px) return fail(px.error());
+        if (!py) return fail(py.error());
+        for (int j = 0; j < *rows; ++j) {
+          for (int i = 0; i < *cols; ++i) {
+            const double x = *u + (i - (*cols - 1) / 2.0) * *px;
+            const double y = *v + (j - (*rows - 1) / 2.0) * *py;
+            cb.hole_centres.push_back(cb.frame.to_model({x, y}));
+          }
+        }
+      }
+    }
+    cb.ok = true;
+    return cb;
+  }
+
+  // --- contents --------------------------------------------------------------------
+
+  void contents(std::size_t i) {
+    const Volume& v = doc_.volumes[i];
+    VolumeBuild& vb = out_.volumes[i];
+    const SubjectRef self = doc_.volume_subject(v.id);
+
+    for (const auto& p : v.parameters) {
+      const SubjectRef ps{SubjectKind::Parameter, p.id, fmt::format("{}.{}", v.name, p.name)};
+      auto value = eval(p.value, ps, "value");
+      if (!value) {
+        vb.diagnostics.add(value.error());
+        vb.status = VolumeStatus::Failed;
+        continue;
+      }
+      vb.parameters[p.name] = *value;
+    }
+
+    if (vb.boundary.is_empty()) {
+      vb.status = VolumeStatus::Failed;
+      if (!v.contents_empty()) {
+        vb.diagnostics.add(Diagnostic::info(
+            "model.contents.no_boundary",
+            fmt::format("'{}': contents not built, because the boundary failed", self.label),
+            {self}));
+      }
+      return;
+    }
+    if (vb.status == VolumeStatus::Failed) return;  // a parameter failed
+    if (v.keep_out || v.contents_empty()) {
+      vb.status = VolumeStatus::Current;
+      return;
+    }
+
+    if (const auto* sc = std::get_if<StaticContents>(&v.contents)) {
+      import_static(v, *sc, vb);
+    } else if (const auto* pc = std::get_if<ParametricContents>(&v.contents)) {
+      parametric(v, pc->tree, vb);
+    } else {
+      vb.status = VolumeStatus::Stale;  // node graphs arrive in M10
+    }
+    measure(v, vb);
+  }
+
+  void import_static(const Volume& v, const StaticContents& sc, VolumeBuild& vb) const {
+    const SubjectRef self = doc_.volume_subject(v.id);
+    if (!blobs_ || (sc.format != "step" && sc.format != "iges")) {
+      vb.status = VolumeStatus::Stale;  // not given the files, or a mesh (M8)
+      return;
+    }
+    const auto it = blobs_->find(sc.blob);
+    if (it == blobs_->end()) {
+      vb.diagnostics.add(error(self, "model.contents.missing_blob",
+                               fmt::format("its file '{}' isn't in the project", sc.blob)));
+      vb.status = VolumeStatus::Failed;
+      return;
+    }
+    // The exchange layer reads files; give it a temporary one.
+    const auto tmp = std::filesystem::temp_directory_path() /
+                     fmt::format("vstudio-{}.{}", Id::random().to_string(),
+                                 sc.format == "step" ? "step" : "iges");
+    {
+      std::ofstream f(tmp, std::ios::binary);
+      f.write(reinterpret_cast<const char*>(it->second.data()),
+              static_cast<std::streamsize>(it->second.size()));
+    }
+    auto shape = sc.format == "step" ? kernel::read_step(tmp) : kernel::read_iges(tmp);
+    std::error_code ignored;
+    std::filesystem::remove(tmp, ignored);
+    if (!shape) {
+      vb.diagnostics.add(error(self, "model.contents.import_failed",
+                               fmt::format("its file doesn't read: {}", shape.error().message)));
+      vb.status = VolumeStatus::Failed;
+      return;
+    }
+    auto solid = Solid::from(*shape);
+    if (!solid) {
+      const auto parts = kernel::solids(*shape);
+      if (parts.size() == 1) solid = parts.front();
+    }
+    if (!solid) {
+      vb.diagnostics.add(error(self, "model.contents.import_failed",
+                               "its file holds no single solid"));
+      vb.status = VolumeStatus::Failed;
+      return;
+    }
+    vb.contents = *solid;
+    vb.status = VolumeStatus::Current;
+  }
+
+  void parametric(const Volume& v, const feature::FeatureTree& tree, VolumeBuild& vb) const {
+    const SubjectRef self = doc_.volume_subject(v.id);
+    feature::ExternalInputs inputs;
+    {
+      feature::ExternalInput boundary;
+      boundary.subject = doc_.boundary_subject(v.id);
+      boundary.result.faces = boundary_faces(v, vb.boundary);
+      inputs.references.push_back(std::move(boundary));
+    }
+    for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
+      const ConnectionSurface& c = doc_.connections[k];
+      if (!c.joins(v.id) || !out_.connections[k].ok) continue;
+      const ConnectionBuild& cb = out_.connections[k];
+      feature::ExternalInput in;
+      in.subject = doc_.connection_subject(c.id);
+      in.result.plane = cb.frame;
+      in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
+      inputs.references.push_back(std::move(in));
+    }
+    for (const auto& [name, value] : vb.parameters) inputs.values.emplace(name, value);
+
+    feature::RebuildOptions options;
+    options.inputs = &inputs;
+    vb.contents_rebuild = feature::rebuild(tree, settings_, options);
+    const auto& r = *vb.contents_rebuild;
+    if (!r.ok()) {
+      vb.diagnostics.add(error(self, "model.contents.failed",
+                               "its contents' feature tree didn't rebuild cleanly"));
+      vb.diagnostics.append(r.diagnostics);
+      vb.status = VolumeStatus::Failed;
+    } else {
+      vb.diagnostics.append(r.diagnostics);  // warnings
+      vb.status = VolumeStatus::Current;
+    }
+    vb.contents = r.body;
+  }
+
+  void measure(const Volume& v, VolumeBuild& vb) const {
+    for (const auto& o : v.outputs) {
+      OutputResult res{o.id, std::nullopt};
+      if (!vb.contents.is_empty()) {
+        const auto mass = kernel::mass_properties(vb.contents);
+        switch (o.quantity) {
+          case OutputQuantity::Volume:
+            if (mass) res.value = mass->volume;
+            break;
+          case OutputQuantity::Mass:
+            // mm³ to cm³ is 1e-3; g/cm³ * cm³ = g.
+            if (mass) res.value = mass->volume * 1e-3 * o.density;
+            break;
+          case OutputQuantity::SurfaceArea:
+            res.value = kernel::surface_area(vb.contents);
+            break;
+          case OutputQuantity::CentreOfGravity:
+            if (mass) res.value = mass->center_of_mass;
+            break;
+          case OutputQuantity::Envelope:
+            res.value = kernel::bounding_box(vb.contents);
+            break;
+        }
+      }
+      vb.outputs.push_back(res);
+    }
+  }
+};
+
+}  // namespace
+
+DocumentBuild build(const Document& document, const ProductSettings& settings,
+                    const BlobStore* blobs) {
+  return DocumentBuilder(document, settings, blobs).run();
+}
+
+}  // namespace vs::model

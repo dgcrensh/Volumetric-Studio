@@ -1,13 +1,43 @@
-# vs_model: document, volume tree, connection surfaces, reference resolution, project files.
-# Empty until M5 fills it in. Add dependencies on lower modules here; the
-# configure-time check rejects any link to a module above this one.
+# vs_model: document, volume tree, boundaries, keep-outs, connection surfaces,
+# published outputs, reference resolution, dependency graph, project files.
+#
+# Built on vs_feature (layout and parametric contents). nlohmann-json stays
+# private; zip files use a small stored-only reader and writer in src/zip.cpp
+# (decision 0005).
+
+find_package(nlohmann_json CONFIG REQUIRED)
 
 vs_add_library(vs_model
   SOURCES
+    src/build.cpp
+    src/check.cpp
+    src/dependency.cpp
+    src/document.cpp
     src/module.cpp
+    src/project.cpp
+    src/references.cpp
+    src/serialize.cpp
+    src/zip.cpp
   PUBLIC_LINKS
-    vs::vs_core)
+    vs::vs_core
+    vs::vs_kernel
+    vs::vs_sketch
+    vs::vs_feature
+  PRIVATE_LINKS
+    nlohmann_json::nlohmann_json)
 
 vs_add_library_tests(vs_model
   SOURCES
-    tests/test_module.cpp)
+    tests/bracket.cpp
+    tests/test_build.cpp
+    tests/test_dependency.cpp
+    tests/test_document.cpp
+    tests/test_encapsulation.cpp
+    tests/test_module.cpp
+    tests/test_project.cpp
+    tests/test_zip.cpp)
+
+if(VS_BUILD_TESTS)
+  target_compile_definitions(vs_model_tests PRIVATE
+    VS_MODEL_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()
