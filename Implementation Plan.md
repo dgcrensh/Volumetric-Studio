@@ -434,7 +434,7 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | --- | --- |
 | Does OCCT's tolerance model fit ±1,000 mm at 1e-6 mm? | M1 tolerance spike |
 | Final working-space size and tolerance | M1 decision record |
-| Connection surface types and parameters for the MVP | Assumed bonded, clearance, bolted flange; parameters fixed in M5 |
+| Connection surface types and parameters for the MVP | Bonded, clearance (gap), bolted flange (hole pattern, thread, minimum wall): M5, decision 0005 |
 | Authored or derived seams on curved connection surfaces | Deferred: MVP is planar with derived seams; revisit in L2 |
 | Can the tessellator respect fixed seam edges on B-rep faces? | M8 |
 | Single field-to-mesh algorithm or per node? | Single (surface nets) for the MVP, in M11 |
@@ -448,5 +448,6 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | M1 | Done | #2 | OCCT 8.0.1; tolerance findings in decision 0001 |
 | M2 | Done | #3 | PlaneGCS from FreeCAD 1.1.4 in `third_party/planegcs`, built without Boost |
 | M3 | Done | #5 | Fuzzy feature booleans and geometric face references (decision 0002) |
-| M4 | In review | #6 | Branch `m4-features`. Edges found by their faces, cylindrical face names, fallback search for fillets, chamfers and shells (decision 0003) |
-| M5–M17 | Not started | | |
+| M4 | Done | #6 | Edges found by their faces, cylindrical face names, fallback search for fillets, chamfers and shells (decision 0003) |
+| M5 | In review | | First milestone from a cloud session. Connection surface types fixed, contents see inputs through `ExternalInputs`, stored-only zips (decision 0005) |
+| M6–M17 | Not started | | |

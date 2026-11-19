@@ -339,6 +339,20 @@ struct Feature {
   friend bool operator==(const Feature&, const Feature&) = default;
 };
 
+// --- what a feature refers to ---------------------------------------------------
+
+// Everything a feature refers to, for dependency graphs and encapsulation
+// checks above this module (vs_model). Ids appear once each, in the order
+// first met; `variables` are the names its expressions use (its Params and,
+// for a sketch, its dimensions' expressions), sorted, without repeats.
+// Expressions that don't parse contribute nothing; the rebuild reports them.
+struct FeatureReferences {
+  std::vector<Id> features;                     // FeatureRef, FaceRef, sketch and pattern ids
+  std::vector<SketchEntityRef> sketch_entities;  // also listed by sketch in `features`
+  std::vector<std::string> variables;
+};
+FeatureReferences references_of(const Feature& feature);
+
 // --- the tree -----------------------------------------------------------------
 
 class FeatureTree {

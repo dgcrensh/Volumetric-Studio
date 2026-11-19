@@ -247,7 +247,7 @@ The kernel interface stays small because procedural contents never touch B-rep. 
 
 - [x] Does OCCT's tolerance model fit a fixed ±1,000 mm box at 1e-6 mm? Yes (M1, decision 0001).
 - [x] Final working-space size and tolerance values: ±1,000 mm and 1e-6 mm (M1, decision 0001).
-- [ ] Full list of connection surface types and their parameters for the MVP
+- [x] Full list of connection surface types and their parameters for the MVP: bonded; clearance (gap); bolted flange (hole pattern, thread size, minimum wall) (M5, decision 0005).
 - [ ] Should a curved connection surface's seam definition be authored, or derived automatically?
 - [ ] Can the tessellator be made to respect fixed seam edges on B-rep faces?
 - [ ] Should field-to-mesh conversion be a single algorithm (e.g. dual contouring) or chosen per node?

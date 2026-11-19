@@ -1,6 +1,7 @@
 #include "vs/feature/tree.hpp"
 
 #include <algorithm>
+#include <set>
 
 #include <fmt/format.h>
 
@@ -175,6 +176,171 @@ Diagnostics FeatureTree::validate() const {
   }
   out.append(variables_.check());
   return out;
+}
+
+// --- references_of --------------------------------------------------------------
+
+namespace {
+
+class ReferenceCollector {
+ public:
+  FeatureReferences out;
+
+  void id(const Id& id) {
+    if (id.is_null()) return;
+    if (std::find(out.features.begin(), out.features.end(), id) == out.features.end()) {
+      out.features.push_back(id);
+    }
+  }
+  void entity(const SketchEntityRef& e) {
+    id(e.sketch);
+    if (std::find(out.sketch_entities.begin(), out.sketch_entities.end(), e) ==
+        out.sketch_entities.end()) {
+      out.sketch_entities.push_back(e);
+    }
+  }
+  void expression(const std::string& text) {
+    if (text.empty()) return;
+    auto e = Expression::parse(text);
+    if (!e) return;
+    for (const auto& name : e->references()) names_.insert(name);
+  }
+  void param(const Param& p) { expression(p.expression); }
+
+  void plane(const PlaneRef& ref) {
+    if (const auto* f = std::get_if<FeatureRef>(&ref)) id(f->feature);
+    if (const auto* f = std::get_if<FaceRef>(&ref)) id(f->feature);
+  }
+  void axis(const AxisRef& ref) {
+    if (const auto* f = std::get_if<FeatureRef>(&ref)) id(f->feature);
+    if (const auto* e = std::get_if<SketchEntityRef>(&ref)) entity(*e);
+  }
+  void point(const PointRef& ref) {
+    if (const auto* f = std::get_if<FeatureRef>(&ref)) id(f->feature);
+    if (const auto* e = std::get_if<SketchEntityRef>(&ref)) entity(*e);
+  }
+  void face(const FaceRef& ref) { id(ref.feature); }
+  void edge(const EdgeRef& ref) {
+    face(ref.face);
+    if (ref.other) face(*ref.other);
+  }
+
+  void visit(const SketchFeature& f) {
+    plane(f.plane);
+    for (const auto& c : f.sketch.constraints()) {
+      if (c.dimension) expression(c.dimension->expression);
+    }
+  }
+  void visit(const DatumPlaneFeature& f) {
+    std::visit(
+        [this](const auto& d) {
+          using T = std::decay_t<decltype(d)>;
+          if constexpr (std::is_same_v<T, PlaneOffset>) {
+            plane(d.base);
+            param(d.distance);
+          } else if constexpr (std::is_same_v<T, PlaneThroughPoints>) {
+            point(d.a);
+            point(d.b);
+            point(d.c);
+          } else {
+            axis(d.axis);
+            plane(d.base);
+            param(d.angle);
+          }
+        },
+        f.definition);
+  }
+  void visit(const DatumAxisFeature& f) {
+    std::visit(
+        [this](const auto& d) {
+          using T = std::decay_t<decltype(d)>;
+          if constexpr (std::is_same_v<T, AxisThroughPoints>) {
+            point(d.a);
+            point(d.b);
+          } else if constexpr (std::is_same_v<T, AxisPlaneIntersection>) {
+            plane(d.a);
+            plane(d.b);
+          } else {
+            axis(d.axis);
+          }
+        },
+        f.definition);
+  }
+  void visit(const DatumPointFeature& f) {
+    std::visit(
+        [this](const auto& d) {
+          using T = std::decay_t<decltype(d)>;
+          if constexpr (std::is_same_v<T, PointAt>) {
+            param(d.x);
+            param(d.y);
+            param(d.z);
+          } else if constexpr (std::is_same_v<T, PointAtRef>) {
+            point(d.point);
+          } else {
+            axis(d.axis);
+            plane(d.plane);
+          }
+        },
+        f.definition);
+  }
+  void visit(const ExtrudeFeature& f) {
+    id(f.sketch);
+    param(f.depth);
+    if (f.extent == Extent::UpToPlane) plane(f.up_to);
+    param(f.draft);
+  }
+  void visit(const RevolveFeature& f) {
+    id(f.sketch);
+    axis(f.axis);
+    param(f.angle);
+  }
+  void visit(const SweepFeature& f) {
+    id(f.profile);
+    id(f.path);
+  }
+  void visit(const LoftFeature& f) {
+    for (const auto& s : f.sections) id(s);
+  }
+  void visit(const ShellFeature& f) {
+    for (const auto& r : f.open) face(r);
+    param(f.thickness);
+  }
+  void visit(const FilletFeature& f) {
+    for (const auto& e : f.edges) edge(e);
+    param(f.radius);
+  }
+  void visit(const ChamferFeature& f) {
+    for (const auto& e : f.edges) edge(e);
+    param(f.distance);
+  }
+  void visit(const LinearPatternFeature& f) {
+    for (const auto& s : f.features) id(s);
+    axis(f.direction);
+    param(f.count);
+    param(f.spacing);
+  }
+  void visit(const CircularPatternFeature& f) {
+    for (const auto& s : f.features) id(s);
+    axis(f.axis);
+    param(f.count);
+    param(f.angle);
+  }
+
+  FeatureReferences finish() {
+    out.variables.assign(names_.begin(), names_.end());
+    return std::move(out);
+  }
+
+ private:
+  std::set<std::string> names_;
+};
+
+}  // namespace
+
+FeatureReferences references_of(const Feature& feature) {
+  ReferenceCollector c;
+  std::visit([&c](const auto& def) { c.visit(def); }, feature.definition);
+  return c.finish();
 }
 
 }  // namespace vs::feature
