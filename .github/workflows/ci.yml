@@ -35,16 +35,24 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build clang pkg-config zip unzip curl tar
+          # Open CASCADE (vs_kernel) builds its visualisation toolkits against
+          # the system's OpenGL and X11 headers.
+          sudo apt-get install -y libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev \
+            libx11-dev libxext-dev libxi-dev libxmu-dev
 
       - name: Create vcpkg binary cache directory
         shell: bash
         run: mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
+      # The top-level CMakeLists.txt selects the vcpkg manifest features, so
+      # it is part of the key. The cache is saved even when tests fail, so a
+      # long dependency build (OCCT) is never paid twice.
       - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
-          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json') }}
+          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json', 'CMakeLists.txt') }}
           restore-keys: vcpkg-${{ matrix.preset }}-
 
       - name: Build and test (Windows)
@@ -55,3 +63,10 @@ jobs:
       - name: Build and test (Linux)
         if: runner.os == 'Linux'
         run: ./scripts/build.sh ${{ matrix.preset }}
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-binary-cache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}

@@ -1,5 +1,6 @@
 #include "selftest.hpp"
 
+#include <cmath>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -9,6 +10,7 @@
 #include "vs/eval/module.hpp"
 #include "vs/feature/module.hpp"
 #include "vs/kernel/module.hpp"
+#include "vs/kernel/kernel.hpp"
 #include "vs/mesh/module.hpp"
 #include "vs/model/module.hpp"
 #include "vs/proc/module.hpp"
@@ -56,6 +58,14 @@ std::vector<Check> checks() {
        [] {
          const Id id = Id::random();
          return Id::parse(id.to_string()) == id;
+       }},
+      {"kernel: unit box volume",
+       [] {
+         const auto box = vs::kernel::make_box(dbox3::from_min_max({0, 0, 0}, {1, 2, 3}),
+                                               ProductSettings::defaults());
+         if (!box) return false;
+         const auto mass = vs::kernel::mass_properties(*box);
+         return mass && std::abs(mass->volume - 6.0) < 1e-9;
        }},
       {"all modules linked",
        [] {

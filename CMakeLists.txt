@@ -6,6 +6,8 @@ option(VS_BUILD_APP "Build the Qt desktop application (vs_app); needs Qt 6" OFF)
 option(VS_BUILD_TESTS "Build the Catch2 test suites" ON)
 option(VS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
+# vs_kernel wraps Open CASCADE from M1 onward, so every build needs it.
+list(APPEND VCPKG_MANIFEST_FEATURES "kernel")
 if(VS_BUILD_APP)
   list(APPEND VCPKG_MANIFEST_FEATURES "app")
 endif()

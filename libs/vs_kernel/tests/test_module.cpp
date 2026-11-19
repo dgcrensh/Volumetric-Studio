@@ -2,6 +2,6 @@
 
 #include "vs/kernel/module.hpp"
 
-TEST_CASE("vs_kernel skeleton links", "[kernel]") {
+TEST_CASE("vs_kernel links", "[kernel]") {
   CHECK(vs::kernel::module_name() == "vs_kernel");
 }
