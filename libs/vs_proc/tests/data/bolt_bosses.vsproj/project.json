@@ -1,0 +1,326 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "4a36d86465e6ca0f34e4a7f156b4b20f",
+    "name": "Bolt bosses",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [],
+      "features": [
+        {
+          "id": "80e1b51e161a2f5035c2c723de7dd9f3",
+          "name": "P min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "4a77fc6ca95c2953040610ea4c9f00f9",
+          "name": "P max",
+          "type": "datum_point",
+          "at": {
+            "x": 40.0,
+            "y": 30.0,
+            "z": 20.0
+          }
+        },
+        {
+          "id": "82dc12ff84d87d2cf2fb58eaec795151",
+          "name": "Q min",
+          "type": "datum_point",
+          "at": {
+            "x": 40.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "b2ac0506bde8bb0a1d2cc827966babce",
+          "name": "Q max",
+          "type": "datum_point",
+          "at": {
+            "x": 80.0,
+            "y": 30.0,
+            "z": 20.0
+          }
+        },
+        {
+          "id": "82d44487bc61a00e676e01761699ec06",
+          "name": "Joint",
+          "type": "datum_plane",
+          "offset": {
+            "base": {
+              "principal": "yz"
+            },
+            "distance": 40.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "7bd6481d6fc89b2a99c4f5fcef170b8c",
+        "name": "Bosses",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "80e1b51e161a2f5035c2c723de7dd9f3"
+            },
+            "max": {
+              "feature": "4a77fc6ca95c2953040610ea4c9f00f9"
+            }
+          }
+        },
+        "contents": {
+          "kind": "procedural",
+          "graph": "{\n  \"format\": \"vstudio.graph\",\n  \"version\": 1,\n  \"parameters\": [\n    {\n      \"name\": \"wall\",\n      \"value\": 1.2\n    },\n    {\n      \"name\": \"boss_radius\",\n      \"value\": 4.0\n    },\n    {\n      \"name\": \"boss_height\",\n      \"value\": 8.0\n    }\n  ],\n  \"nodes\": [\n    {\n      \"id\": \"458b82c91dec7dfe57e600de0155c9d9\",\n      \"type\": \"input.boundary\",\n      \"name\": \"Boundary\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"f1a7dacd9be9c2adaac5d382054c83b9\",\n      \"type\": \"input.parameter\",\n      \"name\": \"wall\",\n      \"settings\": {\n        \"name\": \"wall\"\n      }\n    },\n    {\n      \"id\": \"721299d8e5df64f24f90882bf478ae29\",\n      \"type\": \"field.shell\",\n      \"name\": \"Skin\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"99ae658cbe5a333ac82897cafcd83d26\",\n      \"type\": \"input.surface\",\n      \"name\": \"Flange\",\n      \"settings\": {\n        \"surface\": \"e022bb5320ea1ddb895c10d7d82c3c3e\"\n      }\n    },\n    {\n      \"id\": \"8c7700cb649cc0fb3114181a4decdbd3\",\n      \"type\": \"input.parameter\",\n      \"name\": \"boss_radius\",\n      \"settings\": {\n        \"name\": \"boss_radius\"\n      }\n    },\n    {\n      \"id\": \"b0cea9646dc56b2cca2af4dc487d80e7\",\n      \"type\": \"input.parameter\",\n      \"name\": \"boss_height\",\n      \"settings\": {\n        \"name\": \"boss_height\"\n      }\n    },\n    {\n      \"id\": \"ddfae38e9ebeb9d557c03fc7adc38048\",\n      \"type\": \"math.multiply\",\n      \"name\": \"Both sides\",\n      \"settings\": {\n        \"b\": 2.0\n      }\n    },\n    {\n      \"id\": \"8f2a281ae700e1f1a0ff8c8bfcba9858\",\n      \"type\": \"field.cylinder\",\n      \"name\": \"Boss\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"d91db3ec8e6dee26a9f8bf375a79e9b6\",\n      \"type\": \"math.add\",\n      \"name\": \"Reach\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"183e1314149abe81675aa83b09c16cd3\",\n      \"type\": \"field.instances\",\n      \"name\": \"Bosses\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"d0ba1f8488a5e32206b2ff24a3ac1014\",\n      \"type\": \"frames.count\",\n      \"name\": \"Holes\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"8763cb7ee9ff23c896647f45b6d54565\",\n      \"type\": \"output.publish\",\n      \"name\": \"Boss count\",\n      \"settings\": {\n        \"name\": \"boss_count\"\n      }\n    },\n    {\n      \"id\": \"9163ae66a39096f4da6e6634a141a64d\",\n      \"type\": \"field.intersection\",\n      \"name\": \"Infill in boundary\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"00ebeeb2678cb8caf55e99d919ebf9a8\",\n      \"type\": \"field.union\",\n      \"name\": \"Skin and infill\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"be7ac3859a60acac7de26b7f93af4a02\",\n      \"type\": \"output\",\n      \"name\": \"Contents\",\n      \"settings\": {\n        \"cell_size\": 1.0\n      }\n    }\n  ],\n  \"edges\": [\n    {\n      \"from\": {\n        \"node\": \"458b82c91dec7dfe57e600de0155c9d9\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"721299d8e5df64f24f90882bf478ae29\",\n        \"port\": \"field\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"f1a7dacd9be9c2adaac5d382054c83b9\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"721299d8e5df64f24f90882bf478ae29\",\n        \"port\": \"thickness\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"b0cea9646dc56b2cca2af4dc487d80e7\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"ddfae38e9ebeb9d557c03fc7adc38048\",\n        \"port\": \"a\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"8c7700cb649cc0fb3114181a4decdbd3\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"8f2a281ae700e1f1a0ff8c8bfcba9858\",\n        \"port\": \"radius\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"ddfae38e9ebeb9d557c03fc7adc38048\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"8f2a281ae700e1f1a0ff8c8bfcba9858\",\n        \"port\": \"height\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"8c7700cb649cc0fb3114181a4decdbd3\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"d91db3ec8e6dee26a9f8bf375a79e9b6\",\n        \"port\": \"a\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"b0cea9646dc56b2cca2af4dc487d80e7\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"d91db3ec8e6dee26a9f8bf375a79e9b6\",\n        \"port\": \"b\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"8f2a281ae700e1f1a0ff8c8bfcba9858\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"183e1314149abe81675aa83b09c16cd3\",\n        \"port\": \"template\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"99ae658cbe5a333ac82897cafcd83d26\",\n        \"port\": \"holes\"\n      },\n      \"to\": {\n        \"node\": \"183e1314149abe81675aa83b09c16cd3\",\n        \"port\": \"frames\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"d91db3ec8e6dee26a9f8bf375a79e9b6\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"183e1314149abe81675aa83b09c16cd3\",\n        \"port\": \"radius\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"99ae658cbe5a333ac82897cafcd83d26\",\n        \"port\": \"holes\"\n      },\n      \"to\": {\n        \"node\": \"d0ba1f8488a5e32206b2ff24a3ac1014\",\n        \"port\": \"frames\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"d0ba1f8488a5e32206b2ff24a3ac1014\",\n        \"port\": \"count\"\n      },\n      \"to\": {\n        \"node\": \"8763cb7ee9ff23c896647f45b6d54565\",\n        \"port\": \"value\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"183e1314149abe81675aa83b09c16cd3\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"9163ae66a39096f4da6e6634a141a64d\",\n        \"port\": \"a\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"458b82c91dec7dfe57e600de0155c9d9\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"9163ae66a39096f4da6e6634a141a64d\",\n        \"port\": \"b\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"721299d8e5df64f24f90882bf478ae29\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"00ebeeb2678cb8caf55e99d919ebf9a8\",\n        \"port\": \"a\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"9163ae66a39096f4da6e6634a141a64d\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"00ebeeb2678cb8caf55e99d919ebf9a8\",\n        \"port\": \"b\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"00ebeeb2678cb8caf55e99d919ebf9a8\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"be7ac3859a60acac7de26b7f93af4a02\",\n        \"port\": \"contents\"\n      }\n    }\n  ]\n}"
+        },
+        "parameters": [
+          {
+            "id": "94d3a30d1233e7c03823c0a663f162ef",
+            "name": "wall",
+            "value": 2.0
+          }
+        ],
+        "seed": 7,
+        "outputs": [
+          {
+            "id": "25aa4465cf6ef2d63eea740de479974d",
+            "name": "boss_count",
+            "quantity": "published"
+          },
+          {
+            "id": "e115a2f45729cb1799041fdaea68a09d",
+            "name": "mass",
+            "quantity": "mass",
+            "density": 1.24
+          }
+        ]
+      },
+      {
+        "id": "834d79df189ab66477c054f4c24cd01f",
+        "name": "Q",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "82dc12ff84d87d2cf2fb58eaec795151"
+            },
+            "max": {
+              "feature": "b2ac0506bde8bb0a1d2cc827966babce"
+            }
+          }
+        },
+        "contents": {
+          "kind": "parametric",
+          "tree": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "4275d2ef4857a324aa4a90dd7044e100",
+                "type": "sketch",
+                "plane": {
+                  "face": {
+                    "feature": "834d79df189ab66477c054f4c24cd01f",
+                    "name": "+z"
+                  }
+                },
+                "sketch": {
+                  "constraints": [
+                    {
+                      "id": "0728e2a00789d206ba44c93e93630a7c",
+                      "refs": [
+                        "11ead6a39b470a2b6a0cfdc53dcabc70"
+                      ],
+                      "type": "fix"
+                    },
+                    {
+                      "id": "fc85a0290aa33a8ae7686746ef0edd2a",
+                      "refs": [
+                        "eda85d1e31323601692ded89e9b5f705"
+                      ],
+                      "type": "horizontal"
+                    },
+                    {
+                      "id": "3e8ef5e1ff93493559725448570b1854",
+                      "refs": [
+                        "feb329e2147062a73ab730947096398c"
+                      ],
+                      "type": "horizontal"
+                    },
+                    {
+                      "id": "418b19ac55e5ef98ac862d73e38ef36b",
+                      "refs": [
+                        "6c44423b027a13d6d153ee319e6cc657"
+                      ],
+                      "type": "vertical"
+                    },
+                    {
+                      "id": "057fed1fbf6295494c94fcbaf1c83251",
+                      "refs": [
+                        "0f1ea73409a6083cb38ee539fb54206e"
+                      ],
+                      "type": "vertical"
+                    },
+                    {
+                      "id": "1736d7379ce0ac0201ca26f42a708c59",
+                      "refs": [
+                        "eda85d1e31323601692ded89e9b5f705"
+                      ],
+                      "type": "distance",
+                      "value": 40.0
+                    },
+                    {
+                      "id": "3607a35c6fdedc4e2dbc71b050b92db7",
+                      "refs": [
+                        "6c44423b027a13d6d153ee319e6cc657"
+                      ],
+                      "type": "distance",
+                      "value": 30.0
+                    }
+                  ],
+                  "entities": [
+                    {
+                      "id": "11ead6a39b470a2b6a0cfdc53dcabc70",
+                      "position": [
+                        40.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "85b77b95271f0647299d03918c82f878",
+                      "position": [
+                        80.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "c001e1b5b087d5de4d5c0f55f95eb571",
+                      "position": [
+                        80.0,
+                        30.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "51bddd7b39600bb8e44f73d618d738bb",
+                      "position": [
+                        40.0,
+                        30.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "end": "85b77b95271f0647299d03918c82f878",
+                      "id": "eda85d1e31323601692ded89e9b5f705",
+                      "start": "11ead6a39b470a2b6a0cfdc53dcabc70",
+                      "type": "line"
+                    },
+                    {
+                      "end": "c001e1b5b087d5de4d5c0f55f95eb571",
+                      "id": "6c44423b027a13d6d153ee319e6cc657",
+                      "start": "85b77b95271f0647299d03918c82f878",
+                      "type": "line"
+                    },
+                    {
+                      "end": "51bddd7b39600bb8e44f73d618d738bb",
+                      "id": "feb329e2147062a73ab730947096398c",
+                      "start": "c001e1b5b087d5de4d5c0f55f95eb571",
+                      "type": "line"
+                    },
+                    {
+                      "end": "11ead6a39b470a2b6a0cfdc53dcabc70",
+                      "id": "0f1ea73409a6083cb38ee539fb54206e",
+                      "start": "51bddd7b39600bb8e44f73d618d738bb",
+                      "type": "line"
+                    }
+                  ],
+                  "format": "vstudio.sketch",
+                  "id": "4275d2ef4857a324aa4a90dd7044e100",
+                  "name": "Outline",
+                  "plane": {
+                    "origin": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "x_axis": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "y_axis": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "version": 1
+                }
+              },
+              {
+                "id": "93c6c1f4a7a7a9a61998a1f4464f4506",
+                "name": "Fill",
+                "type": "extrude",
+                "sketch": "4275d2ef4857a324aa4a90dd7044e100",
+                "operation": "add",
+                "extent": "blind",
+                "depth": 20.0,
+                "reverse": true
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "e022bb5320ea1ddb895c10d7d82c3c3e",
+        "name": "S",
+        "volumes": [
+          "7bd6481d6fc89b2a99c4f5fcef170b8c",
+          "834d79df189ab66477c054f4c24cd01f"
+        ],
+        "geometry": {
+          "datum": {
+            "plane": {
+              "feature": "82d44487bc61a00e676e01761699ec06"
+            },
+            "u": 10.0,
+            "v": 10.0,
+            "width": 10.0,
+            "height": 10.0
+          }
+        },
+        "type": "bolted_flange",
+        "holes": {
+          "grid": {
+            "columns": 1.0,
+            "rows": 1.0,
+            "pitch_x": 20.0,
+            "pitch_y": 20.0
+          },
+          "u": 10.0,
+          "v": 10.0
+        },
+        "thread": "M4",
+        "min_wall": 2.0,
+        "seam": {
+          "spacing": 0.0
+        }
+      }
+    ],
+    "keep_outs": [],
+    "links": []
+  },
+  "blobs": []
+}

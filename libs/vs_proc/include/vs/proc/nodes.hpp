@@ -59,6 +59,8 @@
 //
 // Input and query nodes read the volume's inputs; they are cheap and never
 // cached by node (their outputs' hashes still key everything downstream).
+// Neither are the scatter nodes, whose points depend on the volume's
+// boundary or surface as well as their own inputs.
 
 #include <cstdint>
 #include <functional>

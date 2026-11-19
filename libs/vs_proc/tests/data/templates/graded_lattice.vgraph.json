@@ -1,0 +1,378 @@
+{
+  "format": "vstudio.graph",
+  "version": 1,
+  "parameters": [
+    {
+      "name": "wall",
+      "value": 1.2
+    },
+    {
+      "name": "cell",
+      "value": 6.0
+    },
+    {
+      "name": "thick",
+      "value": 1.6
+    },
+    {
+      "name": "thin",
+      "value": 0.8
+    },
+    {
+      "name": "ramp",
+      "value": 6.0
+    }
+  ],
+  "nodes": [
+    {
+      "id": "a182cab3023dd8a47adaecce8ffcffea",
+      "type": "input.boundary",
+      "name": "Boundary",
+      "settings": {}
+    },
+    {
+      "id": "6e6aaf6dc99db69ff238a9164fc770e9",
+      "type": "input.parameter",
+      "name": "wall",
+      "settings": {
+        "name": "wall"
+      }
+    },
+    {
+      "id": "921173d3bd270ca118cc72ddc7e20ec9",
+      "type": "field.shell",
+      "name": "Skin",
+      "settings": {}
+    },
+    {
+      "id": "3401fcde1e51c479e8970f770d9f73e8",
+      "type": "input.parameter",
+      "name": "thick",
+      "settings": {
+        "name": "thick"
+      }
+    },
+    {
+      "id": "2d29c46daf5e22fa879160ae083877f2",
+      "type": "input.parameter",
+      "name": "thin",
+      "settings": {
+        "name": "thin"
+      }
+    },
+    {
+      "id": "7836ae2057289211341ecf1231560e85",
+      "type": "math.subtract",
+      "name": "Thick less thin",
+      "settings": {}
+    },
+    {
+      "id": "8bf7dd91639f7374cb8dfc307efeb5bc",
+      "type": "math.divide",
+      "name": "Per mm",
+      "settings": {}
+    },
+    {
+      "id": "ac84d75eaeff30f1e6e4be8d489a30d6",
+      "type": "input.parameter",
+      "name": "ramp",
+      "settings": {
+        "name": "ramp"
+      }
+    },
+    {
+      "id": "3bcb88d8a2a62215092002dd4915ff10",
+      "type": "math.negate",
+      "name": "Thinner inward",
+      "settings": {}
+    },
+    {
+      "id": "453f9065ea7a9276f2191c0155bb4359",
+      "type": "query.distance_to_boundary",
+      "name": "Depth",
+      "settings": {}
+    },
+    {
+      "id": "08d73758cfe47c3af98de4f6c0dc89ab",
+      "type": "field.scale",
+      "name": "Depth times slope",
+      "settings": {}
+    },
+    {
+      "id": "b3c48aa76cbe06aad9e42a2361ca5ba0",
+      "type": "field.constant",
+      "name": "Thick everywhere",
+      "settings": {}
+    },
+    {
+      "id": "64c96110214e3aeb411495f4b4992d2e",
+      "type": "field.add",
+      "name": "Thickness",
+      "settings": {}
+    },
+    {
+      "id": "63c22d74affc449927c19cb46c513d0c",
+      "type": "field.clamp",
+      "name": "Thickness clamped",
+      "settings": {}
+    },
+    {
+      "id": "dd698d9d1e450d49f713c0068542d8cf",
+      "type": "field.lattice",
+      "name": "Lattice",
+      "settings": {
+        "cell": "bcc"
+      }
+    },
+    {
+      "id": "c2f57e039beae01617dc7ccb6882e79e",
+      "type": "input.parameter",
+      "name": "cell",
+      "settings": {
+        "name": "cell"
+      }
+    },
+    {
+      "id": "8574df7371918463ce6711c4893c57b8",
+      "type": "field.intersection",
+      "name": "Infill in boundary",
+      "settings": {}
+    },
+    {
+      "id": "af971dc785324c664df22fec9a8fe094",
+      "type": "field.union",
+      "name": "Skin and infill",
+      "settings": {}
+    },
+    {
+      "id": "7a55a46615486b39a323ee96ee040c1b",
+      "type": "output",
+      "name": "Contents",
+      "settings": {
+        "cell_size": 0.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "node": "a182cab3023dd8a47adaecce8ffcffea",
+        "port": "field"
+      },
+      "to": {
+        "node": "921173d3bd270ca118cc72ddc7e20ec9",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "6e6aaf6dc99db69ff238a9164fc770e9",
+        "port": "value"
+      },
+      "to": {
+        "node": "921173d3bd270ca118cc72ddc7e20ec9",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "3401fcde1e51c479e8970f770d9f73e8",
+        "port": "value"
+      },
+      "to": {
+        "node": "7836ae2057289211341ecf1231560e85",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "2d29c46daf5e22fa879160ae083877f2",
+        "port": "value"
+      },
+      "to": {
+        "node": "7836ae2057289211341ecf1231560e85",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "7836ae2057289211341ecf1231560e85",
+        "port": "value"
+      },
+      "to": {
+        "node": "8bf7dd91639f7374cb8dfc307efeb5bc",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "ac84d75eaeff30f1e6e4be8d489a30d6",
+        "port": "value"
+      },
+      "to": {
+        "node": "8bf7dd91639f7374cb8dfc307efeb5bc",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "8bf7dd91639f7374cb8dfc307efeb5bc",
+        "port": "value"
+      },
+      "to": {
+        "node": "3bcb88d8a2a62215092002dd4915ff10",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "453f9065ea7a9276f2191c0155bb4359",
+        "port": "distance"
+      },
+      "to": {
+        "node": "08d73758cfe47c3af98de4f6c0dc89ab",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "3bcb88d8a2a62215092002dd4915ff10",
+        "port": "value"
+      },
+      "to": {
+        "node": "08d73758cfe47c3af98de4f6c0dc89ab",
+        "port": "factor"
+      }
+    },
+    {
+      "from": {
+        "node": "3401fcde1e51c479e8970f770d9f73e8",
+        "port": "value"
+      },
+      "to": {
+        "node": "b3c48aa76cbe06aad9e42a2361ca5ba0",
+        "port": "value"
+      }
+    },
+    {
+      "from": {
+        "node": "b3c48aa76cbe06aad9e42a2361ca5ba0",
+        "port": "field"
+      },
+      "to": {
+        "node": "64c96110214e3aeb411495f4b4992d2e",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "08d73758cfe47c3af98de4f6c0dc89ab",
+        "port": "field"
+      },
+      "to": {
+        "node": "64c96110214e3aeb411495f4b4992d2e",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "64c96110214e3aeb411495f4b4992d2e",
+        "port": "field"
+      },
+      "to": {
+        "node": "63c22d74affc449927c19cb46c513d0c",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "2d29c46daf5e22fa879160ae083877f2",
+        "port": "value"
+      },
+      "to": {
+        "node": "63c22d74affc449927c19cb46c513d0c",
+        "port": "min"
+      }
+    },
+    {
+      "from": {
+        "node": "3401fcde1e51c479e8970f770d9f73e8",
+        "port": "value"
+      },
+      "to": {
+        "node": "63c22d74affc449927c19cb46c513d0c",
+        "port": "max"
+      }
+    },
+    {
+      "from": {
+        "node": "c2f57e039beae01617dc7ccb6882e79e",
+        "port": "value"
+      },
+      "to": {
+        "node": "dd698d9d1e450d49f713c0068542d8cf",
+        "port": "cell_size"
+      }
+    },
+    {
+      "from": {
+        "node": "63c22d74affc449927c19cb46c513d0c",
+        "port": "field"
+      },
+      "to": {
+        "node": "dd698d9d1e450d49f713c0068542d8cf",
+        "port": "grade"
+      }
+    },
+    {
+      "from": {
+        "node": "dd698d9d1e450d49f713c0068542d8cf",
+        "port": "field"
+      },
+      "to": {
+        "node": "8574df7371918463ce6711c4893c57b8",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "a182cab3023dd8a47adaecce8ffcffea",
+        "port": "field"
+      },
+      "to": {
+        "node": "8574df7371918463ce6711c4893c57b8",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "921173d3bd270ca118cc72ddc7e20ec9",
+        "port": "field"
+      },
+      "to": {
+        "node": "af971dc785324c664df22fec9a8fe094",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "8574df7371918463ce6711c4893c57b8",
+        "port": "field"
+      },
+      "to": {
+        "node": "af971dc785324c664df22fec9a8fe094",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "af971dc785324c664df22fec9a8fe094",
+        "port": "field"
+      },
+      "to": {
+        "node": "7a55a46615486b39a323ee96ee040c1b",
+        "port": "contents"
+      }
+    }
+  ]
+}

@@ -210,4 +210,35 @@ if(VS_BUILD_TESTS)
             "${CMAKE_CURRENT_BINARY_DIR}/shell_and_ball.stl")
   set_tests_properties("vstudio-cli: rebuild meshes a procedural volume and writes STL" PROPERTIES
     PASS_REGULAR_EXPRESSION "weld +[0-9]+ triangles, 3 shells, watertight yes, manifold yes.*wrote .*shell_and_ball\\.stl.*result +ok")
+
+  # M12: templates, outputs, inspection, bake and unbake, the gyroid bench.
+  add_test(NAME "vstudio-cli: templates lists the starter templates" COMMAND vstudio-cli templates)
+  set_tests_properties("vstudio-cli: templates lists the starter templates" PROPERTIES
+    PASS_REGULAR_EXPRESSION "gyroid_infill.*graded_lattice.*bolt_bosses")
+  add_test(NAME "vstudio-cli: rebuild generates bolt bosses and publishes their count"
+    COMMAND vstudio-cli rebuild "${proc_data}/bolt_bosses.vsproj" --threads 4 --weld)
+  set_tests_properties("vstudio-cli: rebuild generates bolt bosses and publishes their count" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Bosses +current.*1 seam stitched.*boss_count = 1.*mass = [0-9.]+.*watertight yes, manifold yes.*result +ok")
+  add_test(NAME "vstudio-cli: inspect evaluates one node"
+    COMMAND vstudio-cli inspect "${proc_data}/bolt_bosses.vsproj" Bosses Flange --preview)
+  set_tests_properties("vstudio-cli: inspect evaluates one node" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Flange \\(input\\.surface\\), 1 nodes evaluated.*area +100.*holes +1 frames.*preview 1 points")
+  add_test(NAME "vstudio-cli: bake writes a static volume"
+    COMMAND vstudio-cli bake "${proc_data}/bolt_bosses.vsproj" Bosses
+            --out "${CMAKE_CURRENT_BINARY_DIR}/baked.vsproj")
+  set_tests_properties("vstudio-cli: bake writes a static volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "baked +content hash" FIXTURES_SETUP baked)
+  add_test(NAME "vstudio-cli: a baked volume welds"
+    COMMAND vstudio-cli rebuild "${CMAKE_CURRENT_BINARY_DIR}/baked.vsproj" --weld)
+  set_tests_properties("vstudio-cli: a baked volume welds" PROPERTIES
+    PASS_REGULAR_EXPRESSION "watertight yes, manifold yes.*result +ok" FIXTURES_REQUIRED baked)
+  add_test(NAME "vstudio-cli: unbake restores the procedural volume"
+    COMMAND vstudio-cli unbake "${CMAKE_CURRENT_BINARY_DIR}/baked.vsproj" Bosses
+            --out "${CMAKE_CURRENT_BINARY_DIR}/unbaked.vsproj")
+  set_tests_properties("vstudio-cli: unbake restores the procedural volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "unbaked +content hash" FIXTURES_REQUIRED baked)
+  add_test(NAME "vstudio-cli: bench-gyroid times a small gyroid"
+    COMMAND vstudio-cli bench-gyroid --size 20 --cell 1)
+  set_tests_properties("vstudio-cli: bench-gyroid times a small gyroid" PROPERTIES
+    PASS_REGULAR_EXPRESSION "surface nets.*containment.*contained.*engine.*mass")
 endif()

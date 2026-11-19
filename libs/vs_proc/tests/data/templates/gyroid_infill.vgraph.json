@@ -1,0 +1,176 @@
+{
+  "format": "vstudio.graph",
+  "version": 1,
+  "parameters": [
+    {
+      "name": "wall",
+      "value": 1.2
+    },
+    {
+      "name": "cell",
+      "value": 8.0
+    },
+    {
+      "name": "thickness",
+      "value": 0.8
+    }
+  ],
+  "nodes": [
+    {
+      "id": "0c2afe9ebb461bcc2d77daa971e299e4",
+      "type": "input.boundary",
+      "name": "Boundary",
+      "settings": {}
+    },
+    {
+      "id": "d58ada1c768407d22d9aed0c7927388e",
+      "type": "input.parameter",
+      "name": "wall",
+      "settings": {
+        "name": "wall"
+      }
+    },
+    {
+      "id": "1ded0487d30ca440b8534e1d9eb97b73",
+      "type": "field.shell",
+      "name": "Skin",
+      "settings": {}
+    },
+    {
+      "id": "fad11ce2cf4cb184ec61f54e80c96d4d",
+      "type": "field.tpms",
+      "name": "Gyroid",
+      "settings": {
+        "surface": "gyroid"
+      }
+    },
+    {
+      "id": "57ee7fad2ba3eccbba03f972692bcba7",
+      "type": "input.parameter",
+      "name": "cell",
+      "settings": {
+        "name": "cell"
+      }
+    },
+    {
+      "id": "da840378cc8de55d3ac51961ff27c1e0",
+      "type": "input.parameter",
+      "name": "thickness",
+      "settings": {
+        "name": "thickness"
+      }
+    },
+    {
+      "id": "68e6efdb93d633faa91e89b865722abb",
+      "type": "field.intersection",
+      "name": "Infill in boundary",
+      "settings": {}
+    },
+    {
+      "id": "b7de9589ce703cc858c3d1d0c01fee63",
+      "type": "field.union",
+      "name": "Skin and infill",
+      "settings": {}
+    },
+    {
+      "id": "d0e9087746a5e81e9d553d33d6df476d",
+      "type": "output",
+      "name": "Contents",
+      "settings": {
+        "cell_size": 0.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "node": "0c2afe9ebb461bcc2d77daa971e299e4",
+        "port": "field"
+      },
+      "to": {
+        "node": "1ded0487d30ca440b8534e1d9eb97b73",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "d58ada1c768407d22d9aed0c7927388e",
+        "port": "value"
+      },
+      "to": {
+        "node": "1ded0487d30ca440b8534e1d9eb97b73",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "57ee7fad2ba3eccbba03f972692bcba7",
+        "port": "value"
+      },
+      "to": {
+        "node": "fad11ce2cf4cb184ec61f54e80c96d4d",
+        "port": "cell_size"
+      }
+    },
+    {
+      "from": {
+        "node": "da840378cc8de55d3ac51961ff27c1e0",
+        "port": "value"
+      },
+      "to": {
+        "node": "fad11ce2cf4cb184ec61f54e80c96d4d",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "fad11ce2cf4cb184ec61f54e80c96d4d",
+        "port": "field"
+      },
+      "to": {
+        "node": "68e6efdb93d633faa91e89b865722abb",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "0c2afe9ebb461bcc2d77daa971e299e4",
+        "port": "field"
+      },
+      "to": {
+        "node": "68e6efdb93d633faa91e89b865722abb",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "1ded0487d30ca440b8534e1d9eb97b73",
+        "port": "field"
+      },
+      "to": {
+        "node": "b7de9589ce703cc858c3d1d0c01fee63",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "68e6efdb93d633faa91e89b865722abb",
+        "port": "field"
+      },
+      "to": {
+        "node": "b7de9589ce703cc858c3d1d0c01fee63",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "b7de9589ce703cc858c3d1d0c01fee63",
+        "port": "field"
+      },
+      "to": {
+        "node": "d0e9087746a5e81e9d553d33d6df476d",
+        "port": "contents"
+      }
+    }
+  ]
+}

@@ -1,0 +1,296 @@
+{
+  "format": "vstudio.graph",
+  "version": 1,
+  "parameters": [
+    {
+      "name": "wall",
+      "value": 1.2
+    },
+    {
+      "name": "boss_radius",
+      "value": 4.0
+    },
+    {
+      "name": "boss_height",
+      "value": 8.0
+    }
+  ],
+  "nodes": [
+    {
+      "id": "458b82c91dec7dfe57e600de0155c9d9",
+      "type": "input.boundary",
+      "name": "Boundary",
+      "settings": {}
+    },
+    {
+      "id": "f1a7dacd9be9c2adaac5d382054c83b9",
+      "type": "input.parameter",
+      "name": "wall",
+      "settings": {
+        "name": "wall"
+      }
+    },
+    {
+      "id": "721299d8e5df64f24f90882bf478ae29",
+      "type": "field.shell",
+      "name": "Skin",
+      "settings": {}
+    },
+    {
+      "id": "99ae658cbe5a333ac82897cafcd83d26",
+      "type": "input.surface",
+      "name": "Flange",
+      "settings": {
+        "surface": "e022bb5320ea1ddb895c10d7d82c3c3e"
+      }
+    },
+    {
+      "id": "8c7700cb649cc0fb3114181a4decdbd3",
+      "type": "input.parameter",
+      "name": "boss_radius",
+      "settings": {
+        "name": "boss_radius"
+      }
+    },
+    {
+      "id": "b0cea9646dc56b2cca2af4dc487d80e7",
+      "type": "input.parameter",
+      "name": "boss_height",
+      "settings": {
+        "name": "boss_height"
+      }
+    },
+    {
+      "id": "ddfae38e9ebeb9d557c03fc7adc38048",
+      "type": "math.multiply",
+      "name": "Both sides",
+      "settings": {
+        "b": 2.0
+      }
+    },
+    {
+      "id": "8f2a281ae700e1f1a0ff8c8bfcba9858",
+      "type": "field.cylinder",
+      "name": "Boss",
+      "settings": {}
+    },
+    {
+      "id": "d91db3ec8e6dee26a9f8bf375a79e9b6",
+      "type": "math.add",
+      "name": "Reach",
+      "settings": {}
+    },
+    {
+      "id": "183e1314149abe81675aa83b09c16cd3",
+      "type": "field.instances",
+      "name": "Bosses",
+      "settings": {}
+    },
+    {
+      "id": "d0ba1f8488a5e32206b2ff24a3ac1014",
+      "type": "frames.count",
+      "name": "Holes",
+      "settings": {}
+    },
+    {
+      "id": "8763cb7ee9ff23c896647f45b6d54565",
+      "type": "output.publish",
+      "name": "Boss count",
+      "settings": {
+        "name": "boss_count"
+      }
+    },
+    {
+      "id": "9163ae66a39096f4da6e6634a141a64d",
+      "type": "field.intersection",
+      "name": "Infill in boundary",
+      "settings": {}
+    },
+    {
+      "id": "00ebeeb2678cb8caf55e99d919ebf9a8",
+      "type": "field.union",
+      "name": "Skin and infill",
+      "settings": {}
+    },
+    {
+      "id": "be7ac3859a60acac7de26b7f93af4a02",
+      "type": "output",
+      "name": "Contents",
+      "settings": {
+        "cell_size": 0.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "node": "458b82c91dec7dfe57e600de0155c9d9",
+        "port": "field"
+      },
+      "to": {
+        "node": "721299d8e5df64f24f90882bf478ae29",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "f1a7dacd9be9c2adaac5d382054c83b9",
+        "port": "value"
+      },
+      "to": {
+        "node": "721299d8e5df64f24f90882bf478ae29",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "b0cea9646dc56b2cca2af4dc487d80e7",
+        "port": "value"
+      },
+      "to": {
+        "node": "ddfae38e9ebeb9d557c03fc7adc38048",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "8c7700cb649cc0fb3114181a4decdbd3",
+        "port": "value"
+      },
+      "to": {
+        "node": "8f2a281ae700e1f1a0ff8c8bfcba9858",
+        "port": "radius"
+      }
+    },
+    {
+      "from": {
+        "node": "ddfae38e9ebeb9d557c03fc7adc38048",
+        "port": "value"
+      },
+      "to": {
+        "node": "8f2a281ae700e1f1a0ff8c8bfcba9858",
+        "port": "height"
+      }
+    },
+    {
+      "from": {
+        "node": "8c7700cb649cc0fb3114181a4decdbd3",
+        "port": "value"
+      },
+      "to": {
+        "node": "d91db3ec8e6dee26a9f8bf375a79e9b6",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "b0cea9646dc56b2cca2af4dc487d80e7",
+        "port": "value"
+      },
+      "to": {
+        "node": "d91db3ec8e6dee26a9f8bf375a79e9b6",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "8f2a281ae700e1f1a0ff8c8bfcba9858",
+        "port": "field"
+      },
+      "to": {
+        "node": "183e1314149abe81675aa83b09c16cd3",
+        "port": "template"
+      }
+    },
+    {
+      "from": {
+        "node": "99ae658cbe5a333ac82897cafcd83d26",
+        "port": "holes"
+      },
+      "to": {
+        "node": "183e1314149abe81675aa83b09c16cd3",
+        "port": "frames"
+      }
+    },
+    {
+      "from": {
+        "node": "d91db3ec8e6dee26a9f8bf375a79e9b6",
+        "port": "value"
+      },
+      "to": {
+        "node": "183e1314149abe81675aa83b09c16cd3",
+        "port": "radius"
+      }
+    },
+    {
+      "from": {
+        "node": "99ae658cbe5a333ac82897cafcd83d26",
+        "port": "holes"
+      },
+      "to": {
+        "node": "d0ba1f8488a5e32206b2ff24a3ac1014",
+        "port": "frames"
+      }
+    },
+    {
+      "from": {
+        "node": "d0ba1f8488a5e32206b2ff24a3ac1014",
+        "port": "count"
+      },
+      "to": {
+        "node": "8763cb7ee9ff23c896647f45b6d54565",
+        "port": "value"
+      }
+    },
+    {
+      "from": {
+        "node": "183e1314149abe81675aa83b09c16cd3",
+        "port": "field"
+      },
+      "to": {
+        "node": "9163ae66a39096f4da6e6634a141a64d",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "458b82c91dec7dfe57e600de0155c9d9",
+        "port": "field"
+      },
+      "to": {
+        "node": "9163ae66a39096f4da6e6634a141a64d",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "721299d8e5df64f24f90882bf478ae29",
+        "port": "field"
+      },
+      "to": {
+        "node": "00ebeeb2678cb8caf55e99d919ebf9a8",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "9163ae66a39096f4da6e6634a141a64d",
+        "port": "field"
+      },
+      "to": {
+        "node": "00ebeeb2678cb8caf55e99d919ebf9a8",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "00ebeeb2678cb8caf55e99d919ebf9a8",
+        "port": "field"
+      },
+      "to": {
+        "node": "be7ac3859a60acac7de26b7f93af4a02",
+        "port": "contents"
+      }
+    }
+  ]
+}

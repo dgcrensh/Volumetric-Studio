@@ -58,7 +58,7 @@ installs only what it uses (see `docs/decisions/0000-optional-vcpkg-features.md`
 `kernel` (OCCT, from M1), `sketch` (Eigen, from M2), `proc` (Manifold, from
 M12) and `app` (Qt). A milestone that starts using one appends it to
 `VCPKG_MANIFEST_FEATURES` in the top-level `CMakeLists.txt`, before `project()`.
-`kernel` is on in every build since M1, and `sketch` since M2.
+`kernel` is on in every build since M1, `sketch` since M2 and `proc` since M12.
 
 ### Prebuilt dependencies outside CI (cloud sessions)
 
@@ -248,6 +248,8 @@ so they are registered. A new library must also be added to
   A `Volume` has a boundary (layout solid features' tools, or a box between
   two layout points), a keep-out flag, contents (static file, parametric
   tree, procedural graph JSON), parameters, a seed and published outputs.
+  Static contents keep `baked_graph` when a procedural volume was baked
+  (M12); `OutputQuantity::Published` takes a number the graph publishes.
 - **Authoring.** Change a document through `edit(doc, fn)` (`check.hpp`): it
   applies `fn` to a copy and keeps it only if `check()` finds no errors.
   `check()` covers structure (`model.*`), encapsulation
@@ -289,7 +291,10 @@ so they are registered. A new library must also be added to
   the patch edge and each other by the minimum wall.
 - **Containment** (`containment.hpp`): `check_containment(boundary, solid
   or MeshView, volume subject, settings)`, for M9 to call after generation.
-  Meshes get their FP32 rounding as extra slack.
+  Meshes get their FP32 rounding as extra slack. Large meshes (M12): a
+  convex fast path (one lump, planar faces), otherwise octree cells
+  certified by distance and the rest classified in chunks through an
+  optional parallel-for.
 - **Routing** (`registry.hpp`): every `validate.*` code is registered with
   its severity and target; `route()` sends any diagnostic to exactly one of
   layout, connection surface, feature (with the volume, inside contents),
@@ -309,6 +314,8 @@ so they are registered. A new library must also be added to
   (null off seams). `analyse()` (`topology.hpp`) reports boundary,
   non-manifold and inconsistent edges, non-manifold vertices and shells;
   `HalfEdges` gives twins. `view()` hands a mesh to `check_containment()`.
+  `analyse()` is linear (half-edges bucketed by vertex), for meshes of
+  millions of triangles.
 - **Seams** (`seam.hpp`): one per bonded or bolted-flange connection surface
   (clearance surfaces get none), made once by `build_seams()`
   (`seam_library.hpp`) from the built patch's exact outline and the
@@ -334,9 +341,11 @@ so they are registered. A new library must also be added to
   `mesh.tessellate.seam_uncovered`. Decision 0008.
 - **Combined mesh** (`combine.hpp`): tessellate every non-keep-out volume
   (B-rep contents; mesh blobs read as they are; placeholders only with
-  `placeholders`), weld. **Files** (`io.hpp`): STL out (binary) and in,
-  3MF out (one object, or one per volume with its id) and in (our own
-  writer and XML reader, zipped with miniz), OBJ in. `import.hpp` adds a
+  `placeholders`), weld. Static mesh blobs get their seam vertices back by
+  exact FP32 position (`attach_seam_vertices()`), so baked volumes weld.
+  **Files** (`io.hpp`): STL out (binary) and in, 3MF out (one object, or
+  one per volume with its id) and in (our own writer and XML reader,
+  zipped with miniz), OBJ in. `import.hpp` adds a
   mesh file as a static volume boxed by its bounds.
 - **Tests** mesh volumes with small meshers in `libs/vs_mesh/tests/meshers.*`
   (prisms, pyramids, a box round a patch) and weld random outlines;
@@ -364,13 +373,15 @@ so they are registered. A new library must also be added to
   content definition, the boundary's exact shape and named faces, joining
   surfaces, parameters, seed and measured outputs; static keys leave
   parameters and seed out. Memory always; disk (`cache/<key>.brep` and
-  `.json`) for clean B-rep contents only. `vstudio-cli rebuild --cache`
-  uses a folder project's `cache/`.
+  `.json`) for clean B-rep contents only. `measure.hpp` measures outputs
+  of meshes too (public since M12, for vs_proc). `vstudio-cli rebuild
+  --cache` uses a folder project's `cache/`.
 - **Determinism** (`thread_pool.hpp`): `run()`, `parallel_for()` and
   `parallel_reduce()` over fixed-size chunks, folded in chunk order; nested
-  calls run inline. Catch2 assertions aren't thread-safe: tasks record,
-  tests check afterwards. `output_hashes_by_threads()` and
-  `check_determinism` compare output hashes (BRep text, mesh, outputs).
+  calls share the workers (a stack of batches; callers work on their own
+  while waiting), so one volume's generation uses every thread. Catch2
+  assertions aren't thread-safe: tasks record, tests check afterwards.
+  `output_hashes_by_threads()` and `check_determinism` compare output hashes (BRep text, mesh, outputs).
 - **Generators** (`generator.hpp`): a library above vs_eval plugs a
   content kind in with `Engine::set_generator(kind, g)`: `prepare()` on
   the calling thread, then a job on the pool that fills
@@ -431,11 +442,39 @@ so they are registered. A new library must also be added to
   vertex and centroid is contained. `convert.field_to_mesh` (with its
   `samples` cost) and `convert.mesh_to_field` convert inside graphs.
   `mesh::combine()` takes generated meshes from the engine. Decision 0011.
+- **Node library** (M12, decision 0012): `field.lattice` (cubic, BCC,
+  octet struts) and `field.tpms` (gyroid, Schwarz P, diamond) with cell
+  and thickness, gradable by a field; `field.thicken`, `.clamp`,
+  `.instances` (a template field at frames); frames (`frames.*`,
+  `scatter.volume` / `.surface`, seeded and uncached, `pattern.linear` /
+  `.circular` / `.grid`); meshes (`mesh.box`, `.cylinder`, `.instances`,
+  `.measure`, and `.union` / `.difference` / `.intersection` through
+  Manifold, linked privately, output in canonical order);
+  `output.publish`. Fields use `sin_det()` / `cos_det()`, never libm.
+  Contents are always a field: meshes reach them by `convert.mesh_to_field`.
+  Shared node helpers are in `src/node_helpers.hpp`.
+- **Outputs**: the generator measures the mesh (`eval::measure_mesh()`)
+  and fills `Published` outputs from `output.publish` nodes
+  (`proc.output.unpublished` when missing).
+- **Inspection** (`inspect.hpp`): `inspect_node()` / `inspect_volume_node()`
+  evaluate one node and its ancestors (`EvaluateGraphOptions::only_for`),
+  so unfinished graphs inspect; `preview()` makes a coarse mesh, points
+  or text of any value.
+- **Bake** (`bake.hpp`): `bake()` stores the generated mesh as a 3MF blob
+  and keeps the graph; `unbake()` restores it, same content hash.
+- **Templates** (`templates.hpp`): `gyroid_infill`, `graded_lattice`,
+  `bolt_bosses` (needs a bolted flange); ids derive from the name, so a
+  template is the same graph every time. Saved copies in
+  `tests/data/templates`.
 - **Tests** build box rows in code (`tests/scenes.*`, and `mixed()`: a
   procedural box bonded or bolted to a parametric one); sample files in
-  `tests/data` (regenerate with `vs_proc_tests "[.generate]"`);
+  `tests/data` (regenerate with `vs_proc_tests "[.generate]"`, then
+  restore any sample whose ids changed and that you didn't mean to);
   `vstudio-cli graph <file>` checks one; `rebuild --stl <out>` writes the
-  welded mesh.
+  welded mesh; `templates`, `inspect <project> <volume> <node>
+  [--preview]`, `bake` / `unbake <project> <volume> [--out <path>]` and
+  `bench-gyroid [--size mm] [--cell mm] [--threads N] [--3mf out]` (the
+  CPU baseline) cover M12.
 
 ## Code style
 

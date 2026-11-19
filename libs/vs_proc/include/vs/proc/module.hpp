@@ -6,7 +6,10 @@
 // (graph.hpp), authoring checks (check.hpp), the node API and library
 // (nodes.hpp), the graph's inputs (inputs.hpp), evaluation with a per-node
 // cache (evaluate.hpp) and the engine's procedural generator
-// (generator.hpp).
+// (generator.hpp). M11 meshes fields against seams (mesher.hpp). M12 adds
+// the infill, frame and mesh node families, published outputs, node
+// inspection (inspect.hpp), baking (bake.hpp) and the starter templates
+// (templates.hpp).
 
 #include <string_view>
 
