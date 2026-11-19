@@ -15,10 +15,12 @@ add_library(planegcs STATIC
   src/qp_eq.cpp)
 add_library(vs::planegcs ALIAS planegcs)
 
+# Vendored headers are SYSTEM for consumers, so vs_sketch's -Werror warnings
+# (-Wshadow, -Wsign-conversion) don't fire inside PlaneGCS.
 target_include_directories(planegcs
-  PUBLIC  "${CMAKE_CURRENT_SOURCE_DIR}/src"
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/shim")
+  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_include_directories(planegcs SYSTEM
+  INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src"
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/shim")
 target_link_libraries(planegcs PUBLIC Eigen3::Eigen)
 target_compile_features(planegcs PUBLIC cxx_std_20)
