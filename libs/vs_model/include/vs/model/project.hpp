@@ -8,8 +8,10 @@
 //   blobs/<hash>.<ext>     imported files, baked meshes: anything binary the
 //                          document refers to, named by the first 32 hex
 //                          digits of the content's BLAKE3 hash
-//   cache/...              optional caches (M9). Never needed: loading
-//                          ignores them and saving doesn't write them yet
+//   cache/...              optional caches: vs_eval's contents cache (M9,
+//                          cache.hpp), in folder projects only. Never
+//                          needed: loading ignores them, saving leaves them
+//                          alone, and zips never hold them
 //
 // The manifest:
 //

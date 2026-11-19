@@ -178,6 +178,8 @@ so they are registered. A new library must also be added to
   a valid-looking inside-out solid for them.
 - **Exchange.** STEP (AP242, mm) and IGES go through `exchange.hpp`; calls
   are serialised because OCCT's exchange layer has global state.
+  `write_brep()` / `read_brep()` (OCCT's own text, no triangulations) and
+  `shape_hash()` serve M9's cache keys and disk cache.
 - **Tessellation** (`tessellate.hpp`, M8) runs BRepMesh on a copy and
   returns plain data: vertices, each edge's division, each face's wires
   and triangulation with where every point sits (inside, vertex, k-th edge
@@ -261,6 +263,9 @@ so they are registered. A new library must also be added to
 - **Build.** `build(doc, settings, &blobs)` rebuilds the layout, boundaries
   (keep-outs cut), patches (with bolt hole centres) and contents, and
   measures outputs. Status (`VolumeStatus`) is on the result, never saved.
+  It is `build_layout()` (layout, boundaries, patches, parameters) then
+  `build_contents()` per volume, which only reads the layout and may run
+  on several threads; vs_eval calls the halves itself.
 - **Files.** `.vsproj` is a folder or a zip of `project.json` plus
   `blobs/<hash>.<ext>` (`project.hpp`, decision 0005). Zips go through the
   vendored miniz (deflated, zero timestamps, decision 0006). Loading checks
@@ -339,6 +344,41 @@ so they are registered. A new library must also be added to
   bolt holes) in random poses. `vstudio-cli seams <project>` prints a
   project's seams; `export <project> --stl|--3mf [--per-volume]` and
   `import <project> <mesh>` write and read mesh files.
+
+## vs_eval essentials
+
+- **Engine** (`engine.hpp`): `Engine(settings, {threads, check_determinism,
+  disk_cache})`, then `evaluate(project, {generate, weld, cancel,
+  progress})`: `check()`, `build_layout()` and `validate_layout()` on the
+  calling thread, keys, cache, changed volumes generated in parallel,
+  containment (on the calling thread), outputs published through links,
+  optional weld. Volumes downstream of others through links run in later
+  waves, the layout rebuilt with the link values. `preview()` is the same
+  without generating. The engine keeps each volume's last valid contents.
+- **States.** Current; Failed (generation or containment failed, or the
+  boundary or a parameter: shows its last valid contents as
+  `stale_contents`, blocks only its dependants, which get `eval.blocked`);
+  Stale (blocked, cancelled, preview, procedural until M10); Regenerating
+  while running (`states()`). Failed results are cached too.
+- **Cache** (`cache.hpp`): `cache_key()` hashes engine version, kind,
+  content definition, the boundary's exact shape and named faces, joining
+  surfaces, parameters, seed and measured outputs; static keys leave
+  parameters and seed out. Memory always; disk (`cache/<key>.brep` and
+  `.json`) for clean B-rep contents only. `vstudio-cli rebuild --cache`
+  uses a folder project's `cache/`.
+- **Determinism** (`thread_pool.hpp`): `run()`, `parallel_for()` and
+  `parallel_reduce()` over fixed-size chunks, folded in chunk order; nested
+  calls run inline. Catch2 assertions aren't thread-safe: tasks record,
+  tests check afterwards. `output_hashes_by_threads()` and
+  `check_determinism` compare output hashes (BRep text, mesh, outputs).
+- **Imports** (`import.hpp`): STEP, IGES, STL, 3MF, OBJ as a new static
+  volume boxed by its bounds, or `import_contents()` into an existing one
+  (then containment matters). `eval.*` codes on a volume route to its
+  contents. Decision 0009.
+- **Tests** build scenes in code (`tests/scenes.*`: a row of parametric
+  boxes; a chain A → B by a link, plus C) and reuse the bracket.
+  `vstudio-cli rebuild <project> [--threads N] [--check-determinism]
+  [--weld] [--cache] [--set vol.param=value] [--twice]`.
 
 ## Code style
 

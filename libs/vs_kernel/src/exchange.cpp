@@ -1,7 +1,13 @@
 #include "vs/kernel/exchange.hpp"
 
 #include <mutex>
+#include <locale>
+#include <sstream>
 #include <string>
+
+#include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
+#include <TopTools_FormatVersion.hxx>
 
 #include <DESTEP_Parameters.hxx>
 #include <IFSelect_ReturnStatus.hxx>
@@ -129,6 +135,38 @@ Diagnostics write_iges(const Shape& shape, const std::filesystem::path& path) {
       });
   if (!result) out.add(result.error());
   return out;
+}
+
+std::string write_brep(const Shape& shape) {
+  if (shape.is_empty()) return {};
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  BRepTools::Write(topo(shape), out, /*theWithTriangles=*/false, /*theWithNormals=*/false,
+                   TopTools_FormatVersion_CURRENT);
+  return std::move(out).str();
+}
+
+Result<Shape> read_brep(std::string_view text) {
+  if (text.empty()) return Shape{};
+  return detail::guarded<Result<Shape>>("kernel.brep.read_failed", "Reading BRep", [&]()
+                                                                                      -> Result<Shape> {
+    std::istringstream in{std::string(text)};
+    in.imbue(std::locale::classic());
+    TopoDS_Shape shape;
+    BRep_Builder builder;
+    BRepTools::Read(shape, in, builder);
+    if (shape.IsNull()) {
+      return Diagnostic::error("kernel.brep.read_failed", "The BRep text holds no shape");
+    }
+    return detail::wrap(shape);
+  });
+}
+
+core::Hash256 shape_hash(const Shape& shape) {
+  const std::string text = write_brep(shape);
+  core::Hasher h;
+  h.add_bytes(text.data(), text.size());
+  return h.finalize();
 }
 
 }  // namespace vs::kernel

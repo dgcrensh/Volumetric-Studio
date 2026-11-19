@@ -68,40 +68,49 @@ Diagnostic error(const SubjectRef& subject, std::string code, std::string messag
 
 class DocumentBuilder {
  public:
-  DocumentBuilder(const Document& doc, const ProductSettings& settings, const BlobStore* blobs)
-      : doc_(doc), settings_(settings), blobs_(blobs) {}
+  // Builds the layout into `out`.
+  DocumentBuilder(const Document& doc, const ProductSettings& settings, DocumentBuild& out)
+      : doc_(doc), settings_(settings), blobs_(nullptr), in_(out), out_(&out) {}
+  // Builds contents from a finished layout, which it only reads.
+  DocumentBuilder(const Document& doc, const ProductSettings& settings, const BlobStore* blobs,
+                  const DocumentBuild& layout)
+      : doc_(doc), settings_(settings), blobs_(blobs), in_(layout), out_(nullptr) {}
 
-  DocumentBuild run() {
-    out_.layout = feature::rebuild(doc_.layout, settings_);
-    out_.diagnostics.append(out_.layout.diagnostics);
+  // The layout, boundaries, connection surfaces and parameters.
+  void run_layout() {
+    out_->layout = feature::rebuild(doc_.layout, settings_);
 
     raw_.resize(doc_.volumes.size());
-    out_.volumes.resize(doc_.volumes.size());
+    out_->volumes.resize(doc_.volumes.size());
     for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
-      out_.volumes[i].volume = doc_.volumes[i].id;
-      raw_[i] = raw_boundary(doc_.volumes[i], out_.volumes[i].diagnostics);
+      out_->volumes[i].volume = doc_.volumes[i].id;
+      raw_[i] = raw_boundary(doc_.volumes[i], out_->volumes[i].diagnostics);
     }
     for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
       cut_keep_outs(i);
-      VolumeBuild& vb = out_.volumes[i];
+      VolumeBuild& vb = out_->volumes[i];
       if (!vb.boundary.is_empty()) vb.boundary_faces = boundary_faces(doc_.volumes[i], vb.boundary);
     }
 
-    out_.connections.reserve(doc_.connections.size());
-    for (const auto& c : doc_.connections) out_.connections.push_back(connection(c));
+    out_->connections.reserve(doc_.connections.size());
+    for (const auto& c : doc_.connections) out_->connections.push_back(connection(c));
 
-    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) contents(i);
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) parameters(i);
+  }
 
-    for (const auto& v : out_.volumes) out_.diagnostics.append(v.diagnostics);
-    for (const auto& c : out_.connections) out_.diagnostics.append(c.diagnostics);
-    return std::move(out_);
+  // The layout's diagnostics, then each volume's, then each surface's.
+  void collect_diagnostics() {
+    out_->diagnostics = out_->layout.diagnostics;
+    for (const auto& v : out_->volumes) out_->diagnostics.append(v.diagnostics);
+    for (const auto& c : out_->connections) out_->diagnostics.append(c.diagnostics);
   }
 
  private:
   const Document& doc_;
   const ProductSettings& settings_;
   const BlobStore* blobs_;
-  DocumentBuild out_;
+  const DocumentBuild& in_;  // what the builder reads
+  DocumentBuild* out_;       // what it writes: null when building contents
   std::vector<Solid> raw_;  // boundaries before keep-outs
 
   kernel::BooleanOptions fuzzy() const { return {settings_.linear_tolerance_mm}; }
@@ -116,7 +125,7 @@ class DocumentBuilder {
       }
       return p.value;
     }
-    auto v = feature::evaluate_expression(p.expression, out_.layout.variables.lookup());
+    auto v = feature::evaluate_expression(p.expression, in_.layout.variables.lookup());
     if (!v) {
       Diagnostic d = v.error();
       d.message = fmt::format("the {}: {}", what, d.message);
@@ -128,7 +137,7 @@ class DocumentBuilder {
   // A layout feature's result, if it built.
   Result<const FeatureResult*> layout_result(const Id& id, const SubjectRef& by,
                                              std::string_view code) const {
-    const FeatureResult* r = out_.layout.find(id);
+    const FeatureResult* r = in_.layout.find(id);
     const SubjectRef other = doc_.layout.subject(id);
     if (!r) {
       return error(by, std::string(code), "a layout feature it uses no longer exists");
@@ -246,7 +255,7 @@ class DocumentBuilder {
 
   void cut_keep_outs(std::size_t i) {
     const Volume& v = doc_.volumes[i];
-    VolumeBuild& vb = out_.volumes[i];
+    VolumeBuild& vb = out_->volumes[i];
     vb.boundary = raw_[i];
     if (vb.boundary.is_empty()) return;
     const SubjectRef by = doc_.boundary_subject(v.id);
@@ -300,7 +309,7 @@ class DocumentBuilder {
     std::vector<NamedFace> faces;
     if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
       for (const auto& id : fb->features) {
-        const FeatureResult* r = out_.layout.find(id);
+        const FeatureResult* r = in_.layout.find(id);
         if (!r) continue;
         for (const auto& n : r->faces) {
           NamedFace copy = n;
@@ -441,13 +450,12 @@ class DocumentBuilder {
     return cb;
   }
 
-  // --- contents --------------------------------------------------------------------
+  // --- parameters and contents ------------------------------------------------------
 
-  void contents(std::size_t i) {
+  void parameters(std::size_t i) {
     const Volume& v = doc_.volumes[i];
-    VolumeBuild& vb = out_.volumes[i];
-    const SubjectRef self = doc_.volume_subject(v.id);
-
+    VolumeBuild& vb = out_->volumes[i];
+    vb.status = VolumeStatus::Stale;
     for (const auto& p : v.parameters) {
       const SubjectRef ps{SubjectKind::Parameter, p.id, fmt::format("{}.{}", v.name, p.name)};
       auto value = eval(p.value, ps, "value");
@@ -458,34 +466,48 @@ class DocumentBuilder {
       }
       vb.parameters[p.name] = *value;
     }
+    if (vb.boundary.is_empty()) vb.status = VolumeStatus::Failed;
+  }
+
+ public:
+  ContentsBuild contents(std::size_t i) const {
+    const Volume& v = doc_.volumes[i];
+    const VolumeBuild& vb = in_.volumes[i];
+    const SubjectRef self = doc_.volume_subject(v.id);
+    ContentsBuild cb;
 
     if (vb.boundary.is_empty()) {
-      vb.status = VolumeStatus::Failed;
+      cb.status = VolumeStatus::Failed;
       if (!v.contents_empty()) {
-        vb.diagnostics.add(Diagnostic::info(
+        cb.diagnostics.add(Diagnostic::info(
             "model.contents.no_boundary",
             fmt::format("'{}': contents not built, because the boundary failed", self.label),
             {self}));
       }
-      return;
+      return cb;
     }
-    if (vb.status == VolumeStatus::Failed) return;  // a parameter failed
+    if (vb.status == VolumeStatus::Failed) {  // a parameter failed
+      cb.status = VolumeStatus::Failed;
+      return cb;
+    }
     if (v.keep_out || v.contents_empty()) {
-      vb.status = VolumeStatus::Current;
-      return;
+      cb.status = VolumeStatus::Current;
+      return cb;
     }
 
     if (const auto* sc = std::get_if<StaticContents>(&v.contents)) {
-      import_static(v, *sc, vb);
+      import_static(v, *sc, cb);
     } else if (const auto* pc = std::get_if<ParametricContents>(&v.contents)) {
-      parametric(v, pc->tree, vb);
+      parametric(v, pc->tree, vb, cb);
     } else {
-      vb.status = VolumeStatus::Stale;  // node graphs arrive in M10
+      cb.status = VolumeStatus::Stale;  // node graphs arrive in M10
     }
-    measure(v, vb);
+    measure(v, cb);
+    return cb;
   }
 
-  void import_static(const Volume& v, const StaticContents& sc, VolumeBuild& vb) const {
+ private:
+  void import_static(const Volume& v, const StaticContents& sc, ContentsBuild& vb) const {
     const SubjectRef self = doc_.volume_subject(v.id);
     if (!blobs_ || (sc.format != "step" && sc.format != "iges")) {
       vb.status = VolumeStatus::Stale;  // not given the files, or a mesh (M8)
@@ -531,26 +553,27 @@ class DocumentBuilder {
     vb.status = VolumeStatus::Current;
   }
 
-  void parametric(const Volume& v, const feature::FeatureTree& tree, VolumeBuild& vb) const {
+  void parametric(const Volume& v, const feature::FeatureTree& tree, const VolumeBuild& layout,
+                  ContentsBuild& vb) const {
     const SubjectRef self = doc_.volume_subject(v.id);
     feature::ExternalInputs inputs;
     {
       feature::ExternalInput boundary;
       boundary.subject = doc_.boundary_subject(v.id);
-      boundary.result.faces = vb.boundary_faces;
+      boundary.result.faces = layout.boundary_faces;
       inputs.references.push_back(std::move(boundary));
     }
     for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
       const ConnectionSurface& c = doc_.connections[k];
-      if (!c.joins(v.id) || !out_.connections[k].ok) continue;
-      const ConnectionBuild& cb = out_.connections[k];
+      if (!c.joins(v.id) || !in_.connections[k].ok) continue;
+      const ConnectionBuild& cb = in_.connections[k];
       feature::ExternalInput in;
       in.subject = doc_.connection_subject(c.id);
       in.result.plane = cb.frame;
       in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
       inputs.references.push_back(std::move(in));
     }
-    for (const auto& [name, value] : vb.parameters) inputs.values.emplace(name, value);
+    for (const auto& [name, value] : layout.parameters) inputs.values.emplace(name, value);
 
     feature::RebuildOptions options;
     options.inputs = &inputs;
@@ -568,7 +591,7 @@ class DocumentBuilder {
     vb.contents = r.body;
   }
 
-  void measure(const Volume& v, VolumeBuild& vb) const {
+  void measure(const Volume& v, ContentsBuild& vb) const {
     for (const auto& o : v.outputs) {
       OutputResult res{o.id, std::nullopt};
       if (!vb.contents.is_empty()) {
@@ -599,9 +622,42 @@ class DocumentBuilder {
 
 }  // namespace
 
+DocumentBuild build_layout(const Document& document, const ProductSettings& settings) {
+  DocumentBuild out;
+  DocumentBuilder builder(document, settings, out);
+  builder.run_layout();
+  builder.collect_diagnostics();
+  return out;
+}
+
+ContentsBuild build_contents(const Document& document, const DocumentBuild& layout,
+                             std::size_t index, const ProductSettings& settings,
+                             const BlobStore* blobs) {
+  return DocumentBuilder(document, settings, blobs, layout).contents(index);
+}
+
+void apply_contents(VolumeBuild& volume, ContentsBuild contents) {
+  volume.status = contents.status;
+  volume.contents_rebuild = std::move(contents.contents_rebuild);
+  volume.contents = std::move(contents.contents);
+  volume.outputs = std::move(contents.outputs);
+  volume.diagnostics.append(contents.diagnostics);
+}
+
 DocumentBuild build(const Document& document, const ProductSettings& settings,
                     const BlobStore* blobs) {
-  return DocumentBuilder(document, settings, blobs).run();
+  DocumentBuild out;
+  DocumentBuilder layout(document, settings, out);
+  layout.run_layout();
+  const DocumentBuilder contents(document, settings, blobs, out);
+  std::vector<ContentsBuild> built;
+  built.reserve(document.volumes.size());
+  for (std::size_t i = 0; i < document.volumes.size(); ++i) built.push_back(contents.contents(i));
+  for (std::size_t i = 0; i < document.volumes.size(); ++i) {
+    apply_contents(out.volumes[i], std::move(built[i]));
+  }
+  layout.collect_diagnostics();
+  return out;
 }
 
 }  // namespace vs::model

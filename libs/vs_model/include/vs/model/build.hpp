@@ -6,9 +6,11 @@
 //
 // build() runs on the calling thread, in the spec's order: rebuild the
 // layout, then boundaries (with keep-outs cut away), then connection
-// surfaces, then contents. It never throws; a part that fails reports why
-// and the rest carries on. Scheduling, caching and background generation
-// are M9's; M5 builds everything every time.
+// surfaces and volume parameters, then contents. It never throws; a part
+// that fails reports why and the rest carries on. build() builds
+// everything every time; vs_eval (M9) schedules and caches contents by
+// calling the two halves itself: build_layout(), then build_contents() for
+// each volume that needs it, possibly on several threads at once.
 //
 // Boundaries. A feature boundary is the union of its features' tools (the
 // solid each adds); a box boundary spans its two points. Keep-outs then cut
@@ -43,8 +45,8 @@
 //   each parameter is a value its expressions can use by name.
 //
 // Static contents read their blob when the build is given the project's
-// blobs (STEP and IGES; mesh files are read by vs_mesh's combine(), M8, and
-// stay Stale here until M9's engine owns them). Procedural
+// blobs (STEP and IGES; mesh files are read by vs_eval's engine, M9, and
+// vs_mesh's combine(), M8, and stay Stale here). Procedural
 // contents wait for M10 and stay Stale.
 //   model.contents.failed           the contents' rebuild has errors
 //   model.contents.missing_blob     the blob isn't in the project
@@ -53,6 +55,7 @@
 //
 // Published outputs are measured on the contents when there are any.
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
@@ -122,6 +125,33 @@ struct DocumentBuild {
   [[nodiscard]] const VolumeBuild* find_volume(const Id& volume) const;
   [[nodiscard]] const ConnectionBuild* find_connection(const Id& surface) const;
 };
+
+// The contents half of a volume's build (see VolumeBuild).
+struct ContentsBuild {
+  VolumeStatus status = VolumeStatus::Stale;
+  std::optional<feature::RebuildResult> contents_rebuild;
+  kernel::Solid contents;
+  std::vector<OutputResult> outputs;
+  Diagnostics diagnostics;
+};
+
+// The layout half: the layout, boundaries, connection surfaces and volume
+// parameters. No contents are built: each VolumeBuild has no contents and
+// no outputs, and its status is Failed when its boundary or a parameter
+// failed and Stale otherwise. `diagnostics` collects what was built.
+DocumentBuild build_layout(const Document& document, const ProductSettings& settings);
+
+// The contents of `document.volumes[index]`, given a build_layout() result
+// of the same document. It only reads `layout`, so calls for different
+// volumes may run on different threads at the same time.
+ContentsBuild build_contents(const Document& document, const DocumentBuild& layout,
+                             std::size_t index, const ProductSettings& settings,
+                             const BlobStore* blobs = nullptr);
+
+// Moves `contents` into `volume`: status, contents, outputs, and its
+// diagnostics after the volume's own. (The document's `diagnostics` list
+// isn't updated.)
+void apply_contents(VolumeBuild& volume, ContentsBuild contents);
 
 // `blobs` holds static contents' files; without it static contents aren't
 // read and stay Stale.

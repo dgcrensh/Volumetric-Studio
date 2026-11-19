@@ -1,7 +1,8 @@
 #pragma once
 
 // vs_eval: scheduler, cache, thread pool, cancellation and volume states.
-// Placeholder until M9; see Implementation Plan.md.
+// The engine is engine.hpp; see Implementation Plan.md (M9) and
+// docs/decisions/0009.
 
 #include <string_view>
 
