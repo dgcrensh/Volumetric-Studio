@@ -1,4 +1,4 @@
-# 0002: Share the Linux vcpkg binary cache outside Actions
+# 0004: Share the Linux vcpkg binary cache outside Actions
 
 Nov 19, 2026 · between M2 and M3
 

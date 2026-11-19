@@ -65,7 +65,7 @@ M12) and `app` (Qt). A milestone that starts using one appends it to
 CI's vcpkg cache lives in `actions/cache`, which only Actions jobs can read.
 So the `linux-gcc-release` job on `main` (and manual runs) also publishes its
 x64-linux binary cache as assets of the `vcpkg-cache-x64-linux` prerelease
-(see `docs/decisions/0002-shared-vcpkg-binary-cache.md`). On a fresh Linux
+(see `docs/decisions/0004-shared-vcpkg-binary-cache.md`). On a fresh Linux
 machine, such as a hosted cloud session, run this before building:
 
 ```bash

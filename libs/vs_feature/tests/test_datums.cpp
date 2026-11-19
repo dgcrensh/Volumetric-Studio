@@ -14,7 +14,7 @@ using vs::core::dvec2;
 
 namespace {
 
-constexpr double kPi = std::numbers::pi;
+[[maybe_unused]] constexpr double kPi = std::numbers::pi;
 
 void check_vec(const dvec3& got, const dvec3& want, double margin = 1e-9) {
   INFO("got (" << got.x << ", " << got.y << ", " << got.z << "), want (" << want.x << ", "
