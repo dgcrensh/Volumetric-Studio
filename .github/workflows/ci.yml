@@ -51,15 +51,20 @@ jobs:
         shell: bash
         run: mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
-      # The top-level CMakeLists.txt selects the vcpkg manifest features, so
-      # it is part of the key. The cache is saved even when tests fail, so a
-      # long dependency build (OCCT) is never paid twice.
+      # vcpkg's files cache is content-addressed: each archive is named by its
+      # package ABI hash, so the list of names says exactly what the cache
+      # holds. The key is that list's hash (computed after the build, below).
+      # Restore never matches exactly: it takes the newest entry for this
+      # preset (this branch first, then main), and the save step stores a new
+      # entry whenever the build added an archive. A fixed key would hit the
+      # first entry ever saved forever and never save the packages built
+      # after it, which is how Open CASCADE got rebuilt on every run.
       - name: Restore vcpkg binary cache
         id: vcpkg-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
-          key: vcpkg-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json', 'CMakeLists.txt') }}
+          key: vcpkg-${{ matrix.preset }}-restore
           restore-keys: vcpkg-${{ matrix.preset }}-
 
       - name: Build and test (Windows)
@@ -71,12 +76,28 @@ jobs:
         if: runner.os == 'Linux'
         run: ./scripts/build.sh ${{ matrix.preset }}
 
+      # Saved even when the build or tests fail, so a long dependency build
+      # (OCCT) is never paid twice.
+      - name: Hash vcpkg binary cache contents
+        id: vcpkg-cache-key
+        if: always()
+        shell: bash
+        run: |
+          cd "$VCPKG_DEFAULT_BINARY_CACHE"
+          count="$(find . -name '*.zip' | wc -l)"
+          contents="$(find . -name '*.zip' | sort | sha256sum | cut -c1-40)"
+          echo "$count archive(s), contents $contents"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "key=vcpkg-${{ matrix.preset }}-$contents" >> "$GITHUB_OUTPUT"
+
       - name: Save vcpkg binary cache
-        if: always() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: >-
+          always() && steps.vcpkg-cache-key.outputs.count != '0' &&
+          steps.vcpkg-cache-key.outputs.key != steps.vcpkg-cache.outputs.cache-matched-key
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}
 
       # actions/cache is readable only from inside Actions. Publish the Linux
       # cache as assets of the "vcpkg-cache-x64-linux" prerelease too, so cloud
