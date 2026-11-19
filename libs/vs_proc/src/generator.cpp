@@ -4,6 +4,7 @@
 
 #include <fmt/format.h>
 
+#include "vs/eval/measure.hpp"
 #include "vs/mesh/seam_library.hpp"
 #include "vs/proc/check.hpp"
 
@@ -43,6 +44,28 @@ std::vector<model::OutputResult> unmeasured(const model::Volume& v) {
 }
 
 }  // namespace
+
+std::vector<model::OutputResult> measure(const model::Volume& volume, const core::SubjectRef& subject,
+                                         const mesh::Mesh& mesh,
+                                         const std::map<std::string, double, std::less<>>& published,
+                                         eval::ThreadPool& pool, Diagnostics& diagnostics) {
+  std::vector<model::OutputResult> out = eval::measure_mesh(volume, mesh, pool);
+  for (std::size_t i = 0; i < volume.outputs.size(); ++i) {
+    const model::PublishedOutput& o = volume.outputs[i];
+    if (o.quantity != model::OutputQuantity::Published) continue;
+    const auto it = published.find(o.name);
+    if (it != published.end()) {
+      out[i].value = it->second;
+      continue;
+    }
+    diagnostics.add(Diagnostic::warning(
+        "proc.output.unpublished",
+        fmt::format("'{}': its graph publishes no '{}' (add an output.publish node named so)",
+                    subject.label, o.name),
+        {subject}));
+  }
+  return out;
+}
 
 eval::ContentsGenerator::Job ProceduralGenerator::prepare(
     const model::Document& document, const model::DocumentBuild& layout, std::size_t index,
@@ -94,7 +117,8 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
   auto seams = std::make_shared<const std::vector<mesh::Seam>>(
       mesh::build_seams(document, layout, settings, v.id).seams);
 
-  return [this, graph, inputs, outputs, seams, &pool](eval::GeneratedContents& out) {
+  auto volume = std::make_shared<const model::Volume>(v);
+  return [this, graph, inputs, outputs, seams, volume, &pool](eval::GeneratedContents& out) {
     EvaluateGraphOptions options;
     options.cache = &cache_;
     options.pool = &pool;
@@ -131,6 +155,7 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
       out.status = VolumeStatus::Failed;
       return;
     }
+    out.outputs = measure(*volume, inputs->volume_subject, cm.mesh, ev.published, pool, out.diagnostics);
     out.mesh = std::move(cm.mesh);
     out.status = VolumeStatus::Current;
   };

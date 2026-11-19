@@ -613,6 +613,9 @@ class DocumentBuilder {
           case OutputQuantity::Envelope:
             res.value = kernel::bounding_box(vb.contents);
             break;
+          case OutputQuantity::Published:
+            break;  // only procedures publish numbers
+
         }
       }
       vb.outputs.push_back(res);

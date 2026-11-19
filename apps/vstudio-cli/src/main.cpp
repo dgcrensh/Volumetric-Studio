@@ -58,6 +58,19 @@ Commands:
   graph <graph.json>
                     Check a procedural graph (types, loops, settings) and print its
                     nodes in evaluation order. Exits 1 on errors
+  templates [<name> [--surface <id>] [--cell <mm>]]
+                    List the starter procedural templates, or print one as graph JSON
+  inspect <project.vsproj> <volume> <node> [--preview]
+                    Evaluate one node of a procedural volume's graph (and what it
+                    depends on) and print its outputs; --preview meshes fields
+  bake <project.vsproj> <volume> [--out <project>]
+                    Generate a procedural volume and bake it into a static 3MF volume
+                    that keeps its graph, and save
+  unbake <project.vsproj> <volume> [--out <project>]
+                    Restore a baked volume's graph, and save
+  bench-gyroid [--size <mm>] [--cell <mm>] [--threads N] [--3mf <file>]
+                    Time the gyroid_infill template in a cube (default 100 mm at a
+                    0.5 mm grid), stage by stage: the CPU baseline
   version           Print the version (same as --version)
   help              Print this message
 
@@ -154,6 +167,21 @@ int main(int argc, char** argv) {
   }
   if (command == "graph") {
     return vs::cli::run_graph(rest, std::cout, std::cerr);
+  }
+  if (command == "templates") {
+    return vs::cli::run_templates(rest, std::cout, std::cerr);
+  }
+  if (command == "bench-gyroid") {
+    return vs::cli::run_bench_gyroid(rest, std::cout, std::cerr);
+  }
+  if (command == "inspect") {
+    return vs::cli::run_inspect(rest, std::cout, std::cerr);
+  }
+  if (command == "bake") {
+    return vs::cli::run_bake(rest, std::cout, std::cerr);
+  }
+  if (command == "unbake") {
+    return vs::cli::run_unbake(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

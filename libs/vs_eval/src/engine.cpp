@@ -5,7 +5,7 @@
 
 #include <fmt/format.h>
 
-#include "measure.hpp"
+#include "vs/eval/measure.hpp"
 #include "vs/core/version.hpp"
 #include "vs/mesh/io.hpp"
 #include "vs/model/check.hpp"
@@ -322,7 +322,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
           g->diagnostics.add(std::move(d));
         } else {
           mesh::assign_volume(*m, v.id);
-          g->outputs = detail::measure_mesh(v, *m, pool_);
+          g->outputs = measure_mesh(v, *m, pool_);
           g->mesh = std::move(m).value();
           g->status = VolumeStatus::Current;
         }
@@ -379,7 +379,10 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
           contained = validate::check_containment(boundary, c.solid, self, settings_);
         } else if (c.mesh) {
           contained = validate::check_containment(
-              boundary, validate::MeshView{c.mesh->positions, c.mesh->indices}, self, settings_);
+              boundary, validate::MeshView{c.mesh->positions, c.mesh->indices}, self, settings_,
+              [this](std::size_t count, const std::function<void(std::size_t)>& task) {
+                pool_.run(count, task);
+              });
         }
         if (contained && !contained->diagnostics.empty()) {
           c.diagnostics.append(contained->diagnostics);

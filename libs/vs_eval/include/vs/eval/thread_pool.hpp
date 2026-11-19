@@ -15,14 +15,17 @@
 //     folds the partials on the calling thread in chunk order. Floating-
 //     point sums therefore come out bit-identical with 1, 4 or 16 threads.
 //
-// A pool of size 1 runs everything on the calling thread. A call made from
-// inside one of the pool's own tasks also runs inline on that thread
-// (nested parallelism is not worth a deadlock), which changes nothing
-// about the result, only where the work happens.
+// A pool of size 1 runs everything on the calling thread. Calls nest: a
+// task may itself call run() (M12: a single procedural volume's sampling
+// and meshing then use every thread, where M9 ran them inline). The
+// calling thread works on its own call's tasks and then waits only for
+// tasks already running on other threads, so nesting can't deadlock; idle
+// workers take the newest call's tasks first. Where work happens never
+// changes a result.
 //
 // Tasks may throw: the pool finishes the remaining tasks of the call, then
 // rethrows the first exception (by task index) on the calling thread.
-// Calls from several threads at once are serialised.
+// Calls from several threads at once run side by side, sharing the workers.
 
 #include <algorithm>
 #include <condition_variable>
@@ -60,14 +63,14 @@ class ThreadPool {
   struct Batch;
   void worker_loop();
   static void work_on(Batch& batch);
+  // The newest call with tasks no thread has taken yet (mutex_ held).
+  [[nodiscard]] std::shared_ptr<Batch> open_batch() const;
 
   std::vector<std::thread> workers_;
   std::mutex mutex_;
   std::condition_variable wake_;
-  std::shared_ptr<Batch> batch_;  // the call in progress, if any
-  std::uint64_t generation_ = 0;
+  std::vector<std::shared_ptr<Batch>> batches_;  // calls in progress, oldest first
   bool stopping_ = false;
-  std::mutex run_mutex_;  // one call at a time
 };
 
 // Calls body(begin, end) for consecutive chunks of [0, n), each `chunk`

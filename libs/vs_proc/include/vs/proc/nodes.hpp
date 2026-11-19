@@ -7,7 +7,9 @@
 //
 //   - inputs: typed ports. A Scalar or Vector input may be left
 //     unconnected; it then takes the node's setting of the same name, else
-//     the port's default. Inputs of other types must be connected.
+//     the port's default. Inputs of other types must be connected, unless
+//     the port is `optional` (a lattice's grading field, say): then the node
+//     sees an empty value (NodeContext::has() is false).
 //   - outputs: typed ports, all set by every successful evaluation.
 //   - properties: configuration that isn't a port (a number, a vector, a
 //     text choice, a connection surface's id or a graph parameter's name),
@@ -44,10 +46,21 @@
 //   vector.compose, .decompose, .add, .scale, .length
 //   list.range, list.sum, list.count, list.get
 //   convert.field_to_mesh, convert.mesh_to_field             conversions (M11)
+//   M12:
+//   field.lattice, field.tpms                                infill (gradable)
+//   field.thicken, field.clamp, field.instances              more field maths
+//   frames.point, frames.count, frames.merge                 frames
+//   scatter.volume, scatter.surface                          seeded points
+//   pattern.linear, pattern.circular, pattern.grid           patterns of frames
+//   mesh.box, mesh.cylinder, mesh.instances, mesh.measure    meshes
+//   mesh.union, mesh.difference, mesh.intersection           booleans (Manifold)
+//   output.publish                                           published numbers
 //   output                                                   the contents
 //
 // Input and query nodes read the volume's inputs; they are cheap and never
 // cached by node (their outputs' hashes still key everything downstream).
+// Neither are the scatter nodes, whose points depend on the volume's
+// boundary or surface as well as their own inputs.
 
 #include <cstdint>
 #include <functional>
@@ -70,6 +83,7 @@ struct PortSpec {
   PortType type = PortType::Scalar;
   std::optional<Setting> default_value;  // Scalar and Vector inputs only
   std::string doc;
+  bool optional = false;  // Field, Mesh, Frames, Curves, List: may be left unconnected
 };
 
 enum class PropertyKind {
@@ -78,6 +92,7 @@ enum class PropertyKind {
   Choice,     // one of `choices`
   Surface,    // a connection surface's id (32 hex digits) joining the volume
   Parameter,  // the name of one of the graph's parameters
+  Name,       // a legal variable name the node introduces (output.publish)
 };
 
 struct PropertySpec {
@@ -139,6 +154,10 @@ class NodeContext {
   [[nodiscard]] dvec3 vector(std::string_view port) const;
   [[nodiscard]] const Field& field(std::string_view port) const;
   [[nodiscard]] const List& list(std::string_view port) const;
+  [[nodiscard]] const MeshValue& mesh(std::string_view port) const;
+  [[nodiscard]] const Frames& frames(std::string_view port) const;
+  // False for an optional input left unconnected.
+  [[nodiscard]] bool has(std::string_view port) const;
 
   // Properties, from the node's settings or the declared default.
   [[nodiscard]] double number(std::string_view property) const;

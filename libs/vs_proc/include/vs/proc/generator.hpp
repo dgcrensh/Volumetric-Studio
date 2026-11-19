@@ -20,13 +20,17 @@
 // checks for containment and the weld takes as it is, plus FieldContents
 // (an eval::ExtraContents): the field and its samples. The output hash
 // covers the mesh, the samples and the grid, which is what the engine's
-// output hashes and determinism check compare. Published outputs have no
-// value until measuring (M12).
+// output hashes and determinism check compare. Published outputs are
+// measured on the mesh (M12): volume, mass, area, centre of gravity and
+// envelope as eval::measure_mesh() measures any mesh, and quantity
+// Published from the graph's output.publish node of the output's name.
 //
 // Codes (the volume last unless said otherwise):
 //   proc.json.*, proc.graph.*, proc.reference.*, proc.input.*, proc.node.*
 //   proc.sample.*            the grid (output node first)
 //   proc.mesh.*              the mesh (mesher.hpp)
+//   proc.output.unpublished  (warning) a Published output the graph doesn't
+//                            publish: it has no value (the volume first)
 //
 // A job, once started, runs to the end, like a kernel operation: the
 // engine's cancellation starts no new volumes, and a finished job's
@@ -34,6 +38,8 @@
 
 #include <atomic>
 #include <cstddef>
+#include <map>
+#include <string>
 #include <memory>
 #include <vector>
 
@@ -72,6 +78,13 @@ class ProceduralGenerator final : public eval::ContentsGenerator {
   std::atomic<std::size_t> evaluated_{0};
   std::atomic<std::size_t> hits_{0};
 };
+
+// The volume's published outputs for its contents' mesh and the graph's
+// published numbers (warnings for names the graph doesn't publish).
+std::vector<model::OutputResult> measure(const model::Volume& volume, const core::SubjectRef& subject,
+                                         const mesh::Mesh& mesh,
+                                         const std::map<std::string, double, std::less<>>& published,
+                                         eval::ThreadPool& pool, core::Diagnostics& diagnostics);
 
 // Creates a generator and installs it on `engine` for procedural volumes.
 std::shared_ptr<ProceduralGenerator> install(eval::Engine& engine);

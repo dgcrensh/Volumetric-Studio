@@ -144,7 +144,8 @@ TEST_CASE("Every library node declares well-formed ports", "[proc][nodes]") {
     bool simple = true;
     for (const auto& p : t->inputs) simple = simple && p.default_value.has_value();
     for (const auto& p : t->properties) simple = simple && p.default_value.has_value();
-    if (!simple || t->type == "output" || t->category == "input" || t->category == "query") continue;
+    // Nodes that read the volume's inputs (not cached) need a real boundary.
+    if (!simple || t->type == "output" || !t->cached) continue;
     Graph g;
     const Id n = g.add(t->type, t->type);
     const Id ball = g.add("field.sphere");

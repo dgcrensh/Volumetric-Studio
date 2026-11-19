@@ -2,6 +2,10 @@
 //   shell_and_ball.vgraph.json   the acceptance graph
 //   loop.vgraph.json             a graph whose edges form a loop
 //   shell_and_ball.vsproj        one procedural box volume, "Shelled", running it
+//   templates/<name>.vgraph.json the M12 starter templates (bolt_bosses on
+//                                bolt_bosses.vsproj's flange)
+//   bolt_bosses.vsproj           a procedural box ("Bosses", the bolt_bosses
+//                                template at 1 mm) bolted to a parametric one
 // Regenerate them with `vs_proc_tests "[.generate]"`.
 
 #include <filesystem>
@@ -14,6 +18,7 @@
 #include "vs/eval/engine.hpp"
 #include "vs/proc/check.hpp"
 #include "vs/proc/generator.hpp"
+#include "vs/proc/templates.hpp"
 
 namespace fs = std::filesystem;
 using namespace vs;
@@ -62,6 +67,42 @@ TEST_CASE("Write the sample graphs and project", "[.generate]") {
   std::error_code ec;
   fs::remove_all(project, ec);
   REQUIRE_FALSE(model::save_project(b.project, project, model::ProjectLayout::Folder).has_errors());
+
+  // The bolt-boss scene first: the templates' surface is its flange.
+  scenes::Mixed m = scenes::mixed(scenes::shell_and_ball().graph, true);
+  m.project.document.name = "Bolt bosses";
+  model::Volume& bosses = *m.project.document.find_volume(m.procedural);
+  bosses.name = "Bosses";
+  TemplateOptions coarse;
+  coarse.surface = m.surface;
+  coarse.cell_size = 1.0;
+  bosses.contents = model::ProceduralContents{to_json(*make_template("bolt_bosses", coarse))};
+  bosses.outputs = {{core::Id::random(), "boss_count", model::OutputQuantity::Published, 1},
+                    {core::Id::random(), "mass", model::OutputQuantity::Mass, 1.24}};
+  const fs::path flange = kData / "bolt_bosses.vsproj";
+  fs::remove_all(flange, ec);
+  REQUIRE_FALSE(model::save_project(m.project, flange, model::ProjectLayout::Folder).has_errors());
+
+  fs::create_directories(kData / "templates");
+  TemplateOptions o;
+  o.surface = m.surface;
+  for (const auto& t : templates()) {
+    write(kData / "templates" / (t.name + ".vgraph.json"), to_json(*make_template(t.name, o)) + "\n");
+  }
+}
+
+TEST_CASE("The saved templates are what make_template() gives", "[proc][data][templates]") {
+  const auto project = model::load_project(kData / "bolt_bosses.vsproj");
+  REQUIRE(project);
+  TemplateOptions o;
+  o.surface = project->document.connections.at(0).id;
+  for (const auto& t : templates()) {
+    INFO(t.name);
+    const auto saved = graph_from_json(read(kData / "templates" / (t.name + ".vgraph.json")));
+    REQUIRE(saved);
+    CHECK(to_json(*saved) == to_json(*make_template(t.name, o)));
+    CHECK_FALSE(check_graph(*saved).has_errors());
+  }
 }
 
 TEST_CASE("The sample files read, check and evaluate", "[proc][data]") {

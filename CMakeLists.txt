@@ -10,6 +10,8 @@ option(VS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 list(APPEND VCPKG_MANIFEST_FEATURES "kernel")
 # vs_sketch vendors PlaneGCS, which needs Eigen, from M2 onward.
 list(APPEND VCPKG_MANIFEST_FEATURES "sketch")
+# vs_proc's mesh boolean nodes use Manifold from M12 onward.
+list(APPEND VCPKG_MANIFEST_FEATURES "proc")
 if(VS_BUILD_APP)
   list(APPEND VCPKG_MANIFEST_FEATURES "app")
 endif()

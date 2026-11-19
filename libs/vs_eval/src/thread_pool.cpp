@@ -68,16 +68,25 @@ void ThreadPool::work_on(Batch& batch) {
   }
 }
 
+std::shared_ptr<ThreadPool::Batch> ThreadPool::open_batch() const {
+  // The newest first: nested calls finish before their callers need them.
+  for (auto it = batches_.rbegin(); it != batches_.rend(); ++it) {
+    if ((*it)->next.load() < (*it)->n) return *it;
+  }
+  return nullptr;
+}
+
 void ThreadPool::worker_loop() {
-  std::uint64_t seen = 0;
   for (;;) {
     std::shared_ptr<Batch> batch;
     {
       std::unique_lock lock(mutex_);
-      wake_.wait(lock, [&] { return stopping_ || (batch_ && generation_ != seen); });
+      wake_.wait(lock, [&] {
+        if (stopping_) return true;
+        batch = open_batch();
+        return batch != nullptr;
+      });
       if (stopping_) return;
-      seen = generation_;
-      batch = batch_;
     }
     work_on(*batch);
   }
@@ -85,7 +94,7 @@ void ThreadPool::worker_loop() {
 
 void ThreadPool::run(std::size_t n, const std::function<void(std::size_t)>& task) {
   if (n == 0) return;
-  if (workers_.empty() || in_task() || n == 1) {
+  if (workers_.empty() || n == 1) {
     // Inline: in order, on this thread. Same contract, same results.
     const PoolScope scope(this);
     std::exception_ptr error;
@@ -100,17 +109,18 @@ void ThreadPool::run(std::size_t n, const std::function<void(std::size_t)>& task
     return;
   }
 
-  const std::lock_guard run_lock(run_mutex_);
   auto batch = std::make_shared<Batch>();
   batch->n = n;
   batch->task = &task;
   batch->pool = this;
   {
     const std::lock_guard lock(mutex_);
-    batch_ = batch;
-    ++generation_;
+    batches_.push_back(batch);
   }
   wake_.notify_all();
+  // This thread takes tasks too, then waits only for tasks other threads
+  // are already running (they can't be waiting on this one: a thread that
+  // calls run() from a task works on the new batch, never on this one).
   work_on(*batch);
   {
     std::unique_lock lock(batch->mutex);
@@ -118,7 +128,7 @@ void ThreadPool::run(std::size_t n, const std::function<void(std::size_t)>& task
   }
   {
     const std::lock_guard lock(mutex_);
-    batch_.reset();
+    batches_.erase(std::find(batches_.begin(), batches_.end(), batch));
   }
   if (batch->error) std::rethrow_exception(batch->error);
 }

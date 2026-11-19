@@ -4,6 +4,8 @@
 # baking). See include/vs/proc/*.hpp and docs/decisions/0010 and 0011.
 
 find_package(nlohmann_json CONFIG REQUIRED)
+# Mesh booleans (M12), linked privately: Manifold's types stay in src/.
+find_package(manifold CONFIG REQUIRED)
 
 vs_add_library(vs_proc
   SOURCES
@@ -13,10 +15,17 @@ vs_add_library(vs_proc
     src/field.cpp
     src/generator.cpp
     src/graph.cpp
+    src/bake.cpp
     src/inputs.cpp
+    src/inspect.cpp
+    src/mesh_boolean.cpp
     src/mesher.cpp
     src/module.cpp
     src/nodes.cpp
+    src/nodes_frames.cpp
+    src/nodes_infill.cpp
+    src/nodes_mesh.cpp
+    src/templates.cpp
     src/types.cpp
   PUBLIC_LINKS
     vs::vs_core
@@ -28,7 +37,8 @@ vs_add_library(vs_proc
     vs::vs_mesh
     vs::vs_eval
   PRIVATE_LINKS
-    nlohmann_json::nlohmann_json)
+    nlohmann_json::nlohmann_json
+    manifold::manifold)
 
 vs_add_library_tests(vs_proc
   SOURCES
@@ -43,7 +53,12 @@ vs_add_library_tests(vs_proc
     tests/test_mesh_acceptance.cpp
     tests/test_mesher.cpp
     tests/test_module.cpp
-    tests/test_nodes.cpp)
+    tests/test_nodes.cpp
+    tests/test_templates.cpp
+    tests/test_infill.cpp
+    tests/test_frames.cpp
+    tests/test_mesh_nodes.cpp
+    tests/test_bake.cpp)
 
 if(VS_BUILD_TESTS)
   target_compile_definitions(vs_proc_tests PRIVATE

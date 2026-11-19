@@ -1,5 +1,6 @@
 #include <set>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "scenes.hpp"
@@ -201,7 +202,7 @@ TEST_CASE("Broken graph JSON fails the volume", "[proc][engine]") {
   CHECK(target.volume == b.volumes[0]);
 }
 
-TEST_CASE("Procedural contents are a mesh that measures nothing yet", "[proc][engine]") {
+TEST_CASE("Procedural contents are a mesh whose outputs are measured", "[proc][engine]") {
   auto b = scenes::boxes({scenes::shell_and_ball().graph});
   eval::Engine engine(kSettings, threads(1));
   install(engine);
@@ -210,9 +211,12 @@ TEST_CASE("Procedural contents are a mesh that measures nothing yet", "[proc][en
   const auto& c = ev.volumes[0].contents;
   REQUIRE(c);
   REQUIRE(c->outputs.size() == 1);
-  CHECK_FALSE(c->outputs[0].value.has_value());
   CHECK(c->solid.is_empty());
   REQUIRE(c->mesh.has_value());  // M11
+  // M12: measured on the mesh.
+  REQUIRE(c->outputs[0].value.has_value());
+  CHECK(std::get<double>(*c->outputs[0].value) ==
+        Catch::Approx(vs::mesh::enclosed_volume(*c->mesh)).epsilon(1e-9));
   CHECK_FALSE(c->mesh->empty());
   CHECK(contents_mesh(ev.volumes[0]) == &*c->mesh);
 }

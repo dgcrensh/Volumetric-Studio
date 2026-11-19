@@ -105,7 +105,7 @@ Fixture clean() {
   const Id top = add_box(doc, "Top", {0, 0, 10}, {60, 40, 30});
   add_patch(doc, "Flange", {base, top}, 10, 30, 20, 60, 40, bolts("M4", 2, 2, 40, 30, 20));
   const std::string blob = f.project.add_blob(step_box({0, 0, 10}, {60, 40, 30}), "step");
-  doc.find_volume(top)->contents = StaticContents{blob, "step"};
+  doc.find_volume(top)->contents = StaticContents{blob, "step", {}};
   return f;
 }
 
@@ -161,7 +161,7 @@ Fixture containment() {
   Document& doc = f.project.document = make_document("Containment");
   const Id block = add_box(doc, "Block", {0, 0, 0}, {20, 20, 20});
   const std::string blob = f.project.add_blob(step_box({0, 0, 0}, {25, 20, 20}), "step");
-  doc.find_volume(block)->contents = StaticContents{blob, "step"};
+  doc.find_volume(block)->contents = StaticContents{blob, "step", {}};
   return f;
 }
 

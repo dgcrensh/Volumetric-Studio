@@ -1,4 +1,8 @@
 #include <atomic>
+#include <chrono>
+#include <mutex>
+#include <set>
+#include <thread>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
@@ -61,17 +65,42 @@ TEST_CASE("parallel_for covers the range in chunks", "[eval][pool]") {
   CHECK_FALSE(called);
 }
 
-TEST_CASE("Nested calls run inline instead of deadlocking", "[eval][pool]") {
+TEST_CASE("Nested calls share the workers without deadlocking", "[eval][pool]") {
   ThreadPool pool(4);
   std::atomic<int> total{0};
   std::atomic<int> outside{0};
   pool.run(8, [&](std::size_t) {
     if (!pool.in_task()) outside.fetch_add(1);
-    pool.run(10, [&](std::size_t) { total.fetch_add(1); });
+    pool.run(10, [&](std::size_t) {
+      if (!pool.in_task()) outside.fetch_add(1);
+      pool.run(3, [&](std::size_t) { total.fetch_add(1); });
+    });
   });
-  CHECK(total.load() == 80);
+  CHECK(total.load() == 240);
   CHECK(outside.load() == 0);
   CHECK_FALSE(pool.in_task());
+
+  // One outer task: its nested call still spreads over the other threads
+  // (M12: one procedural volume uses the whole pool).
+  std::mutex m;
+  std::set<std::thread::id> threads;
+  pool.run(1, [&](std::size_t) {
+    pool.run(64, [&](std::size_t) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      const std::lock_guard lock(m);
+      threads.insert(std::this_thread::get_id());
+    });
+  });
+  CHECK(threads.size() > 1);
+
+  // Calls from several outside threads at once.
+  std::atomic<int> sum{0};
+  std::vector<std::thread> callers;
+  for (int t = 0; t < 3; ++t) {
+    callers.emplace_back([&] { pool.run(50, [&](std::size_t) { sum.fetch_add(1); }); });
+  }
+  for (auto& c : callers) c.join();
+  CHECK(sum.load() == 150);
 }
 
 TEST_CASE("A throwing task is rethrown after the rest finish", "[eval][pool]") {

@@ -69,6 +69,16 @@ CombinedMesh combine(const model::Document& document, const model::DocumentBuild
       }
       assign_volume(*m, v.id);
       vt.mesh = std::move(m).value();
+      // A baked procedural volume's file was made against the seams: give
+      // its seam vertices their ids back so it welds (M12).
+      if (attach_seam_vertices(vt.mesh, seams) > 0) {
+        for (const Seam* s : seams) {
+          if (std::any_of(vt.mesh.seam_vertices.begin(), vt.mesh.seam_vertices.end(),
+                          [&](const core::Id& id) { return s->find(id).has_value(); })) {
+            vt.seams.push_back(s->surface);
+          }
+        }
+      }
     } else if (v.contents_empty() && options.placeholders && vb != nullptr &&
                !vb->boundary.is_empty()) {
       VolumeMesh m = tessellate(vb->boundary, subject, seams, settings, options.tessellation);

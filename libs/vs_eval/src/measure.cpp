@@ -1,6 +1,6 @@
-#include "measure.hpp"
+#include "vs/eval/measure.hpp"
 
-namespace vs::eval::detail {
+namespace vs::eval {
 
 using core::dvec3;
 
@@ -59,6 +59,9 @@ std::vector<model::OutputResult> measure_mesh(const model::Volume& volume, const
         case model::OutputQuantity::Envelope:
           r.value = core::dbox3::from_min_max(core::to_fp64(box.min), core::to_fp64(box.max));
           break;
+        case model::OutputQuantity::Published:
+          break;  // the procedure's own numbers (vs_proc)
+
       }
     }
     out.push_back(std::move(r));
@@ -66,4 +69,4 @@ std::vector<model::OutputResult> measure_mesh(const model::Volume& volume, const
   return out;
 }
 
-}  // namespace vs::eval::detail
+}  // namespace vs::eval
