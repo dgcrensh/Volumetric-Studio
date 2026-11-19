@@ -81,7 +81,11 @@ class DocumentBuilder {
       out_.volumes[i].volume = doc_.volumes[i].id;
       raw_[i] = raw_boundary(doc_.volumes[i], out_.volumes[i].diagnostics);
     }
-    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) cut_keep_outs(i);
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
+      cut_keep_outs(i);
+      VolumeBuild& vb = out_.volumes[i];
+      if (!vb.boundary.is_empty()) vb.boundary_faces = boundary_faces(doc_.volumes[i], vb.boundary);
+    }
 
     out_.connections.reserve(doc_.connections.size());
     for (const auto& c : doc_.connections) out_.connections.push_back(connection(c));
@@ -380,7 +384,15 @@ class DocumentBuilder {
       cb.area = *w * *h;
     }
 
+    if (const auto* cl = std::get_if<ClearanceParams>(&c.params)) {
+      auto gap = eval(cl->gap, by, "gap");
+      if (!gap) return fail(gap.error());
+      cb.gap = *gap;
+    }
     if (const auto* b = std::get_if<BoltedFlangeParams>(&c.params)) {
+      auto wall = eval(b->min_wall, by, "minimum wall");
+      if (!wall) return fail(wall.error());
+      cb.min_wall = *wall;
       auto u = eval(b->holes.u, by, "hole pattern centre u");
       auto v = eval(b->holes.v, by, "hole pattern centre v");
       if (!u) return fail(u.error());
@@ -525,7 +537,7 @@ class DocumentBuilder {
     {
       feature::ExternalInput boundary;
       boundary.subject = doc_.boundary_subject(v.id);
-      boundary.result.faces = boundary_faces(v, vb.boundary);
+      boundary.result.faces = vb.boundary_faces;
       inputs.references.push_back(std::move(boundary));
     }
     for (std::size_t k = 0; k < doc_.connections.size(); ++k) {

@@ -83,7 +83,7 @@ std::span<const std::byte> bytes_of(const std::string& text) {
 // static volume's blob is there.
 Result<Project> finish(std::pair<Project, std::vector<detail::BlobEntry>> read,
                        const std::function<std::optional<Blob>(const std::string&)>& fetch,
-                       const fs::path& p) {
+                       const fs::path& p, bool check_document) {
   Project& project = read.first;
   for (const auto& entry : read.second) {
     auto bytes = fetch(entry.path);
@@ -112,8 +112,10 @@ Result<Project> finish(std::pair<Project, std::vector<detail::BlobEntry>> read,
           {project.document.volume_subject(v.id), file_subject(p)});
     }
   }
-  for (const auto& d : check(project.document)) {
-    if (d.is_error()) return d;
+  if (check_document) {
+    for (const auto& d : check(project.document)) {
+      if (d.is_error()) return d;
+    }
   }
   return std::move(project);
 }
@@ -176,7 +178,7 @@ Diagnostics save_project(const Project& project, const fs::path& path, ProjectLa
   return out;
 }
 
-Result<Project> load_project(const fs::path& path) {
+Result<Project> load_project(const fs::path& path, bool check_document) {
   std::error_code ec;
   if (fs::is_directory(path, ec)) {
     const fs::path manifest_path = path / kManifest;
@@ -196,7 +198,7 @@ Result<Project> load_project(const fs::path& path) {
                     if (!bytes) return std::nullopt;
                     return std::move(*bytes);
                   },
-                  path);
+                  path, check_document);
   }
 
   if (!fs::exists(path, ec)) return io_error(path, "no such file or folder");
@@ -231,7 +233,7 @@ Result<Project> load_project(const fs::path& path) {
         if (it == files->end()) return std::nullopt;
         return it->second;
       },
-      path);
+      path, check_document);
 }
 
 }  // namespace vs::model

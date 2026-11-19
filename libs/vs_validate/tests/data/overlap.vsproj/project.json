@@ -1,0 +1,96 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "3512dd60a1594212800bf08cfe3447ed",
+    "name": "Overlap",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [],
+      "features": [
+        {
+          "id": "3bbe6472f9904c0de9369e527ba25d57",
+          "name": "Left min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "ab2367e07442b627274283313a22a0e9",
+          "name": "Left max",
+          "type": "datum_point",
+          "at": {
+            "x": 40.0,
+            "y": 40.0,
+            "z": 20.0
+          }
+        },
+        {
+          "id": "522dd24123cc1b47b15c7bbdd09d01ea",
+          "name": "Right min",
+          "type": "datum_point",
+          "at": {
+            "x": 30.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "e257fae733cb08d699f844c369f50a77",
+          "name": "Right max",
+          "type": "datum_point",
+          "at": {
+            "x": 70.0,
+            "y": 40.0,
+            "z": 20.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "54dceff466be30e09a1c7281c984ce30",
+        "name": "Left",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "3bbe6472f9904c0de9369e527ba25d57"
+            },
+            "max": {
+              "feature": "ab2367e07442b627274283313a22a0e9"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static"
+        }
+      },
+      {
+        "id": "7a6022a24218e6a8956068deabfea444",
+        "name": "Right",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "522dd24123cc1b47b15c7bbdd09d01ea"
+            },
+            "max": {
+              "feature": "e257fae733cb08d699f844c369f50a77"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static"
+        }
+      }
+    ],
+    "connections": [],
+    "keep_outs": [],
+    "links": []
+  },
+  "blobs": []
+}

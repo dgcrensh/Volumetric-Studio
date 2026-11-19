@@ -9,6 +9,7 @@
 #include "kernel_commands.hpp"
 #include "model_commands.hpp"
 #include "sketch_commands.hpp"
+#include "validate_commands.hpp"
 #include "selftest.hpp"
 #include "vs/core/log.hpp"
 #include "vs/core/version.hpp"
@@ -28,6 +29,10 @@ Commands:
   info <project.vsproj> [--build]
                     Print a project's volumes, connection surfaces and dependencies;
                     with --build, also build it and print statuses and outputs
+  validate <project.vsproj>
+                    Validate a project (overlap, contact, connection rules, loops,
+                    containment); print each problem and where to fix it.
+                    Exits 1 when there are errors
   version           Print the version (same as --version)
   help              Print this message
 
@@ -103,6 +108,9 @@ int main(int argc, char** argv) {
   }
   if (command == "info") {
     return vs::cli::run_info(rest, std::cout, std::cerr);
+  }
+  if (command == "validate") {
+    return vs::cli::run_validate(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

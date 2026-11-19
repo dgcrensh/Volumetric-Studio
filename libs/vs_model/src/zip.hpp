@@ -1,14 +1,16 @@
 #pragma once
 
-// Private: a minimal zip reader and writer for .vsproj files.
+// Private: the zip reader and writer for .vsproj files, over the vendored
+// miniz (third_party/miniz).
 //
-// Entries are written "stored" (no compression), with a fixed timestamp
-// (1980-01-01 00:00), so the same project always makes the same bytes.
-// Reading accepts stored entries and checks each one's CRC-32; deflated
-// entries (what most zip tools make) are refused with
-// "model.project.zip_compressed", and so are zip64 archives. Decision 0005
-// explains why there is no compression library.
+// Entries are written deflated (stored when deflate doesn't help) with a
+// zero DOS timestamp, so the same project always makes the same bytes.
+// Reading accepts stored and deflated entries, zip64 included, as written
+// by Windows Explorer, 7-Zip, `zip` and the like, and checks each entry's
+// CRC-32. Anything else is "model.project.zip". Decision 0006 explains why
+// miniz is vendored instead of a vcpkg port.
 
+#include <cstdint>
 #include <map>
 #include <span>
 #include <string>
@@ -21,8 +23,7 @@ namespace vs::model::detail {
 
 using ZipEntries = std::vector<std::pair<std::string, std::span<const std::byte>>>;
 
-// The archive's bytes, or "model.project.zip" when an entry or the whole
-// archive is too large for a plain (non-zip64) zip.
+// The archive's bytes, or "model.project.zip" when an entry can't be added.
 Result<Blob> zip_store(const ZipEntries& entries);
 
 // Every file in the archive by name (directories are skipped).

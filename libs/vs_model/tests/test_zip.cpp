@@ -1,5 +1,5 @@
-// The stored-only zip reader and writer behind .vsproj zip files. Its header
-// is private, so the test includes it from src/.
+// The zip reader and writer behind .vsproj zip files (miniz). Its header is
+// private, so the test includes it from src/.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -21,14 +21,15 @@ TEST_CASE("CRC-32 matches the standard check value", "[model][zip]") {
   CHECK(crc32({}) == 0u);
 }
 
-TEST_CASE("Stored zips round-trip, byte for byte the same each time", "[model][zip]") {
+TEST_CASE("Zips round-trip, byte for byte the same each time", "[model][zip]") {
   const Blob a = bytes_of("{\"format\": \"vstudio.project\"}");
-  const Blob b(1000, std::byte{0x5a});
+  const Blob b(100000, std::byte{0x5a});
   const Blob empty;
   const ZipEntries entries{{"project.json", a}, {"blobs/x.step", b}, {"blobs/empty", empty}};
   auto zip = zip_store(entries);
   REQUIRE(zip.ok());
   CHECK(looks_like_zip(*zip));
+  CHECK(zip->size() < b.size() / 10);  // deflated
   auto again = zip_store(entries);
   REQUIRE(again.ok());
   CHECK(*again == *zip);  // fixed timestamps: deterministic
@@ -41,7 +42,37 @@ TEST_CASE("Stored zips round-trip, byte for byte the same each time", "[model][z
   CHECK(files->at("blobs/empty").empty());
 }
 
-TEST_CASE("Damaged and compressed zips are refused", "[model][zip]") {
+TEST_CASE("Zips made by other tools are read", "[model][zip]") {
+  // Python's zipfile at level 9: a directory entry "dir/" and a deflated
+  // "dir/a.txt" holding "hello, zip! " twenty times.
+  const unsigned char made[] = {
+      0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0xa1, 0x58, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+      0x64, 0x69, 0x72, 0x2f, 0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00,
+      0x60, 0xa1, 0x58, 0xb7, 0x9e, 0x0c, 0x5c, 0x11, 0x00, 0x00, 0x00, 0xf0, 0x00, 0x00, 0x00,
+      0x09, 0x00, 0x00, 0x00, 0x64, 0x69, 0x72, 0x2f, 0x61, 0x2e, 0x74, 0x78, 0x74, 0xcb, 0x48,
+      0xcd, 0xc9, 0xc9, 0xd7, 0x51, 0xa8, 0xca, 0x2c, 0x50, 0x54, 0xc8, 0x18, 0x01, 0x6c, 0x00,
+      0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0xa1,
+      0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x01, 0x00, 0x00, 0x00,
+      0x00, 0x64, 0x69, 0x72, 0x2f, 0x50, 0x4b, 0x01, 0x02, 0x14, 0x03, 0x14, 0x00, 0x00, 0x00,
+      0x08, 0x00, 0x00, 0x60, 0xa1, 0x58, 0xb7, 0x9e, 0x0c, 0x5c, 0x11, 0x00, 0x00, 0x00, 0xf0,
+      0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x80, 0x01, 0x22, 0x00, 0x00, 0x00, 0x64, 0x69, 0x72, 0x2f, 0x61, 0x2e, 0x74, 0x78, 0x74,
+      0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x69, 0x00, 0x00,
+      0x00, 0x5a, 0x00, 0x00, 0x00, 0x00, 0x00};
+  Blob archive;
+  for (unsigned char c : made) archive.push_back(static_cast<std::byte>(c));
+  REQUIRE(looks_like_zip(archive));
+  auto files = zip_read(archive);
+  REQUIRE(files.ok());
+  REQUIRE(files->size() == 1);  // the directory is skipped
+  std::string expected;
+  for (int i = 0; i < 20; ++i) expected += "hello, zip! ";
+  CHECK(files->at("dir/a.txt") == bytes_of(expected));
+}
+
+TEST_CASE("Damaged zips are refused", "[model][zip]") {
   const Blob a = bytes_of("hello, zip");
   auto zip = zip_store({{"a.txt", a}});
   REQUIRE(zip.ok());
@@ -51,13 +82,9 @@ TEST_CASE("Damaged and compressed zips are refused", "[model][zip]") {
     bad[30 + 5 + 2] ^= std::byte{1};  // inside the data, after the local header and name
     CHECK(zip_read(bad).error().code == "model.project.zip");
   }
-  SECTION("a deflated entry") {
-    Blob bad = *zip;
-    bad[8] = std::byte{8};  // local header method
-    // The central directory's method, 46 + 5 bytes from the end record.
-    const std::size_t central = 30 + 5 + a.size();
-    bad[central + 10] = std::byte{8};
-    CHECK(zip_read(bad).error().code == "model.project.zip_compressed");
+  SECTION("a truncated archive") {
+    Blob bad(zip->begin(), zip->begin() + static_cast<std::ptrdiff_t>(zip->size() / 2));
+    CHECK(zip_read(bad).error().code == "model.project.zip");
   }
   SECTION("not a zip at all") {
     CHECK_FALSE(looks_like_zip(bytes_of("plain text, no zip here")));

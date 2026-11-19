@@ -2,8 +2,8 @@
 # published outputs, reference resolution, dependency graph, project files.
 #
 # Built on vs_feature (layout and parametric contents). nlohmann-json stays
-# private; zip files use a small stored-only reader and writer in src/zip.cpp
-# (decision 0005).
+# private, and so is the vendored miniz behind .vsproj zip files (src/zip.cpp,
+# decision 0006).
 
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -24,7 +24,8 @@ vs_add_library(vs_model
     vs::vs_sketch
     vs::vs_feature
   PRIVATE_LINKS
-    nlohmann_json::nlohmann_json)
+    nlohmann_json::nlohmann_json
+    vs::miniz)
 
 vs_add_library_tests(vs_model
   SOURCES

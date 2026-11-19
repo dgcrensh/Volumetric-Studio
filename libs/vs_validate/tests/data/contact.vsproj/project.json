@@ -1,0 +1,133 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "4e4ea4d7bb30af3d12187804e0179602",
+    "name": "Contact",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [],
+      "features": [
+        {
+          "id": "5cd4c3e90f6432ad2c74421f1d144f00",
+          "name": "Left min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "a38c0a7ba640271356425068711969e1",
+          "name": "Left max",
+          "type": "datum_point",
+          "at": {
+            "x": 20.0,
+            "y": 20.0,
+            "z": 20.0
+          }
+        },
+        {
+          "id": "27fb07ceb5f2a071ab0c15d32de2b0fa",
+          "name": "Middle min",
+          "type": "datum_point",
+          "at": {
+            "x": 20.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "ed077bf5968d8ce75b7d6269414ea414",
+          "name": "Middle max",
+          "type": "datum_point",
+          "at": {
+            "x": 40.0,
+            "y": 20.0,
+            "z": 20.0
+          }
+        },
+        {
+          "id": "82fff502a5c6b3818cf38b5cb49edfbf",
+          "name": "Corner min",
+          "type": "datum_point",
+          "at": {
+            "x": 40.0,
+            "y": 20.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "2b7e139f7f5bd61a19cd3865624ac69b",
+          "name": "Corner max",
+          "type": "datum_point",
+          "at": {
+            "x": 60.0,
+            "y": 40.0,
+            "z": 20.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "b979f619e93e83f5d27f957bb5b36600",
+        "name": "Left",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "5cd4c3e90f6432ad2c74421f1d144f00"
+            },
+            "max": {
+              "feature": "a38c0a7ba640271356425068711969e1"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static"
+        }
+      },
+      {
+        "id": "3f4e86b7579b12982ecc7696a027cea2",
+        "name": "Middle",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "27fb07ceb5f2a071ab0c15d32de2b0fa"
+            },
+            "max": {
+              "feature": "ed077bf5968d8ce75b7d6269414ea414"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static"
+        }
+      },
+      {
+        "id": "93466fe5e7100bf6a7d140bdb75cfe19",
+        "name": "Corner",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "82fff502a5c6b3818cf38b5cb49edfbf"
+            },
+            "max": {
+              "feature": "2b7e139f7f5bd61a19cd3865624ac69b"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static"
+        }
+      }
+    ],
+    "connections": [],
+    "keep_outs": [],
+    "links": []
+  },
+  "blobs": []
+}

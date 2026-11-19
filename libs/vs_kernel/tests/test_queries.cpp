@@ -118,3 +118,36 @@ TEST_CASE("topology queries count each sub-shape once", "[kernel][queries]") {
   const auto f2 = faces(a);
   for (std::size_t i = 0; i < f1.size(); ++i) CHECK(f1[i].is_same(f2[i]));
 }
+
+TEST_CASE("a prepared classifier agrees with classify()", "[kernel][queries]") {
+  const Solid b = box({0, 0, 0}, {10, 10, 10});
+  const auto two = unite(b, box({20, 0, 0}, {30, 10, 10})).value();  // two lumps
+  const SolidClassifier classifier(two, kSettings);
+  for (const dvec3 p : {dvec3{5, 5, 5}, dvec3{25, 5, 5}, dvec3{15, 5, 5}, dvec3{10, 5, 5},
+                        dvec3{10 + 5e-7, 5, 5}, dvec3{-1, -1, -1}}) {
+    INFO(p.x);
+    CHECK(classifier.classify(p) == classify(two, p, kSettings));
+  }
+  CHECK(classifier.classify({25, 5, 5}) == PointClass::Inside);
+  CHECK(classifier.classify({15, 5, 5}) == PointClass::Outside);
+}
+
+TEST_CASE("distance from a point to a shape", "[kernel][queries]") {
+  const Solid b = box({0, 0, 0}, {10, 10, 10});
+  CHECK(distance_to(b, {5, 5, 5}).value() == 0.0);  // inside a solid
+  CHECK(distance_to(b, {13, 14, 5}).value() == Approx(5.0).epsilon(kRel));
+  const auto top = faces(b);
+  double best = 1e9;
+  for (const auto& f : top) best = std::min(best, distance_to(f, {5, 5, 12}).value());
+  CHECK(best == Approx(2.0).epsilon(kRel));
+  CHECK(distance_to(Shape{}, {0, 0, 0}).error().code == "kernel.distance.empty_input");
+}
+
+TEST_CASE("vertex positions", "[kernel][queries]") {
+  const auto points = vertex_points(box({1, 2, 3}, {4, 6, 8}));
+  REQUIRE(points.size() == 8);
+  dbox3 bounds = dbox3::empty();
+  for (const auto& p : points) bounds.expand(p);
+  CHECK(approx_equal(bounds.min, dvec3{1, 2, 3}, 1e-12));
+  CHECK(approx_equal(bounds.max, dvec3{4, 6, 8}, 1e-12));
+}

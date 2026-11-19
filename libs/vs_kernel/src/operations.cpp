@@ -126,6 +126,45 @@ Result<Solid> common(const Solid& a, const Solid& b, const BooleanOptions& optio
   return run_boolean<BRepAlgoAPI_Common>(a, std::span<const Solid>(&b, 1), BooleanKind::Common,
                                          options);
 }
+Result<Shape> common_faces(const Face& a, const Face& b, const BooleanOptions& options) {
+  if (a.is_empty() || b.is_empty()) {
+    return Diagnostic::error("kernel.boolean.empty_input", "Common faces needs two faces");
+  }
+  if (!std::isfinite(options.fuzzy_mm) || options.fuzzy_mm < 0.0) {
+    return Diagnostic::error("kernel.boolean.bad_fuzzy",
+                             "The boolean fuzzy distance must be zero or positive");
+  }
+  return detail::guarded<Result<Shape>>(
+      "kernel.boolean.failed", "The common of two faces", [&]() -> Result<Shape> {
+        NCollection_List<TopoDS_Shape> arguments;
+        NCollection_List<TopoDS_Shape> tools;
+        arguments.Append(topo(a));
+        tools.Append(topo(b));
+        BRepAlgoAPI_Common op;
+        op.SetArguments(arguments);
+        op.SetTools(tools);
+        if (options.fuzzy_mm > 0.0) op.SetFuzzyValue(options.fuzzy_mm);
+        op.Build();
+        if (op.HasErrors()) {
+          std::ostringstream detail_text;
+          op.DumpErrors(detail_text);
+          return Diagnostic::error(
+              "kernel.boolean.failed",
+              fmt::format("The common of two faces failed in the kernel ({})", detail_text.str()));
+        }
+        std::vector<TopoDS_Shape> found;
+        for (TopExp_Explorer ex(op.Shape(), TopAbs_FACE); ex.More(); ex.Next()) {
+          found.push_back(ex.Current());
+        }
+        if (found.empty()) return Shape{};
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (const auto& f : found) builder.Add(compound, f);
+        return detail::wrap<Shape>(compound);
+      });
+}
+
 Result<Solid> unite(const Solid& a, std::span<const Solid> tools, const BooleanOptions& options) {
   if (tools.empty()) return a;
   return run_boolean<BRepAlgoAPI_Fuse>(a, tools, BooleanKind::Unite, options);

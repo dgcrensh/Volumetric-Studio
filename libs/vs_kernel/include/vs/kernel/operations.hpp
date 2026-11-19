@@ -42,6 +42,12 @@ Result<Solid> cut(const Solid& a, const Solid& b, const BooleanOptions& options 
 // a ∩ b. An empty Solid (is_empty()) means the inputs don't overlap.
 Result<Solid> common(const Solid& a, const Solid& b, const BooleanOptions& options = {});
 
+// Where two faces meet: the region of `a` that also lies on `b`, as faces
+// (a compound of them), within `options.fuzzy_mm` of each other. Empty when
+// the faces only touch along an edge or at a point, or not at all. Used to
+// find faces of neighbouring solids that lie against each other (M6).
+Result<Shape> common_faces(const Face& a, const Face& b, const BooleanOptions& options = {});
+
 // The same with several tools in one boolean: a ∪ tools[0] ∪ ... and
 // a − tools[0] − .... The tools may overlap each other. One boolean with many
 // tools is much faster than one boolean per tool (pattern copies). An empty

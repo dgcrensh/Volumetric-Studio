@@ -92,7 +92,8 @@ that code for no gain yet. A project's hash adds each blob's path and bytes.
 Saving and loading keep the hash, and the tests also compare the documents
 for equality. M9's cache keys may want a structural hash; they can add one.
 
-**Zips are written "stored", by our own ~250 lines, not a library.** The
+**Zips are written "stored", by our own ~250 lines, not a library.**
+(Superseded by decision 0006: miniz is now vendored and zips are deflated.) The
 first attempt added miniz through vcpkg. In this cloud session vcpkg couldn't
 download its source, because the session's network policy only reaches the
 project's own GitHub repository, and the shared binary cache only holds what

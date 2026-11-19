@@ -88,6 +88,9 @@ struct VolumeBuild {
   Id volume;
   VolumeStatus status = VolumeStatus::Stale;
   kernel::Solid boundary;  // after keep-outs; empty when it failed
+  // The boundary's named faces (see "Contents" above): the planes and
+  // cylinders its faces lie on, by name. Empty when the boundary failed.
+  std::vector<feature::NamedFace> boundary_faces;
   std::map<std::string, double, std::less<>> parameters;  // values by name
   std::optional<feature::RebuildResult> contents_rebuild;  // parametric contents
   kernel::Solid contents;  // the contents' solid, when there is one
@@ -102,6 +105,8 @@ struct ConnectionBuild {
   sketch::SketchPlane frame;  // the patch's plane; normal = frame.normal()
   double area = 0.0;          // mm²
   std::vector<dvec3> hole_centres;  // bolted flanges
+  std::optional<double> gap;        // clearance: the evaluated gap, mm
+  std::optional<double> min_wall;   // bolted flange: the evaluated minimum wall, mm
   Diagnostics diagnostics;
 };
 

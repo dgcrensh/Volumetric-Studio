@@ -10,6 +10,7 @@ vs_add_application(vstudio-cli
     src/model_commands.cpp
     src/sketch_commands.cpp
     src/selftest.cpp
+    src/validate_commands.cpp
   LINKS
     vs::vs_core
     vs::vs_kernel
@@ -65,4 +66,37 @@ if(VS_BUILD_TESTS)
   add_test(NAME "vstudio-cli: info fails on a missing project"
     COMMAND vstudio-cli info "${CMAKE_CURRENT_BINARY_DIR}/no-such.vsproj")
   set_tests_properties("vstudio-cli: info fails on a missing project" PROPERTIES WILL_FAIL TRUE)
+endif()
+
+if(VS_BUILD_TESTS)
+  set(validate_data "${PROJECT_SOURCE_DIR}/libs/vs_validate/tests/data")
+  add_test(NAME "vstudio-cli: validate passes a clean project"
+    COMMAND vstudio-cli validate "${validate_data}/clean.vsproj")
+  set_tests_properties("vstudio-cli: validate passes a clean project" PROPERTIES
+    PASS_REGULAR_EXPRESSION "diagnostics 0 errors, 0 warnings.*result +valid")
+  add_test(NAME "vstudio-cli: validate passes the sample bracket"
+    COMMAND vstudio-cli validate "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj")
+  set_tests_properties("vstudio-cli: validate passes the sample bracket" PROPERTIES
+    PASS_REGULAR_EXPRESSION "diagnostics 0 errors, 0 warnings.*result +valid")
+  add_test(NAME "vstudio-cli: validate warns about contact without failing"
+    COMMAND vstudio-cli validate "${validate_data}/contact.vsproj")
+  set_tests_properties("vstudio-cli: validate warns about contact without failing" PROPERTIES
+    PASS_REGULAR_EXPRESSION "warning \\[validate\\.contact\\].*act on layout.*valid, with warnings")
+  # Each failing fixture exits non-zero (WILL_FAIL) ...
+  foreach(fixture overlap mismatch loop containment)
+    add_test(NAME "vstudio-cli: validate fails on ${fixture}"
+      COMMAND vstudio-cli validate "${validate_data}/${fixture}.vsproj")
+    set_tests_properties("vstudio-cli: validate fails on ${fixture}" PROPERTIES WILL_FAIL TRUE)
+  endforeach()
+  # ... and names the problem and where to act (a pass regex ignores the exit code).
+  set(expect_overlap "error \\[validate\\.overlap\\].*overlap by 10 mm.*act on layout")
+  set(expect_mismatch "validate\\.connection\\.edge_wall.*act on connection surface: Flange.*validate\\.connection\\.hole_spacing")
+  set(expect_loop "error \\[model\\.dependency\\.loop\\].*act on layout")
+  set(expect_containment "error \\[validate\\.containment\\].*reach 5 mm outside.*act on contents: Block, in 'Block'")
+  foreach(fixture overlap mismatch loop containment)
+    add_test(NAME "vstudio-cli: validate explains ${fixture}"
+      COMMAND vstudio-cli validate "${validate_data}/${fixture}.vsproj")
+    set_tests_properties("vstudio-cli: validate explains ${fixture}" PROPERTIES
+      PASS_REGULAR_EXPRESSION "${expect_${fixture}}.*result +invalid")
+  endforeach()
 endif()

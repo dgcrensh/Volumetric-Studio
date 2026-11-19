@@ -149,3 +149,41 @@ TEST_CASE("fillets round edges by the analytic amount", "[kernel][fillet]") {
     CHECK(fillet(cube, foreign, 1).error().code == "kernel.fillet.foreign_edge");
   }
 }
+
+TEST_CASE("common faces finds where two faces lie against each other", "[kernel][boolean]") {
+  // Two boxes side by side, the second shorter: their faces on x = 10
+  // share a 10 x 4 rectangle.
+  const Solid a = box({0, 0, 0}, {10, 10, 10});
+  const Solid b = box({10, 0, 0}, {20, 10, 4});
+  auto on_x10 = [](const Solid& s, double nx) {
+    for (const auto& f : faces(s)) {
+      const auto p = face_plane(f);
+      if (p && std::abs(p->origin.x - 10) < 1e-9 && p->normal.x == nx) return f;
+    }
+    FAIL("no face on x = 10");
+    return Face{};
+  };
+  const Face fa = on_x10(a, 1);
+  const Face fb = on_x10(b, -1);
+  auto shared = common_faces(fa, fb, {kSettings.linear_tolerance_mm});
+  REQUIRE(shared.ok());
+  CHECK(surface_area(*shared) == Approx(40.0).epsilon(1e-9));
+
+  SECTION("a gap within the fuzzy distance still meets") {
+    const Solid c = box({10 + 5e-7, 0, 0}, {20, 10, 4});
+    Face fc;
+    for (const auto& f : faces(c)) {
+      const auto p = face_plane(f);
+      if (p && p->normal.x == -1) fc = f;
+    }
+    auto near = common_faces(fa, fc, {kSettings.linear_tolerance_mm});
+    REQUIRE(near.ok());
+    CHECK(surface_area(*near) == Approx(40.0).epsilon(1e-6));
+  }
+  SECTION("faces apart share nothing") {
+    const Face far = faces(box({30, 0, 0}, {40, 10, 10})).front();
+    auto none = common_faces(fa, far, {kSettings.linear_tolerance_mm});
+    REQUIRE(none.ok());
+    CHECK(none->is_empty());
+  }
+}
