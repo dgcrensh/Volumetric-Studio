@@ -27,6 +27,7 @@ vs_add_library_tests(vs_feature
     tests/test_datums.cpp
     tests/test_expression.cpp
     tests/test_features.cpp
+    tests/test_m4_features.cpp
     tests/test_module.cpp
     tests/test_rebuild.cpp
     tests/test_serialize.cpp

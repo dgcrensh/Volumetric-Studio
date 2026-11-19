@@ -1,15 +1,19 @@
 #include "vs/kernel/operations.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <sstream>
 #include <vector>
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRep_Builder.hxx>
 #include <NCollection_IndexedMap.hxx>
 #include <NCollection_List.hxx>
@@ -18,7 +22,9 @@
 #include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <gp_Cylinder.hxx>
 #include <gp_GTrsf.hxx>
+#include <gp_Sphere.hxx>
 #include <gp_Mat.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_XYZ.hxx>
@@ -57,12 +63,14 @@ std::string_view name_of(BooleanKind kind) {
 }
 
 template <typename Op>
-Result<Solid> run_boolean(const Solid& a, const Solid& b, BooleanKind kind,
+Result<Solid> run_boolean(const Solid& a, std::span<const Solid> tools_in, BooleanKind kind,
                           const BooleanOptions& options) {
   const std::string_view name = name_of(kind);
-  if (a.is_empty() || b.is_empty()) {
+  const bool empty_tool = std::any_of(tools_in.begin(), tools_in.end(),
+                                      [](const Solid& t) { return t.is_empty(); });
+  if (a.is_empty() || tools_in.empty() || empty_tool) {
     return Diagnostic::error("kernel.boolean.empty_input",
-                             fmt::format("The {} needs two non-empty solids", name));
+                             fmt::format("The {} needs non-empty solids", name));
   }
   if (!std::isfinite(options.fuzzy_mm) || options.fuzzy_mm < 0.0) {
     return Diagnostic::error("kernel.boolean.bad_fuzzy",
@@ -73,7 +81,7 @@ Result<Solid> run_boolean(const Solid& a, const Solid& b, BooleanKind kind,
         NCollection_List<TopoDS_Shape> arguments;
         NCollection_List<TopoDS_Shape> tools;
         arguments.Append(topo(a));
-        tools.Append(topo(b));
+        for (const Solid& t : tools_in) tools.Append(topo(t));
         Op op;
         op.SetArguments(arguments);
         op.SetTools(tools);
@@ -107,13 +115,24 @@ Result<Solid> run_boolean(const Solid& a, const Solid& b, BooleanKind kind,
 }  // namespace
 
 Result<Solid> unite(const Solid& a, const Solid& b, const BooleanOptions& options) {
-  return run_boolean<BRepAlgoAPI_Fuse>(a, b, BooleanKind::Unite, options);
+  return run_boolean<BRepAlgoAPI_Fuse>(a, std::span<const Solid>(&b, 1), BooleanKind::Unite,
+                                       options);
 }
 Result<Solid> cut(const Solid& a, const Solid& b, const BooleanOptions& options) {
-  return run_boolean<BRepAlgoAPI_Cut>(a, b, BooleanKind::Cut, options);
+  return run_boolean<BRepAlgoAPI_Cut>(a, std::span<const Solid>(&b, 1), BooleanKind::Cut,
+                                      options);
 }
 Result<Solid> common(const Solid& a, const Solid& b, const BooleanOptions& options) {
-  return run_boolean<BRepAlgoAPI_Common>(a, b, BooleanKind::Common, options);
+  return run_boolean<BRepAlgoAPI_Common>(a, std::span<const Solid>(&b, 1), BooleanKind::Common,
+                                         options);
+}
+Result<Solid> unite(const Solid& a, std::span<const Solid> tools, const BooleanOptions& options) {
+  if (tools.empty()) return a;
+  return run_boolean<BRepAlgoAPI_Fuse>(a, tools, BooleanKind::Unite, options);
+}
+Result<Solid> cut(const Solid& a, std::span<const Solid> tools, const BooleanOptions& options) {
+  if (tools.empty()) return a;
+  return run_boolean<BRepAlgoAPI_Cut>(a, tools, BooleanKind::Cut, options);
 }
 
 Result<Shape> transformed(const Shape& shape, const core::dtransform& transform) {
@@ -202,6 +221,120 @@ Result<Solid> fillet(const Solid& solid, std::span<const Edge> edges, double rad
   if (!result && result.error().code == "kernel.fillet.failed" &&
       result.error().message != advice) {
     return Diagnostic::error("kernel.fillet.failed",
+                             fmt::format("{} ({})", advice, result.error().message));
+  }
+  return result;
+}
+
+Result<Solid> chamfer(const Solid& solid, std::span<const Edge> edges, double distance) {
+  if (!std::isfinite(distance) || distance <= 0.0) {
+    return Diagnostic::error("kernel.chamfer.invalid_distance",
+                             "The chamfer distance must be a positive number");
+  }
+  if (edges.empty()) return solid;
+  const std::string advice = fmt::format(
+      "Could not chamfer {} edge(s) by {} mm. The distance is probably larger than a "
+      "neighbouring face allows: try a smaller distance, or chamfer fewer edges at a time.",
+      edges.size(), distance);
+  auto result = detail::guarded<Result<Solid>>(
+      "kernel.chamfer.failed", "The chamfer", [&]() -> Result<Solid> {
+        NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> own;
+        TopExp::MapShapes(topo(solid), TopAbs_EDGE, own);
+        BRepFilletAPI_MakeChamfer op(topo(solid));
+        for (const Edge& e : edges) {
+          if (!own.Contains(topo(e))) {
+            return Diagnostic::error("kernel.chamfer.foreign_edge",
+                                     "An edge to chamfer doesn't belong to the solid");
+          }
+          op.Add(distance, TopoDS::Edge(topo(e)));
+        }
+        op.Build();
+        if (!op.IsDone()) return Diagnostic::error("kernel.chamfer.failed", advice);
+        return detail::finish_solid(op.Shape(), "kernel.chamfer.failed", "chamfer");
+      });
+  if (!result && result.error().code == "kernel.chamfer.failed" &&
+      result.error().message != advice) {
+    return Diagnostic::error("kernel.chamfer.failed",
+                             fmt::format("{} ({})", advice, result.error().message));
+  }
+  return result;
+}
+
+Result<Solid> shell(const Solid& solid, std::span<const Face> open_faces, double thickness,
+                    bool outward, const core::ProductSettings& settings) {
+  if (auto d = detail::check_length("kernel.shell.invalid_thickness", "wall thickness",
+                                    thickness, settings)) {
+    return *d;
+  }
+  if (open_faces.empty()) {
+    return Diagnostic::error("kernel.shell.no_faces",
+                             "A shell needs at least one face to leave open");
+  }
+  const std::string advice = fmt::format(
+      "Could not shell the body with {} mm walls. The walls are probably thicker than a curved "
+      "face's radius or a narrow part of the body allows, or an open face meets a rounded "
+      "edge: try thinner walls, open different faces, or shell before adding fillets.",
+      thickness);
+  auto result = detail::guarded<Result<Solid>>(
+      "kernel.shell.failed", "The shell", [&]() -> Result<Solid> {
+        NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> own;
+        TopExp::MapShapes(topo(solid), TopAbs_FACE, own);
+        NCollection_List<TopoDS_Shape> closing;
+        NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> open;
+        for (const Face& f : open_faces) {
+          if (!own.Contains(topo(f))) {
+            return Diagnostic::error("kernel.shell.foreign_face",
+                                     "A face to open doesn't belong to the solid");
+          }
+          closing.Append(topo(f));
+          open.Add(topo(f));
+        }
+        // OCCT's offset happily turns a curved wall inside out when the
+        // walls are thicker than its radius, and the result can still pass
+        // the validity check. Catch that case before it starts: a wall that
+        // curves towards the side the shell grows to shrinks by `thickness`.
+        for (int i = 1; i <= own.Extent(); ++i) {
+          if (open.Contains(own(i))) continue;
+          const TopoDS_Face& f = TopoDS::Face(own(i));
+          BRepAdaptor_Surface surface(f, /*theRestriction=*/false);
+          double radius = 0.0;
+          bool direct = true;
+          if (surface.GetType() == GeomAbs_Cylinder) {
+            radius = surface.Cylinder().Radius();
+            direct = surface.Cylinder().Direct();
+          } else if (surface.GetType() == GeomAbs_Sphere) {
+            radius = surface.Sphere().Radius();
+            direct = surface.Sphere().Position().Direct();
+          } else {
+            continue;
+          }
+          // Convex: the face's normal points away from the centre.
+          const bool convex = direct != (f.Orientation() == TopAbs_REVERSED);
+          const bool shrinks = outward ? !convex : convex;
+          if (shrinks && thickness >= radius - settings.linear_tolerance_mm) {
+            return Diagnostic::error(
+                "kernel.shell.too_thick",
+                fmt::format("The walls ({} mm) are at least as thick as the radius of a curved "
+                            "face ({} mm), which would turn that face inside out: use walls "
+                            "thinner than {} mm{}",
+                            thickness, radius, radius,
+                            outward ? "" : ", or shell outwards"));
+          }
+        }
+        BRepOffsetAPI_MakeThickSolid op;
+        op.MakeThickSolidByJoin(topo(solid), closing, outward ? thickness : -thickness,
+                                settings.linear_tolerance_mm, BRepOffset_Skin,
+                                /*Intersection=*/false, /*SelfInter=*/false,
+                                GeomAbs_Intersection);
+        if (!op.IsDone()) return Diagnostic::error("kernel.shell.failed", advice);
+        auto out = detail::finish_solid(op.Shape(), "kernel.shell.failed", "shell");
+        if (!out) return out;
+        if (auto w = detail::check_in_working_space(*out, settings)) return *w;
+        return out;
+      });
+  if (!result && result.error().code == "kernel.shell.failed" &&
+      result.error().message != advice) {
+    return Diagnostic::error("kernel.shell.failed",
                              fmt::format("{} ({})", advice, result.error().message));
   }
   return result;

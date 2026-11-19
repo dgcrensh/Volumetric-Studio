@@ -47,6 +47,18 @@ struct Plate {
 Plate make_plate(double width = 60, double thickness = 8, double hole_d = 12);
 double plate_volume(double width, double thickness, double hole_d);
 
+// A 60 x 40 x 20 tray (M4 features): a block shelled open at the top with
+// `wall` walls, its bottom edges chamfered 1 mm, and a row of `holes` drain
+// holes of diameter 4 through the floor, 10 mm apart, from a linear
+// pattern of the first.
+struct Tray {
+  FeatureTree tree;
+  Id wall, holes;                                   // variables
+  Id block, shell, chamfer, hole, pattern;          // features
+};
+Tray make_tray(double wall = 2, int holes = 4);
+double tray_volume(double wall, int holes);
+
 // The solid's volume (fails the test when it can't be measured).
 double volume(const vs::kernel::Solid& solid);
 

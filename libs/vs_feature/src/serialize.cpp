@@ -121,6 +121,82 @@ void write_definition(ojson& j, const RevolveFeature& r) {
   if (r.reverse) j["reverse"] = true;
 }
 
+ojson face_ref_json(const FaceRef& f) {
+  return ojson{{"feature", f.feature.to_string()}, {"name", f.name}};
+}
+
+ojson edge_ref_json(const EdgeRef& e) {
+  ojson j{{"face", face_ref_json(e.face)}};
+  if (e.other) j["and"] = face_ref_json(*e.other);
+  return j;
+}
+
+ojson ids_json(const std::vector<Id>& ids) {
+  ojson a = ojson::array();
+  for (const Id& id : ids) a.push_back(id.to_string());
+  return a;
+}
+
+void write_definition(ojson& j, const SweepFeature& s) {
+  j["type"] = "sweep";
+  j["profile"] = s.profile.to_string();
+  j["path"] = s.path.to_string();
+  j["operation"] = std::string(to_string(s.operation));
+  j["orientation"] = std::string(to_string(s.orientation));
+}
+
+void write_definition(ojson& j, const LoftFeature& l) {
+  j["type"] = "loft";
+  j["sections"] = ids_json(l.sections);
+  j["operation"] = std::string(to_string(l.operation));
+  if (l.ruled) j["ruled"] = true;
+}
+
+void write_definition(ojson& j, const ShellFeature& s) {
+  j["type"] = "shell";
+  ojson open = ojson::array();
+  for (const auto& f : s.open) open.push_back(face_ref_json(f));
+  j["open"] = std::move(open);
+  j["thickness"] = param_json(s.thickness);
+  if (s.outward) j["outward"] = true;
+}
+
+ojson edges_json(const std::vector<EdgeRef>& edges) {
+  ojson a = ojson::array();
+  for (const auto& e : edges) a.push_back(edge_ref_json(e));
+  return a;
+}
+
+void write_definition(ojson& j, const FilletFeature& f) {
+  j["type"] = "fillet";
+  j["edges"] = edges_json(f.edges);
+  j["radius"] = param_json(f.radius);
+}
+
+void write_definition(ojson& j, const ChamferFeature& c) {
+  j["type"] = "chamfer";
+  j["edges"] = edges_json(c.edges);
+  j["distance"] = param_json(c.distance);
+}
+
+void write_definition(ojson& j, const LinearPatternFeature& p) {
+  j["type"] = "linear_pattern";
+  j["features"] = ids_json(p.features);
+  j["direction"] = axis_ref_json(p.direction);
+  j["count"] = param_json(p.count);
+  j["spacing"] = param_json(p.spacing);
+  if (p.reverse) j["reverse"] = true;
+}
+
+void write_definition(ojson& j, const CircularPatternFeature& p) {
+  j["type"] = "circular_pattern";
+  j["features"] = ids_json(p.features);
+  j["axis"] = axis_ref_json(p.axis);
+  j["count"] = param_json(p.count);
+  j["angle"] = param_json(p.angle);
+  if (p.reverse) j["reverse"] = true;
+}
+
 // --- reading ------------------------------------------------------------------
 
 struct ReadError {
@@ -224,8 +300,110 @@ PointRef read_point_ref(const json& j, std::string_view where) {
   fail(where, "expected \"feature\" or \"sketch_entity\"");
 }
 
+FaceRef read_face_ref(const json& j, std::string_view where) {
+  return FaceRef{read_id(member(j, "feature", where), where),
+                 read_string(member(j, "name", where), where)};
+}
+
+const json& read_array(const json& j, std::string_view key, const std::string& where) {
+  const json& a = member(j, key, where);
+  if (!a.is_array()) fail(fmt::format("{}.{}", where, key), "expected an array");
+  return a;
+}
+
+std::vector<Id> read_ids(const json& j, std::string_view key, const std::string& where) {
+  std::vector<Id> ids;
+  const json& a = read_array(j, key, where);
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    ids.push_back(read_id(a[i], fmt::format("{}.{}[{}]", where, key, i)));
+  }
+  return ids;
+}
+
+std::vector<EdgeRef> read_edges(const json& j, const std::string& where) {
+  std::vector<EdgeRef> edges;
+  const json& a = read_array(j, "edges", where);
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    const std::string at = fmt::format("{}.edges[{}]", where, i);
+    EdgeRef e;
+    e.face = read_face_ref(member(a[i], "face", at), at + ".face");
+    if (a[i].contains("and")) e.other = read_face_ref(a[i]["and"], at + ".and");
+    edges.push_back(std::move(e));
+  }
+  return edges;
+}
+
+Operation read_operation(const json& j, const std::string& where) {
+  if (!j.contains("operation")) return Operation::Add;
+  const auto s = read_string(j["operation"], where + ".operation");
+  if (s == "add") return Operation::Add;
+  if (s == "cut") return Operation::Cut;
+  fail(where + ".operation", fmt::format("unknown operation \"{}\" (add or cut)", s));
+}
+
 FeatureDefinition read_definition(const json& j, const std::string& where) {
   const std::string type = read_string(member(j, "type", where), where + ".type");
+  if (type == "sweep") {
+    SweepFeature s;
+    s.profile = read_id(member(j, "profile", where), where + ".profile");
+    s.path = read_id(member(j, "path", where), where + ".path");
+    s.operation = read_operation(j, where);
+    if (j.contains("orientation")) {
+      const auto o = read_string(j["orientation"], where + ".orientation");
+      if (o == "follow_path") s.orientation = SweepOrientation::FollowPath;
+      else if (o == "fixed") s.orientation = SweepOrientation::Fixed;
+      else fail(where + ".orientation",
+                fmt::format("unknown orientation \"{}\" (follow_path or fixed)", o));
+    }
+    return s;
+  }
+  if (type == "loft") {
+    LoftFeature l;
+    l.sections = read_ids(j, "sections", where);
+    l.operation = read_operation(j, where);
+    l.ruled = read_bool(j, "ruled", where);
+    return l;
+  }
+  if (type == "shell") {
+    ShellFeature s;
+    const json& open = read_array(j, "open", where);
+    for (std::size_t i = 0; i < open.size(); ++i) {
+      s.open.push_back(read_face_ref(open[i], fmt::format("{}.open[{}]", where, i)));
+    }
+    if (j.contains("thickness")) s.thickness = read_param(j["thickness"], where + ".thickness");
+    s.outward = read_bool(j, "outward", where);
+    return s;
+  }
+  if (type == "fillet") {
+    FilletFeature f;
+    f.edges = read_edges(j, where);
+    if (j.contains("radius")) f.radius = read_param(j["radius"], where + ".radius");
+    return f;
+  }
+  if (type == "chamfer") {
+    ChamferFeature c;
+    c.edges = read_edges(j, where);
+    if (j.contains("distance")) c.distance = read_param(j["distance"], where + ".distance");
+    return c;
+  }
+  if (type == "linear_pattern") {
+    LinearPatternFeature p;
+    p.features = read_ids(j, "features", where);
+    if (j.contains("direction")) p.direction = read_axis_ref(j["direction"], where + ".direction");
+    if (j.contains("count")) p.count = read_param(j["count"], where + ".count");
+    if (j.contains("spacing")) p.spacing = read_param(j["spacing"], where + ".spacing");
+    p.reverse = read_bool(j, "reverse", where);
+    return p;
+  }
+  if (type == "circular_pattern") {
+    CircularPatternFeature p;
+    p.features = read_ids(j, "features", where);
+    if (j.contains("axis")) p.axis = read_axis_ref(j["axis"], where + ".axis");
+    if (j.contains("count")) p.count = read_param(j["count"], where + ".count");
+    if (j.contains("angle")) p.angle = read_param(j["angle"], where + ".angle");
+    p.reverse = read_bool(j, "reverse", where);
+    return p;
+  }
   if (type == "sketch") {
     SketchFeature s;
     if (j.contains("plane")) s.plane = read_plane_ref(j["plane"], where + ".plane");

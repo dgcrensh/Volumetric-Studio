@@ -3,11 +3,13 @@
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRep_Tool.hxx>
 #include <BRepBndLib.hxx>
 #include <ElSLib.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
+#include <gp_Cylinder.hxx>
 #include <gp_Pln.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
@@ -149,7 +151,33 @@ std::optional<Plane> face_plane(const Face& face) {
     return std::nullopt;
   }
 }
+std::optional<Cylinder> face_cylinder(const Face& face) {
+  if (face.is_empty()) return std::nullopt;
+  try {
+    const TopoDS_Face& f = TopoDS::Face(topo(face));
+    BRepAdaptor_Surface surface(f, /*theRestriction=*/false);
+    if (surface.GetType() != GeomAbs_Cylinder) return std::nullopt;
+    const gp_Cylinder cyl = surface.Cylinder();
+    // A right-handed cylinder's natural normal points away from the axis.
+    bool outward = cyl.Direct();
+    if (f.Orientation() == TopAbs_REVERSED) outward = !outward;
+    return Cylinder{Axis{from_occ(cyl.Location()), from_occ(cyl.Axis().Direction())},
+                    cyl.Radius(), !outward};
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 std::vector<Edge> edges(const Shape& shape) { return sub_shapes<Edge>(shape, TopAbs_EDGE); }
+
+bool is_seam(const Edge& edge, const Face& face) {
+  if (edge.is_empty() || face.is_empty()) return false;
+  try {
+    return BRep_Tool::IsClosed(TopoDS::Edge(topo(edge)), TopoDS::Face(topo(face)));
+  } catch (...) {
+    return false;
+  }
+}
 std::vector<Solid> solids(const Shape& shape) { return sub_shapes<Solid>(shape, TopAbs_SOLID); }
 
 std::size_t vertex_count(const Shape& shape) {

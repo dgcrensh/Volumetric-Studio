@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <span>
 
 #include <fmt/format.h>
 
@@ -21,6 +22,7 @@ namespace {
 
 using core::cross;
 using core::dot;
+using core::dvec2;
 using core::dtransform;
 using core::length;
 using core::normalize;
@@ -36,6 +38,81 @@ constexpr double kTwoPi = 2.0 * std::numbers::pi;
 constexpr double kParallel = 1e-9;
 
 bool parallel(const dvec3& a, const dvec3& b) { return 1.0 - std::abs(dot(a, b)) <= kParallel; }
+
+// The most copies a pattern may make, to keep a typo from hanging a rebuild.
+constexpr long long kMaxPatternCount = 1000;
+
+// True when `face` lies on the surface `named` describes, facing the same way.
+bool on_named(const NamedFace& named, const Face& face, double tol) {
+  if (named.cylinder) {
+    const auto c = kernel::face_cylinder(face);
+    if (!c || c->inward != named.cylinder->inward) return false;
+    if (std::abs(c->radius - named.cylinder->radius) > tol) return false;
+    const dvec3 d = normalize(named.cylinder->axis.direction);
+    if (!parallel(normalize(c->axis.direction), d)) return false;
+    const dvec3 off = c->axis.origin - named.cylinder->axis.origin;
+    return length(off - d * dot(off, d)) <= tol;
+  }
+  const auto fp = kernel::face_plane(face);
+  if (!fp) return false;
+  if (dot(fp->normal, named.plane.normal) < 1.0 - kParallel) return false;
+  return std::abs(dot(fp->origin - named.plane.origin, named.plane.normal)) <= tol;
+}
+
+NamedFace transformed(const NamedFace& face, const dtransform& t, std::string name) {
+  NamedFace out{std::move(name), {}, std::nullopt};
+  out.plane = Plane{t.apply_point(face.plane.origin), normalize(t.apply_vector(face.plane.normal))};
+  if (face.cylinder) {
+    kernel::Cylinder c = *face.cylinder;
+    c.axis = Axis{t.apply_point(c.axis.origin), normalize(t.apply_vector(c.axis.direction))};
+    out.cylinder = c;
+  }
+  return out;
+}
+
+// Adds `edge` to `edges` unless it is already there.
+void add_unique(std::vector<kernel::Edge>& edges, const kernel::Edge& edge) {
+  for (const auto& e : edges) {
+    if (e.is_same(edge)) return;
+  }
+  edges.push_back(edge);
+}
+
+// --- paths ------------------------------------------------------------------
+
+dvec3 seg_start(const kernel::ProfileSegment& s) {
+  return std::visit([](const auto& seg) { return seg.start; }, s);
+}
+dvec3 seg_end(const kernel::ProfileSegment& s) {
+  return std::visit([](const auto& seg) { return seg.end; }, s);
+}
+
+kernel::ProfileSegment reversed(const kernel::ProfileSegment& s) {
+  if (const auto* line = std::get_if<kernel::LineSegment>(&s)) {
+    return kernel::LineSegment{line->end, line->start};
+  }
+  const auto& arc = std::get<kernel::ArcSegment>(s);
+  return kernel::ArcSegment{arc.end, arc.through, arc.start};
+}
+
+// The unit tangent of a segment at its start (at_end = false) or its end,
+// in the direction of travel.
+dvec3 tangent(const kernel::ProfileSegment& s, bool at_end) {
+  if (const auto* line = std::get_if<kernel::LineSegment>(&s)) {
+    return normalize(line->end - line->start);
+  }
+  const auto& arc = std::get<kernel::ArcSegment>(s);
+  // The circle through the three points: centre from the standard formula.
+  const dvec3 a = arc.start - arc.end;
+  const dvec3 b = arc.through - arc.end;
+  const dvec3 axb = cross(a, b);
+  const dvec3 centre =
+      arc.end + cross(b * dot(a, a) - a * dot(b, b), axb) / (2.0 * dot(axb, axb));
+  // Travel runs counter-clockwise about n = (through - start) x (end - through).
+  const dvec3 n = normalize(cross(arc.through - arc.start, arc.end - arc.through));
+  const dvec3 p = at_end ? arc.end : arc.start;
+  return normalize(cross(n, p - centre));
+}
 
 // Builds one feature's result. Holds the context every feature needs.
 class Builder {
@@ -68,6 +145,9 @@ class Builder {
       result_.point.reset();
       result_.sketch.reset();
       result_.faces.clear();
+      result_.tool = Solid{};
+      result_.operation.reset();
+      result_.max_tolerance = 0.0;
     }
     return std::move(result_);
   }
@@ -189,6 +269,25 @@ class Builder {
       return *(*r)->plane;
     }
     const auto& face = std::get<FaceRef>(ref);
+    auto found = faces_of(face);
+    if (!found) return found.error();
+    if (found->named->cylinder) {
+      const SubjectRef other = tree_.subject(face.feature);
+      return error("feature.reference.wrong_kind",
+                   fmt::format("the face '{}' of '{}' is curved; it needs a flat face",
+                               face.name, other.label),
+                   {other});
+    }
+    return frame_for(found->named->plane);
+  }
+
+  struct FoundFaces {
+    const NamedFace* named = nullptr;
+    std::vector<Face> faces;  // the body's faces on it, at least one
+  };
+
+  // The body's faces (as this feature sees it) that a FaceRef names.
+  Result<FoundFaces> faces_of(const FaceRef& face) {
     auto r = use(face.feature, "face's feature");
     if (!r) return r.error();
     const SubjectRef other = tree_.subject(face.feature);
@@ -198,27 +297,64 @@ class Builder {
       std::string why = fmt::format("the face '{}' of '{}' no longer exists", face.name,
                                     other.label);
       if (face.name.starts_with("side:")) {
-        why += "; the sketch line that made it was probably deleted or is no longer part of a "
-               "profile";
+        why += "; the sketch line (or arc or circle) that made it was probably deleted or is no "
+               "longer part of a profile";
       }
       return error("feature.reference.broken", why, {other});
     }
-    // Find it again on the body as this feature sees it.
-    const Plane& want = named->plane;
+    FoundFaces out;
+    out.named = &*named;
     for (const Face& f : kernel::faces(body_)) {
-      const auto fp = kernel::face_plane(f);
-      if (!fp) continue;
-      if (dot(fp->normal, want.normal) < 1.0 - kParallel) continue;
-      if (std::abs(dot(fp->origin - want.origin, want.normal)) > settings_.linear_tolerance_mm) {
-        continue;
-      }
-      return frame_for(want);
+      if (on_named(*named, f, settings_.linear_tolerance_mm)) out.faces.push_back(f);
     }
-    return error("feature.reference.broken",
-                 fmt::format("the face '{}' of '{}' is no longer on the body; a later feature "
-                             "removed it",
-                             face.name, other.label),
-                 {other});
+    if (out.faces.empty()) {
+      return error("feature.reference.broken",
+                   fmt::format("the face '{}' of '{}' is no longer on the body; a later feature "
+                               "removed it",
+                               face.name, other.label),
+                   {other});
+    }
+    return out;
+  }
+
+  // The body's edges an EdgeRef names (seams excluded), each once.
+  Result<std::vector<kernel::Edge>> edges_of(const EdgeRef& ref) {
+    auto a = faces_of(ref.face);
+    if (!a) return a.error();
+    std::vector<kernel::Edge> out;
+    if (!ref.other) {
+      for (const Face& f : a->faces) {
+        for (const auto& e : kernel::edges(f)) {
+          if (!kernel::is_seam(e, f)) add_unique(out, e);
+        }
+      }
+      return out;
+    }
+    auto b = faces_of(*ref.other);
+    if (!b) return b.error();
+    std::vector<kernel::Edge> b_edges;
+    for (const Face& f : b->faces) {
+      for (const auto& e : kernel::edges(f)) b_edges.push_back(e);
+    }
+    for (const Face& f : a->faces) {
+      for (const auto& e : kernel::edges(f)) {
+        const bool shared = std::any_of(b_edges.begin(), b_edges.end(),
+                                        [&](const kernel::Edge& be) { return be.is_same(e); });
+        if (shared) add_unique(out, e);
+      }
+    }
+    if (out.empty()) {
+      const SubjectRef fa = tree_.subject(ref.face.feature);
+      const SubjectRef fb = tree_.subject(ref.other->feature);
+      std::vector<SubjectRef> more{fa};
+      if (!(ref.other->feature == ref.face.feature)) more.push_back(fb);
+      return error("feature.reference.broken",
+                   fmt::format("the face '{}' of '{}' and the face '{}' of '{}' no longer meet "
+                               "in an edge",
+                               ref.face.name, fa.label, ref.other->name, fb.label),
+                   std::move(more));
+    }
+    return out;
   }
 
   Result<Axis> axis_of(const AxisRef& ref) {
@@ -329,9 +465,89 @@ class Builder {
     }
   }
 
+  // Adds `tools` to the body or cuts them from it, in one boolean.
+  Result<Solid> combine(std::vector<Solid> tools, Operation op) {
+    if (tools.empty()) return body_;
+    if (op == Operation::Add && body_.is_empty()) {
+      const Solid first = tools.front();
+      tools.erase(tools.begin());
+      if (tools.empty()) return first;
+      auto r = kernel::unite(first, tools, fuzzy());
+      if (!r) return wrap(r.error());
+      return r;
+    }
+    if (body_.is_empty()) {
+      return error("feature.cut.no_body",
+                   "there is no body to cut yet; add material with a feature above it first");
+    }
+    auto r = op == Operation::Add ? kernel::unite(body_, tools, fuzzy())
+                                  : kernel::cut(body_, tools, fuzzy());
+    if (!r) return wrap(r.error());
+    return r;
+  }
+
+  // Unites the pieces of one feature's tool.
+  Result<Solid> merge(const std::vector<Solid>& pieces) {
+    if (pieces.size() == 1) return pieces.front();
+    auto r = kernel::unite(pieces.front(), std::span<const Solid>(pieces).subspan(1), fuzzy());
+    if (!r) return wrap(r.error());
+    return r;
+  }
+
+  // Records what a solid feature added or cut, for patterns.
+  void set_tool(const Solid& tool, Operation op) {
+    result_.tool = tool;
+    result_.operation = op;
+  }
+
+  // On a kernel failure, finds roughly the largest value below `failed`
+  // for which `works` succeeds: halving up to three times, then bisecting.
+  // At most six more kernel calls, and only after a failure.
+  template <typename Works>
+  std::optional<double> largest_working(double failed, Works&& works) {
+    const double floor = settings_.min_feature_size_mm();
+    double hi = failed;
+    double lo = 0.0;
+    for (int i = 0; i < 3 && lo == 0.0; ++i) {
+      const double v = hi / 2;
+      if (v < floor) break;
+      if (works(v)) lo = v;
+      else hi = v;
+    }
+    if (lo == 0.0) return std::nullopt;
+    for (int i = 0; i < 3; ++i) {
+      const double mid = (lo + hi) / 2;
+      if (works(mid)) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  // A kernel failure plus what the fallback search found: the value that
+  // works, appended to the error and also as a "feature.fallback.works"
+  // info diagnostic (so tools and tests can find it by code), or advice
+  // when nothing smaller works either.
+  Diagnostics with_fallback(Diagnostic failure, std::optional<double> works,
+                            std::string_view what, std::string_view otherwise) {
+    Diagnostics ds;
+    if (works) {
+      const std::string hint = fmt::format("a {} of about {:.3g} mm works here", what, *works);
+      failure.message += fmt::format(" ({})", hint);
+      ds.add(std::move(failure));
+      ds.add(Diagnostic::info("feature.fallback.works",
+                              fmt::format("'{}': {}", self_.label, hint), {self_}));
+    } else {
+      failure.message += fmt::format(" ({})", otherwise);
+      ds.add(std::move(failure));
+    }
+    return ds;
+  }
+
   struct Profiles {
     std::vector<Face> faces;
-    std::vector<Id> lines;  // the line entities along the profiles' loops
+    std::vector<Id> lines;   // the line entities along the profiles' loops
+    std::vector<Id> curves;  // the circle and arc entities along them
+    std::vector<std::size_t> holes;  // the number of holes in each profile
   };
 
   Result<Profiles> profiles_of(const sketch::Sketch& sk, const SubjectRef& sketch_subject) {
@@ -347,27 +563,58 @@ class Builder {
       auto face = sketch::make_face(sk, p, settings_);
       if (!face) return wrap(face.error());
       out.faces.push_back(*face);
-      auto add_lines = [&](const sketch::ProfileLoop& loop) {
+      out.holes.push_back(p.holes.size());
+      auto add_curves = [&](const sketch::ProfileLoop& loop) {
         for (const auto& e : loop.edges) {
           const auto* entity = sk.find_entity(e.entity);
-          if (entity && entity->kind() == sketch::EntityKind::Line) out.lines.push_back(e.entity);
+          if (!entity) continue;
+          if (entity->kind() == sketch::EntityKind::Line) out.lines.push_back(e.entity);
+          else if (entity->kind() != sketch::EntityKind::Point) out.curves.push_back(e.entity);
         }
       };
-      add_lines(p.outer);
-      for (const auto& h : p.holes) add_lines(h);
+      add_curves(p.outer);
+      for (const auto& h : p.holes) add_curves(h);
     }
     return out;
   }
 
-  // Names the side faces of `tool` made by the sketch's lines.
-  void name_sides(const Solid& tool, const sketch::Sketch& sk, const std::vector<Id>& lines,
-                  const dvec3& dir, Operation op) {
+  // Names the side faces of `tool` made by the sketch's lines and, when
+  // `curved` (no draft), its circles and arcs.
+  void name_sides(const Solid& tool, const sketch::Sketch& sk, const Profiles& profiles,
+                  const dvec3& dir, Operation op, bool curved) {
     const auto tool_faces = kernel::faces(tool);
     std::vector<std::optional<Plane>> planes;
     planes.reserve(tool_faces.size());
     for (const Face& f : tool_faces) planes.push_back(kernel::face_plane(f));
     const double tol = settings_.linear_tolerance_mm;
-    for (const Id& id : lines) {
+    if (curved) {
+      for (const Id& id : profiles.curves) {
+        dvec2 centre{};
+        double radius = 0.0;
+        if (const auto c = sketch::circle_geometry(sk, id)) {
+          centre = c->center;
+          radius = c->radius;
+        } else if (const auto a = sketch::arc_geometry(sk, id)) {
+          centre = a->center;
+          radius = a->radius;
+        } else {
+          continue;
+        }
+        const Axis axis{sk.plane().to_model(centre), dir};
+        // The tool's own face says which way it faces (a concave arc of an
+        // outline faces its axis just like a hole does).
+        for (const Face& f : tool_faces) {
+          const auto c = kernel::face_cylinder(f);
+          if (!c) continue;
+          NamedFace probe{{}, {}, kernel::Cylinder{axis, radius, c->inward}};
+          if (!on_named(probe, f, tol)) continue;
+          kernel::Cylinder cyl{axis, radius, op == Operation::Add ? c->inward : !c->inward};
+          result_.faces.push_back({"side:" + id.to_string(), Plane{}, cyl});
+          break;
+        }
+      }
+    }
+    for (const Id& id : profiles.lines) {
       const auto line = sketch::line_geometry(sk, id);
       if (!line) continue;
       const dvec3 a = sk.plane().to_model(line->start);
@@ -379,7 +626,8 @@ class Builder {
           continue;
         }
         const dvec3 normal = op == Operation::Add ? fp->normal : -fp->normal;
-        result_.faces.push_back({"side:" + id.to_string(), Plane{(a + b) * 0.5, normal}});
+        result_.faces.push_back(
+            {"side:" + id.to_string(), Plane{(a + b) * 0.5, normal}, std::nullopt});
         break;
       }
     }
@@ -671,16 +919,17 @@ class Builder {
     auto body = combine(tool, ex.operation);
     if (!body) return one(body.error());
     set_body(*body);
+    set_tool(tool, ex.operation);
 
     const dvec3 start_point = plane.origin + dir * start;
     const dvec3 end_point = start_point + dir * depth;
     if (ex.operation == Operation::Add) {
-      result_.faces.push_back({"start", Plane{start_point, -dir}});
-      result_.faces.push_back({"end", Plane{end_point, dir}});
+      result_.faces.push_back({"start", Plane{start_point, -dir}, std::nullopt});
+      result_.faces.push_back({"end", Plane{end_point, dir}, std::nullopt});
     } else if (ex.extent == Extent::Blind || ex.extent == Extent::UpToPlane) {
-      result_.faces.push_back({"end", Plane{end_point, -dir}});
+      result_.faces.push_back({"end", Plane{end_point, -dir}, std::nullopt});
     }
-    name_sides(tool, sk, profiles->lines, dir, ex.operation);
+    name_sides(tool, sk, *profiles, dir, ex.operation, /*curved=*/*draft == 0.0);
     return {};
   }
 
@@ -727,6 +976,7 @@ class Builder {
     auto body = combine(tool, rv.operation);
     if (!body) return one(body.error());
     set_body(*body);
+    set_tool(tool, rv.operation);
 
     if (turn < kTwoPi - 1e-9) {
       // The material leaves the sketch plane along `sweep`, so the start face
@@ -740,10 +990,464 @@ class Builder {
                            dtransform::translate(-ax.origin);
       const dvec3 end_normal = -r.apply_vector(start_normal);
       const double s = rv.operation == Operation::Add ? 1.0 : -1.0;
-      result_.faces.push_back({"start", Plane{c, start_normal * s}});
-      result_.faces.push_back({"end", Plane{r.apply_point(c), end_normal * s}});
+      result_.faces.push_back({"start", Plane{c, start_normal * s}, std::nullopt});
+      result_.faces.push_back({"end", Plane{r.apply_point(c), end_normal * s}, std::nullopt});
     }
     return {};
+  }
+
+  // --- sweep and loft --------------------------------------------------------
+
+  // The planar face of `tool` that contains `point` and satisfies `facing`
+  // (given its outward normal), named for the body: its normal is flipped
+  // for a cut, since a cut's tool faces into the material.
+  template <typename Facing>
+  void name_cap(const Solid& tool, std::string name, const dvec3& point, Operation op,
+                Facing&& facing) {
+    const double tol = settings_.linear_tolerance_mm;
+    std::optional<Plane> best;
+    double best_score = 0.0;
+    for (const Face& f : kernel::faces(tool)) {
+      const auto fp = kernel::face_plane(f);
+      if (!fp || std::abs(dot(point - fp->origin, fp->normal)) > tol) continue;
+      const double score = facing(fp->normal);
+      if (score > best_score) {
+        best_score = score;
+        best = fp;
+      }
+    }
+    if (!best) return;
+    const dvec3 normal = op == Operation::Add ? best->normal : -best->normal;
+    result_.faces.push_back({std::move(name), Plane{point, normal}, std::nullopt});
+  }
+
+  // The path drawn in a sketch, as one chain of model-space segments. An
+  // open chain starts at the end nearer `near`; a closed one at the joint
+  // nearest it.
+  Result<kernel::Path> path_of(const sketch::Sketch& sk, const SubjectRef& sketch_subject,
+                               const dvec3& near) {
+    const SketchPlane& plane = sk.plane();
+    struct Curve {
+      Id id;
+      kernel::ProfileSegment segment;  // forwards
+      std::size_t ends[2] = {0, 0};    // joint indices of its start and end
+    };
+    std::vector<Curve> curves;
+    std::vector<Id> circles;
+    for (const auto& e : sk.entities()) {
+      if (e.construction) continue;
+      if (e.kind() == sketch::EntityKind::Line) {
+        const auto g = sketch::line_geometry(sk, e.id);
+        if (!g) continue;
+        curves.push_back({e.id, kernel::LineSegment{plane.to_model(g->start),
+                                                    plane.to_model(g->end)},
+                        {0, 0}});
+      } else if (e.kind() == sketch::EntityKind::Arc) {
+        const auto g = sketch::arc_geometry(sk, e.id);
+        if (!g) continue;
+        curves.push_back({e.id, kernel::ArcSegment{
+                                    plane.to_model(g->start()),
+                                    plane.to_model(g->at((g->start_angle + g->end_angle) / 2)),
+                                    plane.to_model(g->end())},
+                        {0, 0}});
+      } else if (e.kind() == sketch::EntityKind::Circle) {
+        circles.push_back(e.id);
+      }
+    }
+    if (curves.empty() && circles.empty()) {
+      return error("feature.sweep.no_path",
+                   fmt::format("'{}' has no lines, arcs or circles to sweep along",
+                               sketch_subject.label),
+                   {sketch_subject});
+    }
+    if (!circles.empty()) {
+      if (circles.size() > 1 || !curves.empty()) {
+        return error("feature.sweep.path_disconnected",
+                     fmt::format("the path in '{}' must be one chain of curves; a circle can "
+                                 "only be a path on its own",
+                                 sketch_subject.label),
+                     {sketch_subject});
+      }
+      const auto g = sketch::circle_geometry(sk, circles.front());
+      if (!g) return error("feature.sweep.no_path", "the path's circle has no geometry");
+      // Start at the circle's point nearest `near`, as two half arcs.
+      dvec2 u{1, 0};
+      const dvec3 c = plane.to_model(g->center);
+      const dvec3 toward = near - c;
+      const dvec2 local{dot(toward, plane.x_axis), dot(toward, plane.y_axis)};
+      if (core::length(local) > 1e-12) u = local / core::length(local);
+      const dvec2 v{-u.y, u.x};
+      const double r = g->radius;
+      auto at = [&](dvec2 d) { return plane.to_model(g->center + d * r); };
+      kernel::Path path;
+      path.segments.emplace_back(kernel::ArcSegment{at(u), at(v), at(-u)});
+      path.segments.emplace_back(kernel::ArcSegment{at(-u), at(-v), at(u)});
+      return path;
+    }
+
+    // Join curve ends into joints.
+    const double tol = settings_.linear_tolerance_mm;
+    std::vector<dvec3> joints;
+    std::vector<int> degree;
+    auto joint_of = [&](const dvec3& p) {
+      for (std::size_t j = 0; j < joints.size(); ++j) {
+        if (core::distance(joints[j], p) <= tol) {
+          ++degree[j];
+          return j;
+        }
+      }
+      joints.push_back(p);
+      degree.push_back(1);
+      return joints.size() - 1;
+    };
+    for (auto& c : curves) {
+      c.ends[0] = joint_of(seg_start(c.segment));
+      c.ends[1] = joint_of(seg_end(c.segment));
+    }
+    for (std::size_t j = 0; j < joints.size(); ++j) {
+      if (degree[j] > 2) {
+        return error("feature.sweep.path_branches",
+                     fmt::format("the path in '{}' branches: {} curves meet at one point; a "
+                                 "path must be a single chain",
+                                 sketch_subject.label, degree[j]),
+                     {sketch_subject});
+      }
+    }
+    // Start at a free end (open) or any joint (closed), nearest `near`.
+    std::optional<std::size_t> start;
+    bool open = false;
+    for (std::size_t j = 0; j < joints.size(); ++j) {
+      if (degree[j] == 1) open = true;
+    }
+    for (std::size_t j = 0; j < joints.size(); ++j) {
+      if (open && degree[j] != 1) continue;
+      if (!start || core::distance(joints[j], near) < core::distance(joints[*start], near)) {
+        start = j;
+      }
+    }
+    kernel::Path path;
+    std::vector<bool> used(curves.size(), false);
+    std::size_t at = *start;
+    for (;;) {
+      bool moved = false;
+      for (std::size_t i = 0; i < curves.size(); ++i) {
+        if (used[i]) continue;
+        if (curves[i].ends[0] == at) {
+          path.segments.push_back(curves[i].segment);
+          at = curves[i].ends[1];
+        } else if (curves[i].ends[1] == at) {
+          path.segments.push_back(reversed(curves[i].segment));
+          at = curves[i].ends[0];
+        } else {
+          continue;
+        }
+        used[i] = true;
+        moved = true;
+        break;
+      }
+      if (!moved) break;
+    }
+    if (path.segments.size() != curves.size()) {
+      return error("feature.sweep.path_disconnected",
+                   fmt::format("the path in '{}' is in separate pieces; join its curves end to "
+                               "end into one chain",
+                               sketch_subject.label),
+                   {sketch_subject});
+    }
+    return path;
+  }
+
+  Diagnostics build(const SweepFeature& sw) {
+    auto pr = use_sketch(sw.profile);
+    if (!pr) return one(pr.error());
+    auto pa = use_sketch(sw.path);
+    if (!pa) return one(pa.error());
+    const sketch::Sketch& profile_sketch = *(*pr)->sketch;
+    const SubjectRef profile_subject = tree_.subject(sw.profile);
+    auto profiles = profiles_of(profile_sketch, profile_subject);
+    if (!profiles) return one(profiles.error());
+    const auto centre = kernel::face_plane(profiles->faces.front());
+    const dvec3 near = centre ? centre->origin : profile_sketch.plane().origin;
+    auto path = path_of(*(*pa)->sketch, tree_.subject(sw.path), near);
+    if (!path) return one(path.error());
+
+    const auto orientation = sw.orientation == SweepOrientation::Fixed
+                                 ? kernel::SweepOrientation::Fixed
+                                 : kernel::SweepOrientation::FollowPath;
+    std::vector<Solid> pieces;
+    for (const Face& face : profiles->faces) {
+      auto piece = kernel::make_sweep(face, *path, orientation, settings_);
+      if (!piece) return one(wrap(piece.error()));
+      pieces.push_back(*piece);
+    }
+    auto tool = merge(pieces);
+    if (!tool) return one(tool.error());
+    auto body = combine(*tool, sw.operation);
+    if (!body) return one(body.error());
+    set_body(*body);
+    set_tool(*tool, sw.operation);
+
+    // Caps of an open path.
+    const auto& segs = path->segments;
+    const dvec3 p0 = seg_start(segs.front());
+    const dvec3 p1 = seg_end(segs.back());
+    if (core::distance(p0, p1) > settings_.linear_tolerance_mm) {
+      const dvec3 t0 = tangent(segs.front(), false);
+      const dvec3 t1 = tangent(segs.back(), true);
+      const dvec3 n = profile_sketch.plane().normal();
+      name_cap(*tool, "start", near, sw.operation,
+               [&](const dvec3& normal) { return parallel(normal, n) ? -dot(normal, t0) : 0.0; });
+      if (std::abs(dot(p0 - profile_sketch.plane().origin, n)) <= settings_.linear_tolerance_mm) {
+        name_cap(*tool, "end", p1, sw.operation,
+                 [&](const dvec3& normal) { return dot(normal, t1); });
+      }
+    }
+    return {};
+  }
+
+  Diagnostics build(const LoftFeature& lf) {
+    if (lf.sections.size() < 2) {
+      return one(error("feature.loft.too_few_sections",
+                       fmt::format("a loft needs at least two section sketches; it has {}",
+                                   lf.sections.size())));
+    }
+    std::vector<Face> sections;
+    for (const Id& id : lf.sections) {
+      auto sr = use_sketch(id);
+      if (!sr) return one(sr.error());
+      const SubjectRef subject = tree_.subject(id);
+      auto profiles = profiles_of(*(*sr)->sketch, subject);
+      if (!profiles) return one(profiles.error());
+      if (profiles->faces.size() != 1 || profiles->holes.front() != 0) {
+        return one(error("feature.loft.section_not_single",
+                         fmt::format("each loft section must be one closed profile without "
+                                     "holes, but '{}' has {} profile(s){}",
+                                     subject.label, profiles->faces.size(),
+                                     profiles->holes.front() != 0 ? " with holes" : ""),
+                         {subject}));
+      }
+      sections.push_back(profiles->faces.front());
+    }
+    auto tool = kernel::make_loft(sections, lf.ruled, settings_);
+    if (!tool) return one(wrap(tool.error()));
+    auto body = combine(*tool, lf.operation);
+    if (!body) return one(body.error());
+    set_body(*body);
+    set_tool(*tool, lf.operation);
+
+    // The first and last sections' faces, facing away from the loft.
+    const auto first = kernel::face_plane(sections.front());
+    const auto last = kernel::face_plane(sections.back());
+    if (first && last) {
+      const dvec3 along = last->origin - first->origin;
+      name_cap(*tool, "start", first->origin, lf.operation, [&](const dvec3& normal) {
+        return parallel(normal, first->normal) ? -dot(normal, along) : 0.0;
+      });
+      name_cap(*tool, "end", last->origin, lf.operation, [&](const dvec3& normal) {
+        return parallel(normal, last->normal) ? dot(normal, along) : 0.0;
+      });
+    }
+    return {};
+  }
+
+  // --- shell, fillet and chamfer -----------------------------------------------
+
+  Diagnostics build(const ShellFeature& sh) {
+    if (sh.open.empty()) {
+      return one(error("feature.shell.no_faces",
+                       "it has no faces to open; choose at least one face to remove"));
+    }
+    auto thickness = eval(sh.thickness, "wall thickness");
+    if (!thickness) return one(thickness.error());
+    if (*thickness < settings_.min_feature_size_mm()) {
+      return one(error("feature.shell.bad_thickness",
+                       fmt::format("the wall thickness ({} mm) must be at least the minimum "
+                                   "feature size ({} mm)",
+                                   *thickness, settings_.min_feature_size_mm())));
+    }
+    std::vector<Face> open;
+    for (const FaceRef& ref : sh.open) {
+      auto found = faces_of(ref);
+      if (!found) return one(found.error());
+      for (const Face& f : found->faces) {
+        const bool seen = std::any_of(open.begin(), open.end(),
+                                      [&](const Face& o) { return o.is_same(f); });
+        if (!seen) open.push_back(f);
+      }
+    }
+    auto shelled = kernel::shell(body_, open, *thickness, sh.outward, settings_);
+    if (!shelled) {
+      Diagnostic d = wrap(shelled.error());
+      if (d.code != "kernel.shell.failed") return one(std::move(d));
+      const auto works = largest_working(*thickness, [&](double t) {
+        return kernel::shell(body_, open, t, sh.outward, settings_).ok();
+      });
+      return with_fallback(std::move(d), works, "wall thickness",
+                           "thinner walls fail too, so try opening other faces");
+    }
+    set_body(*shelled);
+    return {};
+  }
+
+  // Fillets (`fillet`) or chamfers the edges the references name.
+  Diagnostics round_edges(const std::vector<EdgeRef>& refs, const Param& size, bool fillet) {
+    const std::string kind = fillet ? "feature.fillet" : "feature.chamfer";
+    const std::string what = fillet ? "radius" : "distance";
+    if (refs.empty()) {
+      return one(error(kind + ".no_edges",
+                       fmt::format("it has no edges to {}", fillet ? "round" : "bevel")));
+    }
+    auto value = eval(size, what);
+    if (!value) return one(value.error());
+    if (*value < settings_.min_feature_size_mm()) {
+      return one(error(kind + (fillet ? ".bad_radius" : ".bad_distance"),
+                       fmt::format("the {} ({} mm) must be at least the minimum feature size "
+                                   "({} mm)",
+                                   what, *value, settings_.min_feature_size_mm())));
+    }
+    std::vector<kernel::Edge> edges;
+    for (const EdgeRef& ref : refs) {
+      auto found = edges_of(ref);
+      if (!found) return one(found.error());
+      for (const auto& e : *found) add_unique(edges, e);
+    }
+    auto apply = [&](double v) {
+      return fillet ? kernel::fillet(body_, edges, v) : kernel::chamfer(body_, edges, v);
+    };
+    auto result = apply(*value);
+    if (!result) {
+      Diagnostic d = wrap(result.error());
+      if (d.code != (fillet ? "kernel.fillet.failed" : "kernel.chamfer.failed")) {
+        return one(std::move(d));
+      }
+      const auto works = largest_working(*value, [&](double v) { return apply(v).ok(); });
+      return with_fallback(std::move(d), works, what,
+                           "smaller values fail too, so try fewer edges at a time");
+    }
+    set_body(*result);
+    return {};
+  }
+
+  Diagnostics build(const FilletFeature& f) { return round_edges(f.edges, f.radius, true); }
+  Diagnostics build(const ChamferFeature& c) { return round_edges(c.edges, c.distance, false); }
+
+  // --- patterns -------------------------------------------------------------
+
+  Result<long long> count_of(const Param& p) {
+    auto c = eval(p, "count");
+    if (!c) return c.error();
+    const double rounded = std::round(*c);
+    if (std::abs(*c - rounded) > 1e-9 || rounded < 1) {
+      return error("feature.pattern.bad_count",
+                   fmt::format("the count ({:.6g}) must be a whole number, at least 1", *c));
+    }
+    if (rounded > static_cast<double>(kMaxPatternCount)) {
+      return error("feature.pattern.too_many",
+                   fmt::format("the count ({:.0f}) is above the limit of {}", rounded,
+                               kMaxPatternCount));
+    }
+    return static_cast<long long>(rounded);
+  }
+
+  // Applies copies of `features` placed by `placements` (one transform per
+  // copy, the original excluded).
+  Diagnostics pattern(const std::vector<Id>& features, const std::vector<dtransform>& placements) {
+    if (features.empty()) {
+      return one(error("feature.pattern.no_features", "it has no features to copy"));
+    }
+    std::vector<const FeatureResult*> seeds;
+    for (const Id& id : features) {
+      auto r = use(id, "feature to copy");
+      if (!r) return one(r.error());
+      if (!(*r)->operation || (*r)->tool.is_empty()) {
+        const SubjectRef other = tree_.subject(id);
+        return one(error("feature.pattern.not_solid_feature",
+                         fmt::format("'{}' doesn't add or cut material, so it can't be copied; "
+                                     "pattern extrudes, revolves, sweeps and lofts",
+                                     other.label),
+                         {other}));
+      }
+      seeds.push_back(*r);
+    }
+    // combine() works on body_; step it along seed by seed and put it back
+    // afterwards, since body_ is what a failure falls back to.
+    const Solid original = body_;
+    Diagnostics problems;
+    for (const FeatureResult* seed : seeds) {
+      std::vector<Solid> copies;
+      copies.reserve(placements.size());
+      for (std::size_t k = 0; k < placements.size(); ++k) {
+        auto copy = kernel::transformed(seed->tool, placements[k]);
+        if (!copy) {
+          problems.add(wrap(copy.error()));
+          break;
+        }
+        copies.push_back(*copy);
+        for (const NamedFace& f : seed->faces) {
+          result_.faces.push_back(transformed(
+              f, placements[k],
+              fmt::format("{}:{}:{}", k + 1, seed->feature.to_string(), f.name)));
+        }
+      }
+      if (problems.has_errors()) break;
+      auto combined = combine(std::move(copies), *seed->operation);
+      if (!combined) {
+        problems.add(combined.error());
+        break;
+      }
+      body_ = *combined;
+    }
+    const Solid patterned = body_;
+    body_ = original;
+    if (problems.has_errors()) return problems;
+    set_body(patterned);
+    return {};
+  }
+
+  Diagnostics build(const LinearPatternFeature& lp) {
+    auto count = count_of(lp.count);
+    if (!count) return one(count.error());
+    auto axis = axis_of(lp.direction);
+    if (!axis) return one(axis.error());
+    auto spacing = eval(lp.spacing, "spacing");
+    if (!spacing) return one(spacing.error());
+    if (*spacing < settings_.min_feature_size_mm()) {
+      return one(error("feature.pattern.bad_spacing",
+                       fmt::format("the spacing ({} mm) must be at least the minimum feature "
+                                   "size ({} mm); use 'reverse' to go the other way",
+                                   *spacing, settings_.min_feature_size_mm())));
+    }
+    const dvec3 step = normalize(axis->direction) * (*spacing * (lp.reverse ? -1.0 : 1.0));
+    std::vector<dtransform> placements;
+    for (long long k = 1; k < *count; ++k) {
+      placements.push_back(dtransform::translate(step * static_cast<double>(k)));
+    }
+    return pattern(lp.features, placements);
+  }
+
+  Diagnostics build(const CircularPatternFeature& cp) {
+    auto count = count_of(cp.count);
+    if (!count) return one(count.error());
+    auto axis = axis_of(cp.axis);
+    if (!axis) return one(axis.error());
+    auto angle = eval(cp.angle, "angle");
+    if (!angle) return one(angle.error());
+    if (*angle <= 0.0 || *angle > kTwoPi + 1e-9) {
+      return one(error("feature.pattern.bad_angle",
+                       fmt::format("the angle ({:.6g}°) must be above 0 and at most 360°",
+                                   *angle * 180.0 / std::numbers::pi)));
+    }
+    const bool full = *angle >= kTwoPi - 1e-9;
+    const double n = static_cast<double>(*count);
+    const double step = full ? kTwoPi / n : (*count > 1 ? *angle / (n - 1) : 0.0);
+    const dvec3 d = normalize(axis->direction) * (cp.reverse ? -1.0 : 1.0);
+    std::vector<dtransform> placements;
+    for (long long k = 1; k < *count; ++k) {
+      placements.push_back(dtransform::translate(axis->origin) *
+                           dtransform::rotate(d, step * static_cast<double>(k)) *
+                           dtransform::translate(-axis->origin));
+    }
+    return pattern(cp.features, placements);
   }
 };
 

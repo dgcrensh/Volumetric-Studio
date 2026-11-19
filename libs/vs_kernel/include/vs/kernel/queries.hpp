@@ -62,7 +62,23 @@ std::vector<Face> faces(const Shape& shape);
 // does (out of the material, for a face of a solid). nullopt for a face on
 // any other kind of surface. `origin` is the face's centre of area.
 std::optional<Plane> face_plane(const Face& face);
+
+// A cylindrical face's surface: its axis (unit direction, origin on the
+// axis), radius, and which way the face faces.
+struct Cylinder {
+  Axis axis;
+  double radius = 0.0;
+  // The face's normal points towards the axis (the wall of a hole) rather
+  // than away from it (the outside of a boss).
+  bool inward = false;
+};
+// nullopt for a face on any other kind of surface.
+std::optional<Cylinder> face_cylinder(const Face& face);
 std::vector<Edge> edges(const Shape& shape);
+// True when `edge` is a seam of `face`: where a closed surface (a full
+// cylinder, say) meets itself. Seams aren't real edges of the shape's
+// outline and can't be filleted.
+bool is_seam(const Edge& edge, const Face& face);
 std::vector<Solid> solids(const Shape& shape);
 std::size_t vertex_count(const Shape& shape);
 

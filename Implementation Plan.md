@@ -447,5 +447,6 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | M0 | Done | #1 | OCCT, Eigen, Manifold and Qt are optional vcpkg features (decision 0000) |
 | M1 | Done | #2 | OCCT 8.0.1; tolerance findings in decision 0001 |
 | M2 | Done | #3 | PlaneGCS from FreeCAD 1.1.4 in `third_party/planegcs`, built without Boost |
-| M3 | In review | #5 | Branch `m3-features`. Fuzzy feature booleans and geometric face references (decision 0002) |
-| M4–M17 | Not started | | |
+| M3 | Done | #5 | Fuzzy feature booleans and geometric face references (decision 0002) |
+| M4 | In review | | Branch `m4-features`. Edges found by their faces, cylindrical face names, fallback search for fillets, chamfers and shells (decision 0003) |
+| M5–M17 | Not started | | |

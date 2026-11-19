@@ -4,7 +4,12 @@
 #include <cmath>
 #include <numbers>
 
+#include <BRepAdaptor_CompCurve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepTools.hxx>
+#include <GeomFill_Trihedron.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
@@ -76,14 +81,16 @@ dvec3 segment_end(const ProfileSegment& s) {
   return std::visit([](const auto& seg) { return seg.end; }, s);
 }
 
-// Builds a closed wire whose consecutive edges share vertices exactly.
-Result<TopoDS_Wire> make_wire(const Loop& loop, const ProductSettings& settings) {
+// Builds a wire whose consecutive edges share vertices exactly: a closed
+// loop, or (closed = false) an open chain.
+Result<TopoDS_Wire> make_wire(const std::vector<ProfileSegment>& segs, bool closed,
+                              const ProductSettings& settings) {
   const double tol = settings.linear_tolerance_mm;
-  const auto& segs = loop.segments;
   if (segs.empty()) {
     return Diagnostic::error("kernel.profile.empty_loop", "A profile loop has no segments");
   }
-  for (std::size_t i = 0; i < segs.size(); ++i) {
+  const std::size_t joints = closed ? segs.size() : segs.size() - 1;
+  for (std::size_t i = 0; i < joints; ++i) {
     const dvec3 end = segment_end(segs[i]);
     const dvec3 next_start = segment_start(segs[(i + 1) % segs.size()]);
     if (!is_finite(end) || !is_finite(next_start)) {
@@ -99,15 +106,21 @@ Result<TopoDS_Wire> make_wire(const Loop& loop, const ProductSettings& settings)
   }
 
   std::vector<TopoDS_Vertex> vertices;
-  vertices.reserve(segs.size());
+  vertices.reserve(segs.size() + 1);
   for (const auto& s : segs) {
     vertices.push_back(BRepBuilderAPI_MakeVertex(to_occ(segment_start(s))).Vertex());
+  }
+  if (!closed) {
+    if (!is_finite(segment_end(segs.back()))) {
+      return Diagnostic::error("kernel.profile.not_finite", "A path point is not a finite number");
+    }
+    vertices.push_back(BRepBuilderAPI_MakeVertex(to_occ(segment_end(segs.back()))).Vertex());
   }
 
   BRepBuilderAPI_MakeWire wire;
   for (std::size_t i = 0; i < segs.size(); ++i) {
     const TopoDS_Vertex& v1 = vertices[i];
-    const TopoDS_Vertex& v2 = vertices[(i + 1) % segs.size()];
+    const TopoDS_Vertex& v2 = vertices[(i + 1) % vertices.size()];
     TopoDS_Edge edge;
     if (const auto* line = std::get_if<LineSegment>(&segs[i])) {
       if (core::distance(line->start, line->end) < settings.min_feature_size_mm()) {
@@ -144,7 +157,7 @@ Result<TopoDS_Wire> make_wire(const Loop& loop, const ProductSettings& settings)
     }
   }
   const TopoDS_Wire w = wire.Wire();
-  if (!w.Closed() && !BRep_Tool::IsClosed(w)) {
+  if (closed && !w.Closed() && !BRep_Tool::IsClosed(w)) {
     return Diagnostic::error("kernel.profile.open_loop", "A profile loop is not closed");
   }
   return w;
@@ -176,7 +189,7 @@ Result<Face> make_face(const Loop& outer, std::span<const Loop> holes,
                        const ProductSettings& settings) {
   return detail::guarded<Result<Face>>("kernel.profile.failed", "Building a profile face", [&]()
                                                                                              -> Result<Face> {
-    auto outer_wire = make_wire(outer, settings);
+    auto outer_wire = make_wire(outer.segments, /*closed=*/true, settings);
     if (!outer_wire) return outer_wire.error();
 
     BRepBuilderAPI_MakeFace mk(*outer_wire, /*OnlyPlane=*/true);
@@ -203,7 +216,7 @@ Result<Face> make_face(const Loop& outer, std::span<const Loop> holes,
               fmt::format("Hole {} does not lie in the plane of the outer loop", h));
         }
       }
-      auto hole_wire = make_wire(holes[h], settings);
+      auto hole_wire = make_wire(holes[h].segments, /*closed=*/true, settings);
       if (!hole_wire) return hole_wire.error();
       BRepClass_FaceClassifier where(outer_face, to_occ(samples.front()),
                                      settings.linear_tolerance_mm);
@@ -450,6 +463,113 @@ Result<Solid> make_revolution(const Face& profile, const Axis& axis, double angl
       return Diagnostic::error("kernel.primitive.failed", "The revolve could not be built");
     }
     return finish_primitive(mk.Shape(), "revolve", settings);
+  });
+}
+
+// --- sweeps and lofts -------------------------------------------------------
+
+namespace {
+
+// Like finish_primitive, with the operation's own code for a bad result.
+Result<Solid> finish_with(const TopoDS_Shape& shape, std::string_view invalid_code,
+                          std::string_view what, const ProductSettings& settings) {
+  auto solid = detail::finish_solid(shape, invalid_code, what);
+  if (!solid) return solid;
+  if (auto d = check_in_working_space(*solid, settings)) return *d;
+  return solid;
+}
+
+}  // namespace
+
+Result<Solid> make_sweep(const Face& profile, const Path& path, SweepOrientation orientation,
+                         const ProductSettings& settings) {
+  const std::string advice =
+      "The sweep could not be built. The usual causes are a path that turns more tightly than "
+      "the profile is wide (so the sweep runs into itself) or a profile that isn't at the "
+      "path's start: try a larger bend radius, a smaller profile, or the other orientation mode";
+  auto result = detail::guarded<Result<Solid>>("kernel.sweep.failed", "Sweeping a profile",
+                                               [&]() -> Result<Solid> {
+    if (profile.is_empty()) {
+      return Diagnostic::error("kernel.primitive.empty_profile", "The profile is empty");
+    }
+    if (path.segments.empty()) {
+      return Diagnostic::error("kernel.sweep.bad_path", "The sweep path has no segments");
+    }
+    const bool closed =
+        path.segments.size() > 1 &&
+        core::distance(segment_end(path.segments.back()), segment_start(path.segments.front())) <=
+            settings.linear_tolerance_mm;
+    auto wire = make_wire(path.segments, closed, settings);
+    if (!wire) {
+      return Diagnostic::error("kernel.sweep.bad_path",
+                               fmt::format("The sweep path is broken: {}", wire.error().message));
+    }
+    const TopoDS_Face& face = TopoDS::Face(topo(profile));
+    const auto plane = occ::down_cast<Geom_Plane>(BRep_Tool::Surface(face));
+    if (plane.IsNull()) {
+      return Diagnostic::error("kernel.profile.not_planar", "The profile is not planar");
+    }
+    BRepAdaptor_CompCurve curve(*wire);
+    gp_Pnt p0;
+    gp_Vec t0;
+    curve.D1(curve.FirstParameter(), p0, t0);
+    const dvec3 normal = from_occ(plane->Pln().Axis().Direction());
+    if (t0.Magnitude() == 0.0 ||
+        std::abs(core::dot(core::normalize(from_occ(t0)), normal)) < 1e-6) {
+      return Diagnostic::error("kernel.sweep.tangent_in_profile",
+                               "The path leaves the profile along the profile's own plane, so "
+                               "the sweep would be flat; start the path across the profile");
+    }
+    const GeomFill_Trihedron mode = orientation == SweepOrientation::Fixed
+                                        ? GeomFill_IsFixed
+                                        : GeomFill_IsCorrectedFrenet;
+    BRepOffsetAPI_MakePipe mk(*wire, face, mode, /*ForceApproxC1=*/false);
+    mk.Build();
+    if (!mk.IsDone()) return Diagnostic::error("kernel.sweep.failed", advice);
+    return finish_with(mk.Shape(), "kernel.sweep.failed", "sweep", settings);
+  });
+  if (!result && result.error().code == "kernel.sweep.failed" &&
+      result.error().message != advice) {
+    return Diagnostic::error("kernel.sweep.failed",
+                             fmt::format("{} ({})", advice, result.error().message));
+  }
+  return result;
+}
+
+Result<Solid> make_loft(std::span<const Face> sections, bool ruled,
+                        const ProductSettings& settings) {
+  if (sections.size() < 2) {
+    return Diagnostic::error("kernel.loft.too_few_sections",
+                             "A loft needs at least two sections");
+  }
+  return detail::guarded<Result<Solid>>("kernel.loft.failed", "Lofting", [&]() -> Result<Solid> {
+    BRepOffsetAPI_ThruSections mk(/*isSolid=*/true, ruled, settings.linear_tolerance_mm);
+    for (std::size_t i = 0; i < sections.size(); ++i) {
+      if (sections[i].is_empty()) {
+        return Diagnostic::error("kernel.primitive.empty_profile",
+                                 fmt::format("Loft section {} is empty", i));
+      }
+      const TopoDS_Face& face = TopoDS::Face(topo(sections[i]));
+      int wires = 0;
+      for (TopExp_Explorer ex(face, TopAbs_WIRE); ex.More(); ex.Next()) ++wires;
+      if (wires != 1) {
+        return Diagnostic::error("kernel.loft.section_has_holes",
+                                 fmt::format("Loft section {} has holes; a loft uses only outer "
+                                             "boundaries, so cut the holes afterwards",
+                                             i));
+      }
+      mk.AddWire(BRepTools::OuterWire(face));
+    }
+    mk.CheckCompatibility(true);
+    mk.Build();
+    if (!mk.IsDone()) {
+      return Diagnostic::error(
+          "kernel.loft.failed",
+          "The loft could not be built. Sections whose corners can't be matched up (very "
+          "different numbers of edges) or that cross each other are the usual cause: give the "
+          "sections the same number of edges, or add a section in between");
+    }
+    return finish_with(mk.Shape(), "kernel.loft.failed", "loft", settings);
   });
 }
 

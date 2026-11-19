@@ -1,0 +1,275 @@
+{
+  "format": "vstudio.features",
+  "version": 1,
+  "variables": [
+    {
+      "id": "9bb9e70004713a4f8f1680d3989dc39b",
+      "name": "wall",
+      "expression": "2 mm"
+    },
+    {
+      "id": "b676dc42816fda9eb0ff2d76c4d6181b",
+      "name": "holes",
+      "expression": "4"
+    }
+  ],
+  "features": [
+    {
+      "id": "5b593298fe59a5e6964fd53b257e1d12",
+      "type": "sketch",
+      "plane": {
+        "principal": "xy"
+      },
+      "sketch": {
+        "constraints": [
+          {
+            "id": "662bbdd8a2f5017ff5e30d4cefefd663",
+            "refs": [
+              "08472e584ac5e1118900d69c4516f691"
+            ],
+            "type": "fix"
+          },
+          {
+            "id": "37b24ee2a75cffd32d86e0a2132ff9fb",
+            "refs": [
+              "e5e3271838b604e3382402c118538ae4"
+            ],
+            "type": "horizontal"
+          },
+          {
+            "id": "7ee78a3d7731503989208cda33718bdc",
+            "refs": [
+              "237095760367845d9518aa2398e2c03f"
+            ],
+            "type": "horizontal"
+          },
+          {
+            "id": "7107b5b988ebf3b9e4f56a03488a887c",
+            "refs": [
+              "cbf0003a644472b539eddca473888887"
+            ],
+            "type": "vertical"
+          },
+          {
+            "id": "bc26249fdda55a5f1d3f19dadaec4885",
+            "refs": [
+              "cbe12cc8348d0c121f83d4c9c8dca80f"
+            ],
+            "type": "vertical"
+          },
+          {
+            "id": "e5dd75ab42e29eccd22e6238aaff114d",
+            "refs": [
+              "e5e3271838b604e3382402c118538ae4"
+            ],
+            "type": "distance",
+            "value": 60.0
+          },
+          {
+            "id": "b076b6120c44214d75d40a3fe86fda1c",
+            "refs": [
+              "cbf0003a644472b539eddca473888887"
+            ],
+            "type": "distance",
+            "value": 40.0
+          }
+        ],
+        "entities": [
+          {
+            "id": "08472e584ac5e1118900d69c4516f691",
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "13897fd05f44b7037346bbe0da82387c",
+            "position": [
+              60.0,
+              0.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "949237593e557d5b5eabbab72e8a99bc",
+            "position": [
+              60.0,
+              40.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "fe2c73116d9f5f2f295be3222cda5dc4",
+            "position": [
+              0.0,
+              40.0
+            ],
+            "type": "point"
+          },
+          {
+            "end": "13897fd05f44b7037346bbe0da82387c",
+            "id": "e5e3271838b604e3382402c118538ae4",
+            "start": "08472e584ac5e1118900d69c4516f691",
+            "type": "line"
+          },
+          {
+            "end": "949237593e557d5b5eabbab72e8a99bc",
+            "id": "cbf0003a644472b539eddca473888887",
+            "start": "13897fd05f44b7037346bbe0da82387c",
+            "type": "line"
+          },
+          {
+            "end": "fe2c73116d9f5f2f295be3222cda5dc4",
+            "id": "237095760367845d9518aa2398e2c03f",
+            "start": "949237593e557d5b5eabbab72e8a99bc",
+            "type": "line"
+          },
+          {
+            "end": "08472e584ac5e1118900d69c4516f691",
+            "id": "cbe12cc8348d0c121f83d4c9c8dca80f",
+            "start": "fe2c73116d9f5f2f295be3222cda5dc4",
+            "type": "line"
+          }
+        ],
+        "format": "vstudio.sketch",
+        "id": "5b593298fe59a5e6964fd53b257e1d12",
+        "name": "Outline",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_axis": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "2e771630d55c1570684c8c63251c6dc3",
+      "name": "Block",
+      "type": "extrude",
+      "sketch": "5b593298fe59a5e6964fd53b257e1d12",
+      "operation": "add",
+      "extent": "blind",
+      "depth": 20.0
+    },
+    {
+      "id": "e70f0c1822461d80c275eb6ca50c93de",
+      "name": "Hollow",
+      "type": "shell",
+      "open": [
+        {
+          "feature": "2e771630d55c1570684c8c63251c6dc3",
+          "name": "end"
+        }
+      ],
+      "thickness": {
+        "value": 0.0,
+        "expression": "wall"
+      }
+    },
+    {
+      "id": "03c1786718ae02a89b0a42eadbe001c3",
+      "name": "Bottom chamfer",
+      "type": "chamfer",
+      "edges": [
+        {
+          "face": {
+            "feature": "2e771630d55c1570684c8c63251c6dc3",
+            "name": "start"
+          }
+        }
+      ],
+      "distance": 1.0
+    },
+    {
+      "id": "e28fbf2122327266079bd9107e5576f2",
+      "type": "sketch",
+      "plane": {
+        "face": {
+          "feature": "2e771630d55c1570684c8c63251c6dc3",
+          "name": "start"
+        }
+      },
+      "sketch": {
+        "constraints": [],
+        "entities": [
+          {
+            "id": "9a0d405ed5a32c2efa687f4eebc5853c",
+            "position": [
+              15.0,
+              -20.0
+            ],
+            "type": "point"
+          },
+          {
+            "center": "9a0d405ed5a32c2efa687f4eebc5853c",
+            "id": "6e3aefbf8c274bae20fa98677ee949ac",
+            "radius": 2.0,
+            "type": "circle"
+          }
+        ],
+        "format": "vstudio.sketch",
+        "id": "e28fbf2122327266079bd9107e5576f2",
+        "name": "Drain",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_axis": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "836428bcbbc3e1e3106c8d8e922ed911",
+      "name": "Drain hole",
+      "type": "extrude",
+      "sketch": "e28fbf2122327266079bd9107e5576f2",
+      "operation": "cut",
+      "extent": "blind",
+      "depth": {
+        "value": 0.0,
+        "expression": "wall + 1 mm"
+      }
+    },
+    {
+      "id": "4afbe8a0c90cf74e2ad0decbf5e069d8",
+      "name": "Drain holes",
+      "type": "linear_pattern",
+      "features": [
+        "836428bcbbc3e1e3106c8d8e922ed911"
+      ],
+      "direction": {
+        "principal": "x"
+      },
+      "count": {
+        "value": 0.0,
+        "expression": "holes"
+      },
+      "spacing": 10.0
+    }
+  ]
+}
