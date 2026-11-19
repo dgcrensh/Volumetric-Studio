@@ -146,3 +146,67 @@ TEST_CASE("extrusions check their depth", "[kernel][primitives]") {
   CHECK(make_prism(Face{}, {0, 0, 1}, kSettings).error().code == "kernel.primitive.empty_profile");
   CHECK(volume_of(make_prism(*face, {0, 0, -4}, kSettings)) == Approx(200.0).epsilon(kRel));
 }
+
+TEST_CASE("drafted prisms taper by the draft angle", "[kernel][primitives][draft]") {
+  // A 20 x 20 square extruded 10 mm with a 5° draft: a frustum whose top
+  // square is 20 - 2·10·tan(5°) on a side.
+  const std::array<dvec3, 4> square{dvec3{0, 0, 0}, {20, 0, 0}, {20, 20, 0}, {0, 20, 0}};
+  const auto face = make_face(Loop::polygon(square), kSettings);
+  REQUIRE(face.ok());
+  const double angle = 5.0 * kPi / 180.0;
+  const double h = 10.0;
+  auto frustum = [&](double a) {
+    const double top = 20.0 - 2.0 * h * std::tan(a);
+    const double a1 = 400.0;
+    const double a2 = top * top;
+    return h / 3.0 * (a1 + a2 + std::sqrt(a1 * a2));
+  };
+  CHECK(volume_of(make_drafted_prism(*face, {0, 0, h}, angle, kSettings)) ==
+        Approx(frustum(angle)).epsilon(1e-9));
+  // A negative angle grows the section; so does extruding the other way
+  // with a positive one, mirrored.
+  CHECK(volume_of(make_drafted_prism(*face, {0, 0, h}, -angle, kSettings)) ==
+        Approx(frustum(-angle)).epsilon(1e-9));
+  CHECK(volume_of(make_drafted_prism(*face, {0, 0, -h}, angle, kSettings)) ==
+        Approx(frustum(angle)).epsilon(1e-9));
+  // Zero is a plain prism.
+  CHECK(volume_of(make_drafted_prism(*face, {0, 0, h}, 0.0, kSettings)) ==
+        Approx(4000.0).epsilon(kRel));
+
+  // A drafted cylinder becomes a cone frustum.
+  const auto disc = make_face(Loop::circle({0, 0, 0}, {0, 0, 1}, 10), kSettings);
+  REQUIRE(disc.ok());
+  const double r2 = 10.0 - h * std::tan(angle);
+  CHECK(volume_of(make_drafted_prism(*disc, {0, 0, h}, angle, kSettings)) ==
+        Approx(kPi * h / 3.0 * (100.0 + r2 * r2 + 10.0 * r2)).epsilon(1e-6));
+
+  CHECK(make_drafted_prism(*face, {0, 0, h}, kPi / 2, kSettings).error().code ==
+        "kernel.draft.bad_angle");
+  // 20 mm of side can't shrink by 2·100·tan(45°).
+  CHECK_FALSE(make_drafted_prism(*face, {0, 0, 100}, kPi / 4, kSettings).ok());
+}
+
+TEST_CASE("face_plane reports planar faces with outward normals", "[kernel][queries]") {
+  const auto box = make_box(dbox3::from_min_max({0, 0, 0}, {10, 20, 30}), kSettings);
+  REQUIRE(box.ok());
+  int planes = 0;
+  for (const Face& f : faces(*box)) {
+    const auto p = face_plane(f);
+    REQUIRE(p.has_value());
+    ++planes;
+    // The centre of a box face sits halfway along the face, and the normal
+    // points away from the box's centre.
+    const dvec3 out = p->origin - dvec3{5, 10, 15};
+    CHECK(vs::core::dot(out, p->normal) > 0);
+    CHECK(vs::core::length(p->normal) == Approx(1.0));
+  }
+  CHECK(planes == 6);
+
+  const auto cyl = make_cylinder({{0, 0, 0}, {0, 0, 1}}, 5, 10, kSettings);
+  REQUIRE(cyl.ok());
+  int curved = 0;
+  for (const Face& f : faces(*cyl)) {
+    if (!face_plane(f)) ++curved;
+  }
+  CHECK(curved == 1);
+}

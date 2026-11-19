@@ -1,0 +1,282 @@
+{
+  "format": "vstudio.features",
+  "version": 1,
+  "variables": [
+    {
+      "id": "763bc858ac3d637d850c4b2fb756d0c3",
+      "name": "width",
+      "expression": "60 mm"
+    },
+    {
+      "id": "9478819559466a727c213da9ba94e1c2",
+      "name": "thickness",
+      "expression": "8"
+    },
+    {
+      "id": "fffd49faece32526a5806af4d9b0ddaa",
+      "name": "hole_d",
+      "expression": "12"
+    }
+  ],
+  "features": [
+    {
+      "id": "c2fc7f214c07aca85c3ab65e338da222",
+      "type": "sketch",
+      "plane": {
+        "principal": "xy"
+      },
+      "sketch": {
+        "constraints": [
+          {
+            "id": "7983d2df496a335ace9b15673f04f88d",
+            "refs": [
+              "4d19d1e6dd2f6ccdbf37f87356b8a664"
+            ],
+            "type": "fix"
+          },
+          {
+            "id": "fb6d6d9c3975a272c01087b36212bd85",
+            "refs": [
+              "36e35b64ca4155f99debfc8d8286b49d"
+            ],
+            "type": "horizontal"
+          },
+          {
+            "id": "06f052092656f406942668e5fd9b7747",
+            "refs": [
+              "200b646b94ead0a613c261555567bf22"
+            ],
+            "type": "horizontal"
+          },
+          {
+            "id": "c1ece5b18d022e88145efeebeaa0e118",
+            "refs": [
+              "72ca36744f7b05a0ece2726e0758d0c6"
+            ],
+            "type": "vertical"
+          },
+          {
+            "id": "9127ac5baddfa6734147ce75e19ed867",
+            "refs": [
+              "3300c496a97077d5aa20d0cee441f394"
+            ],
+            "type": "vertical"
+          },
+          {
+            "expression": "width",
+            "id": "4a35846ce9b063a0d0dad374c012357f",
+            "refs": [
+              "36e35b64ca4155f99debfc8d8286b49d"
+            ],
+            "type": "distance",
+            "value": 50.0
+          },
+          {
+            "expression": "width / 2",
+            "id": "4a9dbcb79d2772a0efdc895a123f066b",
+            "refs": [
+              "72ca36744f7b05a0ece2726e0758d0c6"
+            ],
+            "type": "distance",
+            "value": 20.0
+          }
+        ],
+        "entities": [
+          {
+            "id": "4d19d1e6dd2f6ccdbf37f87356b8a664",
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "7b7ccaf369d146f2a65afa459ce1a7fb",
+            "position": [
+              50.0,
+              0.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "32858c9db798c9a5fac3e3859fcfe17e",
+            "position": [
+              50.0,
+              20.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "0f52993814e082056a1f0eac7447570e",
+            "position": [
+              0.0,
+              20.0
+            ],
+            "type": "point"
+          },
+          {
+            "end": "7b7ccaf369d146f2a65afa459ce1a7fb",
+            "id": "36e35b64ca4155f99debfc8d8286b49d",
+            "start": "4d19d1e6dd2f6ccdbf37f87356b8a664",
+            "type": "line"
+          },
+          {
+            "end": "32858c9db798c9a5fac3e3859fcfe17e",
+            "id": "72ca36744f7b05a0ece2726e0758d0c6",
+            "start": "7b7ccaf369d146f2a65afa459ce1a7fb",
+            "type": "line"
+          },
+          {
+            "end": "0f52993814e082056a1f0eac7447570e",
+            "id": "200b646b94ead0a613c261555567bf22",
+            "start": "32858c9db798c9a5fac3e3859fcfe17e",
+            "type": "line"
+          },
+          {
+            "end": "4d19d1e6dd2f6ccdbf37f87356b8a664",
+            "id": "3300c496a97077d5aa20d0cee441f394",
+            "start": "0f52993814e082056a1f0eac7447570e",
+            "type": "line"
+          }
+        ],
+        "format": "vstudio.sketch",
+        "id": "c2fc7f214c07aca85c3ab65e338da222",
+        "name": "Base",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_axis": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "54177bf861b0684ee13999f6173c1f53",
+      "name": "Plate",
+      "type": "extrude",
+      "sketch": "c2fc7f214c07aca85c3ab65e338da222",
+      "operation": "add",
+      "extent": "blind",
+      "depth": {
+        "value": 0.0,
+        "expression": "thickness"
+      }
+    },
+    {
+      "id": "f1211c046cde173e2f8bcd8331cf6a49",
+      "type": "sketch",
+      "plane": {
+        "face": {
+          "feature": "54177bf861b0684ee13999f6173c1f53",
+          "name": "end"
+        }
+      },
+      "sketch": {
+        "constraints": [
+          {
+            "id": "9e034897b652535fb02702a843b5e78a",
+            "refs": [
+              "5efd37dad5ce7bf875e5215775be2aca"
+            ],
+            "type": "fix"
+          },
+          {
+            "expression": "width / 2",
+            "id": "15c36d0c9c198ca07f1d9cdfc0c17ecf",
+            "refs": [
+              "5efd37dad5ce7bf875e5215775be2aca",
+              "d25528c3361bbcebfa11aa03a1b0eb89"
+            ],
+            "type": "horizontal_distance",
+            "value": 20.0
+          },
+          {
+            "expression": "width / 4",
+            "id": "5d42bff64e406dd338cc3cc7a856e80b",
+            "refs": [
+              "5efd37dad5ce7bf875e5215775be2aca",
+              "d25528c3361bbcebfa11aa03a1b0eb89"
+            ],
+            "type": "vertical_distance",
+            "value": 10.0
+          },
+          {
+            "expression": "hole_d",
+            "id": "30eb826cbd5135b11efca30813c4d3be",
+            "refs": [
+              "e53851b7dcdb21da3aa6a9c9d279ba98"
+            ],
+            "type": "diameter",
+            "value": 10.0
+          }
+        ],
+        "entities": [
+          {
+            "construction": true,
+            "id": "5efd37dad5ce7bf875e5215775be2aca",
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "point"
+          },
+          {
+            "id": "d25528c3361bbcebfa11aa03a1b0eb89",
+            "position": [
+              20.0,
+              10.0
+            ],
+            "type": "point"
+          },
+          {
+            "center": "d25528c3361bbcebfa11aa03a1b0eb89",
+            "id": "e53851b7dcdb21da3aa6a9c9d279ba98",
+            "radius": 5.0,
+            "type": "circle"
+          }
+        ],
+        "format": "vstudio.sketch",
+        "id": "f1211c046cde173e2f8bcd8331cf6a49",
+        "name": "Hole",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "x_axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_axis": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "6fe22487ce11289721e971187bf9909e",
+      "name": "Hole",
+      "type": "extrude",
+      "sketch": "f1211c046cde173e2f8bcd8331cf6a49",
+      "operation": "cut",
+      "extent": "through_all"
+    }
+  ]
+}

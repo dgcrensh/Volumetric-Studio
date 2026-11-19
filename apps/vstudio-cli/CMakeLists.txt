@@ -4,6 +4,7 @@
 
 vs_add_application(vstudio-cli
   SOURCES
+    src/feature_commands.cpp
     src/kernel_commands.cpp
     src/main.cpp
     src/sketch_commands.cpp
@@ -42,4 +43,13 @@ if(VS_BUILD_TESTS)
             "${CMAKE_CURRENT_BINARY_DIR}/bracket.solved.json")
   set_tests_properties("vstudio-cli: sketch-solve solves the sample bracket" PROPERTIES
     PASS_REGULAR_EXPRESSION "status +solved.*profiles +1.*1 hole, face valid.*wrote ")
+endif()
+
+if(VS_BUILD_TESTS)
+  add_test(NAME "vstudio-cli: build rebuilds the sample plate and writes STEP"
+    COMMAND vstudio-cli build
+            "${PROJECT_SOURCE_DIR}/libs/vs_feature/tests/data/plate.vfeatures.json"
+            "${CMAKE_CURRENT_BINARY_DIR}/plate.step")
+  set_tests_properties("vstudio-cli: build rebuilds the sample plate and writes STEP" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Extrude +ok +Hole.*1 solid, valid yes.*volume +13495\.22[0-9]+ mm.*wrote ")
 endif()
