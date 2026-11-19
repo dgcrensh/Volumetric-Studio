@@ -387,9 +387,11 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Stale results drawn greyed out until replacements arrive; a progress indicator and cancel for long generations.
 - Swap content kind (placeholder → procedural → baked) from the volume's context menu, with nothing outside the volume touched (verified by hash in tests).
 - Habit guidance: selecting a generated face and choosing fillet, cut or mate shows an inline explanation with the right action (edit procedure parameters, add a keep-out, or use the connection surface).
+- Face and edge picking in the viewport (deferred from M14, decision 0014): B-rep items keep their per-face triangle ranges as separately pickable parts, a picked face resolves to its FaceRef name through the rebuild's named faces, and feature dialogs get a "pick in view" mode that fills face and edge fields from clicks (edit-in-context rules still apply; generated meshes stay unpickable). The labelled lists stay as the fallback.
 
 **Acceptance**
 - Dragging a layout dimension on the bracket project keeps the viewport above 30 fps with previews.
+- Every reference a feature dialog takes on the bracket (planes, faces, edges for a fillet) can be chosen by clicking in the viewport, in the layout and in context, and resolves to the same reference the list would give.
 - Swapping a volume's contents leaves every other volume's cache key unchanged.
 
 ## M17 — Ship workflow and MVP acceptance

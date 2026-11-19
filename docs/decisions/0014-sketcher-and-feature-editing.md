@@ -65,8 +65,12 @@ nothing of another volume. So encapsulation holds by construction, and a
 test resolves every offered reference with `model::resolve()` from inside
 the volume. Edges are chosen as M4 names them: the edges a face shares
 with another face, or every edge of a face. Picking faces in the 3D view
-was left out: the viewport draws boundaries as one tessellated item, not
-per face, and the lists already name every face a reference can hold.
+was left out of M14 to keep the milestone's scope, not because it is
+blocked: today each B-rep item is one triangle array, so a click names
+the item (the volume), not the face. Picking needs the per-face triangle
+ranges the kernel's tessellation already has, kept as pickable parts, and
+a match from the picked face to the named face whose plane or cylinder it
+lies on. It is an explicit M16 goal; the lists stay as the fallback.
 A reference a list doesn't offer (a broken one) is kept and shown as
 "(missing reference)", so opening and closing a dialog never changes what
 a feature refers to.
