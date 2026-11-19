@@ -49,7 +49,7 @@ Release presets are `RelWithDebInfo`. Build trees go to `build/<preset>/`.
 
 | CMake option | Default | Effect |
 | --- | --- | --- |
-| `VS_BUILD_APP` | OFF | Builds the Qt app (`vs_app`) and turns on the vcpkg `app` feature (Qt 6). Only the `windows-msvc-app` preset sets it. |
+| `VS_BUILD_APP` | OFF | Builds the Qt app (`vs_app`, `vs_app_tests`) and turns on the vcpkg `app` feature (Qt 6). Only the `windows-msvc-app` preset sets it. |
 | `VS_BUILD_TESTS` | ON | Builds the Catch2 suites and registers them with CTest. |
 | `VS_WARNINGS_AS_ERRORS` | ON | `/WX` or `-Werror` on first-party code. |
 
@@ -475,6 +475,29 @@ so they are registered. A new library must also be added to
   [--preview]`, `bake` / `unbake <project> <volume> [--out <path>]` and
   `bench-gyroid [--size mm] [--cell mm] [--threads N] [--3mf out]` (the
   CPU baseline) cover M12.
+
+## vs_app essentials
+
+- **Build** with the `windows-msvc-app` preset only (Qt 6 from the vcpkg
+  `app` feature; its first build compiles qtbase twice, for the host tools
+  and the target). CI doesn't build the app. Everything but `main.cpp` is
+  `vs_app_lib`; `vs_app_tests` drives it. Tests tagged `[gui]` open
+  windows and render with OpenGL, so they need a desktop session and a GPU.
+- **Layers** (decision 0013): `scene.*` turns an `eval::Evaluation` into
+  display meshes (B-reps via `kernel::tessellate()`, meshes as they are),
+  `outline.*` is the panels' data (selection, rows, inspector, diagnostic
+  routing via `validate::route()`), `exporter.*` is STL/3MF export, all
+  without Qt. `session.*` runs the engine on one worker thread and delivers
+  a preview snapshot, then the full one, on the UI thread. `viewport.*` is
+  OCCT's AIS/V3d in a native `QWidget` (OCCT's visualisation toolkits
+  only; no OCCT in any header). `main_window.*` lays out the docks.
+- **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
+  [--select <name>] [--view iso|top|front|...] [--size WxH]
+  [--screenshot out.bmp] [--viewport-image out.bmp]`; the capture flags
+  wait for the evaluation, save (BMP: this Qt has no PNG) and quit.
+- **From a Claude desktop-app session** `%LOCALAPPDATA%` is virtualised and
+  Qt's configure mistakes it for a symlink: configure once with
+  `-DVCPKG_INSTALL_OPTIONS=--x-buildtrees-root=C:/vsbt` (decision 0013).
 
 ## Code style
 
