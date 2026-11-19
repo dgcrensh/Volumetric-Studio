@@ -7,6 +7,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -162,16 +163,58 @@ struct Padded {
 // they need. Merged vertices sit at the mean of all their crossing points.
 // Vertices and triangles keep their order (compacted), so the result is as
 // deterministic as the input.
+// The triangles round each vertex, in one flat array: each vertex has a
+// run with room for its first triangles; a run that outgrows its room moves
+// to the end with twice the room. (Millions of small vectors cost more than
+// the merging itself.)
+class Fans {
+ public:
+  Fans(std::size_t vertices, const std::vector<Triangle>& triangles)
+      : start_(vertices + 1, 0), size_(vertices, 0), room_(vertices, 0) {
+    for (const Triangle& tri : triangles) {
+      for (const std::uint32_t v : tri) ++room_[v];
+    }
+    for (std::size_t v = 0; v < vertices; ++v) start_[v + 1] = start_[v] + room_[v];
+    data_.resize(start_[vertices]);
+    for (std::uint32_t t = 0; t < triangles.size(); ++t) {
+      for (const std::uint32_t v : triangles[t]) data_[start_[v] + size_[v]++] = t;
+    }
+  }
+  [[nodiscard]] std::span<const std::uint32_t> operator[](std::uint32_t v) const {
+    return {data_.data() + start_[v], size_[v]};
+  }
+  void push_back(std::uint32_t v, std::uint32_t t) {
+    if (size_[v] == room_[v]) {
+      const std::size_t from = start_[v];
+      start_[v] = data_.size();
+      room_[v] = std::max<std::uint32_t>(2 * room_[v], 4);
+      data_.resize(data_.size() + room_[v]);
+      std::copy_n(data_.begin() + static_cast<std::ptrdiff_t>(from), size_[v],
+                  data_.begin() + static_cast<std::ptrdiff_t>(start_[v]));
+    }
+    data_[start_[v] + size_[v]++] = t;
+  }
+  // Removes t from v's run, keeping the others' order.
+  void erase(std::uint32_t v, std::uint32_t t) {
+    auto* first = data_.data() + start_[v];
+    auto* last = first + size_[v];
+    size_[v] = static_cast<std::uint32_t>(std::remove(first, last, t) - first);
+  }
+  void clear(std::uint32_t v) { size_[v] = 0; }
+
+ private:
+  std::vector<std::size_t> start_;
+  std::vector<std::uint32_t> size_, room_;
+  std::vector<std::uint32_t> data_;
+};
+
 void merge_cubes(FieldMesh& m, const std::vector<dvec3>& sums, const std::vector<double>& counts,
                  const std::vector<std::uint32_t>& group_starts) {
   const std::size_t nv = m.positions.size();
   std::vector<dvec3> sum = sums;
   std::vector<double> count = counts;
   std::vector<bool> tri_alive(m.triangles.size(), true);
-  std::vector<std::vector<std::uint32_t>> fan(nv);
-  for (std::uint32_t t = 0; t < m.triangles.size(); ++t) {
-    for (const std::uint32_t v : m.triangles[t]) fan[v].push_back(t);
-  }
+  Fans fan(nv, m.triangles);
   std::vector<bool> alive(nv, true);
 
   const auto neighbours = [&](std::uint32_t v, std::vector<std::uint32_t>& out) {
@@ -188,6 +231,7 @@ void merge_cubes(FieldMesh& m, const std::vector<dvec3>& sums, const std::vector
   std::vector<std::uint32_t> nw;
   std::vector<std::uint32_t> common;
   std::vector<std::uint32_t> shared;
+  std::vector<std::uint32_t> moved;
 
   // Collapses w into u if that keeps the mesh manifold.
   const auto collapse = [&](std::uint32_t u, std::uint32_t w) {
@@ -214,17 +258,18 @@ void merge_cubes(FieldMesh& m, const std::vector<dvec3>& sums, const std::vector
     for (const std::uint32_t t : shared) {
       tri_alive[t] = false;
       for (const std::uint32_t x : m.triangles[t]) {
-        if (x != w) std::erase(fan[x], t);
+        if (x != w) fan.erase(x, t);
       }
     }
-    for (const std::uint32_t t : fan[w]) {
+    moved.assign(fan[w].begin(), fan[w].end());  // push_back may move the runs
+    for (const std::uint32_t t : moved) {
       if (!tri_alive[t]) continue;
       for (std::uint32_t& x : m.triangles[t]) {
         if (x == w) x = u;
       }
-      fan[u].push_back(t);
+      fan.push_back(u, t);
     }
-    fan[w].clear();
+    fan.clear(w);
     alive[w] = false;
     sum[u] = sum[u] + sum[w];
     count[u] += count[w];
@@ -274,7 +319,11 @@ FieldMesh surface_nets(const SampledField& samples) {
 
   // Vertices: one per tetrahedron the surface crosses, at the mean of where
   // it crosses the tetrahedron's edges.
-  std::unordered_map<std::uint64_t, std::array<std::uint32_t, 6>> cells;
+  // Each crossed cube's six tetrahedron vertices, found through a dense
+  // index of the cubes (kNone: not crossed).
+  std::vector<std::array<std::uint32_t, 6>> cells;
+  std::vector<std::uint32_t> cell_of(static_cast<std::size_t>((g.n[0] - 1) * (g.n[1] - 1) * (g.n[2] - 1)),
+                                     kNone);
   std::vector<dvec3> sums;    // per vertex: the crossing points it averages
   std::vector<double> counts;
   std::vector<std::uint32_t> group_starts;  // each crossed cube's first vertex
@@ -318,7 +367,8 @@ FieldMesh surface_nets(const SampledField& samples) {
           sums.push_back(sum);
           counts.push_back(n);
         }
-        cells.emplace(g.cell_key(i, j, k), ids);
+        cell_of[g.cell_key(i, j, k)] = static_cast<std::uint32_t>(cells.size());
+        cells.push_back(ids);
       }
     }
   }
@@ -343,9 +393,9 @@ FieldMesh surface_nets(const SampledField& samples) {
             for (Index axis = 0; axis < 3; ++axis) {
               if (m[axis] < 0 || m[axis] + 1 >= g.n[axis]) ok = false;
             }
-            const auto it = ok ? cells.find(g.cell_key(m[0], m[1], m[2])) : cells.end();
-            if (it == cells.end() || it->second[t] == kNone) break;  // can't happen
-            polygon.push_back(it->second[t]);
+            const std::uint32_t c = ok ? cell_of[g.cell_key(m[0], m[1], m[2])] : kNone;
+            if (c == kNone || cells[c][t] == kNone) break;  // can't happen
+            polygon.push_back(cells[c][t]);
           }
           if (polygon.size() != rounds()[di].tets.size() || polygon.size() < 3) continue;
           if (!in0) std::reverse(polygon.begin(), polygon.end());  // inside at the far end
