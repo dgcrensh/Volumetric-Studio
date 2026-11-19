@@ -6,6 +6,7 @@ vs_add_application(vstudio-cli
   SOURCES
     src/kernel_commands.cpp
     src/main.cpp
+    src/sketch_commands.cpp
     src/selftest.cpp
   LINKS
     vs::vs_core
@@ -32,4 +33,13 @@ if(VS_BUILD_TESTS)
     COMMAND vstudio-cli kernel-demo "${CMAKE_CURRENT_BINARY_DIR}/kernel-demo.step")
   set_tests_properties("vstudio-cli: kernel-demo writes STEP" PROPERTIES
     PASS_REGULAR_EXPRESSION "valid +yes.*wrote ")
+endif()
+
+if(VS_BUILD_TESTS)
+  add_test(NAME "vstudio-cli: sketch-solve solves the sample bracket"
+    COMMAND vstudio-cli sketch-solve
+            "${PROJECT_SOURCE_DIR}/libs/vs_sketch/tests/data/bracket.vsketch.json"
+            "${CMAKE_CURRENT_BINARY_DIR}/bracket.solved.json")
+  set_tests_properties("vstudio-cli: sketch-solve solves the sample bracket" PROPERTIES
+    PASS_REGULAR_EXPRESSION "status +solved.*profiles +1.*1 hole, face valid.*wrote ")
 endif()

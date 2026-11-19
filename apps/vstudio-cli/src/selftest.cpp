@@ -15,6 +15,7 @@
 #include "vs/model/module.hpp"
 #include "vs/proc/module.hpp"
 #include "vs/sketch/module.hpp"
+#include "vs/sketch/solver.hpp"
 #include "vs/validate/module.hpp"
 
 namespace vs::cli {
@@ -66,6 +67,19 @@ std::vector<Check> checks() {
          if (!box) return false;
          const auto mass = vs::kernel::mass_properties(*box);
          return mass && std::abs(mass->volume - 6.0) < 1e-9;
+       }},
+      {"sketch: dimensioned line solves",
+       [] {
+         vs::sketch::Sketch s;
+         const auto a = s.add_point({0, 0});
+         const auto b = s.add_point({4, 1});
+         const auto line = s.add_line(a, b);
+         s.fix(a);
+         s.horizontal(line);
+         s.length(line, 10);
+         const auto report = vs::sketch::solve(s, ProductSettings::defaults());
+         return report.status == vs::sketch::SolveStatus::Solved &&
+                std::abs(s.point(b)->x - 10.0) < 1e-9;
        }},
       {"all modules linked",
        [] {

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "kernel_commands.hpp"
+#include "sketch_commands.hpp"
 #include "selftest.hpp"
 #include "vs/core/log.hpp"
 #include "vs/core/version.hpp"
@@ -18,6 +19,8 @@ Commands:
   selftest          Run built-in smoke checks of the linked libraries
   kernel-demo [f]   Build the sample part and write it as STEP (default: kernel-demo.step)
   tolerance-spike   Run the M1 kernel tolerance spike and print its measurements
+  sketch-solve <in.json> [out.json]
+                    Solve a sketch file, report it and its profiles, optionally write it
   version           Print the version (same as --version)
   help              Print this message
 
@@ -84,6 +87,9 @@ int main(int argc, char** argv) {
   }
   if (command == "kernel-demo") {
     return vs::cli::run_kernel_demo(rest, std::cout, std::cerr);
+  }
+  if (command == "sketch-solve") {
+    return vs::cli::run_sketch_solve(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

@@ -1,7 +1,7 @@
 #pragma once
 
 // vs_sketch: sketch entities, constraints, the PlaneGCS wrapper and profile extraction.
-// Placeholder until M2; see Implementation Plan.md.
+// The module's API lives in sketch.hpp, solver.hpp, profile.hpp and serialize.hpp.
 
 #include <string_view>
 
