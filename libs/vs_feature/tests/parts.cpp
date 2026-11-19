@@ -96,6 +96,55 @@ double plate_volume(double width, double thickness, double hole_d) {
          std::numbers::pi * (hole_d / 2) * (hole_d / 2) * thickness;
 }
 
+Tray make_tray(double wall, int holes) {
+  Tray t;
+  auto& vars = t.tree.variables();
+  t.wall = vars.add("wall", num(wall) + " mm").value();
+  t.holes = vars.add("holes", std::to_string(holes)).value();
+
+  Sketch base(Id::random(), "Outline");
+  const Rect r = add_rectangle(base, {0, 0}, {60, 40});
+  constrain_rectangle(base, r);
+  const Id base_sketch = t.tree.add(SketchFeature{base, PrincipalPlane::XY});
+  ExtrudeFeature block;
+  block.sketch = base_sketch;
+  block.depth = Param::of(20);
+  t.block = t.tree.add(block, "Block");
+
+  t.shell = t.tree.add(ShellFeature{{FaceRef{t.block, "end"}}, Param::expr("wall"), false}, "Hollow");
+  t.chamfer = t.tree.add(
+      ChamferFeature{{EdgeRef{FaceRef{t.block, "start"}, std::nullopt}}, Param::of(1)},
+      "Bottom chamfer");
+
+  // The bottom face looks down (-Z); its frame (frame_for) has x = +X and
+  // y = -Y, so model (15, 20) is sketch (15, -20). A cut on it goes up.
+  Sketch hole(Id::random(), "Drain");
+  hole.add_circle(dvec2{15, -20}, 2);
+  const Id hole_sketch = t.tree.add(SketchFeature{hole, FaceRef{t.block, "start"}});
+  ExtrudeFeature cut;
+  cut.sketch = hole_sketch;
+  cut.operation = Operation::Cut;
+  cut.depth = Param::expr("wall + 1 mm");  // through the floor into the cavity
+  t.hole = t.tree.add(cut, "Drain hole");
+
+  LinearPatternFeature row;
+  row.features = {t.hole};
+  row.direction = PrincipalAxis::X;
+  row.count = Param::expr("holes");
+  row.spacing = Param::of(10);
+  t.pattern = t.tree.add(row, "Drain holes");
+  return t;
+}
+
+double tray_volume(double wall, int holes) {
+  const double outer = 60.0 * 40.0 * 20.0;
+  const double cavity = (60 - 2 * wall) * (40 - 2 * wall) * (20 - wall);
+  // Four 45° strips along the bottom edges; neighbours overlap in a corner
+  // piece of volume 1/3 (x + z < 1, y + z < 1), counted twice in the sum.
+  const double chamfers = 0.5 * 1 * 1 * (2 * 60 + 2 * 40) - 4.0 / 3.0;
+  return outer - cavity - chamfers - holes * std::numbers::pi * 4 * wall;
+}
+
 double volume(const vs::kernel::Solid& solid) {
   REQUIRE_FALSE(solid.is_empty());
   const auto m = vs::kernel::mass_properties(solid);

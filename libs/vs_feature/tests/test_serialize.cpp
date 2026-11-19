@@ -53,6 +53,27 @@ FeatureTree everything() {
   r.operation = Operation::Cut;
   const Id rid = t.add(r);
   t.set_suppressed(rid, true);
+
+  // M4 features, with every option off its default somewhere.
+  const FaceRef top{plate.base, "end"};
+  const FaceRef side{plate.base, "side:" + plate.rect.l[1].to_string()};
+  t.add(SweepFeature{plate.hole_sketch, plate.base_sketch, Operation::Cut,
+                     SweepOrientation::Fixed});
+  t.add(SweepFeature{plate.hole_sketch, plate.base_sketch, Operation::Add,
+                     SweepOrientation::FollowPath});
+  t.add(LoftFeature{{plate.base_sketch, plate.hole_sketch}, Operation::Add, true});
+  t.add(LoftFeature{{plate.base_sketch, plate.hole_sketch, plate.base_sketch}, Operation::Cut, false});
+  t.add(ShellFeature{{top, FaceRef{plate.base, "start"}}, Param::expr("thickness / 4"), true});
+  t.add(ShellFeature{{top}, Param::of(2.0), false});
+  t.add(FilletFeature{{EdgeRef{top, side}, EdgeRef{top, std::nullopt}}, Param::expr("hole_d / 10")});
+  t.add(ChamferFeature{{EdgeRef{FaceRef{plate.base, "start"}, std::nullopt}}, Param::of(0.5)});
+  t.add(LinearPatternFeature{{plate.hole}, FeatureRef{ax}, Param::expr("2"), Param::of(5), true});
+  t.add(LinearPatternFeature{{plate.hole, plate.base}, PrincipalAxis::X, Param::of(2), Param::of(10.0), false});
+  t.add(CircularPatternFeature{{plate.hole}, SketchEntityRef{plate.base_sketch, plate.rect.l[0]},
+                               Param::of(3), Param::expr("90 deg"), true},
+        "Ring");
+  t.add(CircularPatternFeature{
+      {plate.hole}, PrincipalAxis::Z, Param::of(4), Param::of(6.283185307179586), false});
   return t;
 }
 
@@ -86,8 +107,16 @@ TEST_CASE("reading rejects malformed files and authored loops", "[feature][json]
   CHECK(code(R"({"format": "vstudio.features", "version": 9})") == "feature.json.version");
   CHECK(code(R"({"format": "vstudio.features", "version": 1})") == "ok");
   CHECK(code(R"({"format": "vstudio.features", "version": 1,
-                 "features": [{"id": "00000000000000000000000000000001", "type": "loft"}]})") ==
+                 "features": [{"id": "00000000000000000000000000000001", "type": "warp"}]})") ==
         "feature.json.unknown_type");
+  CHECK(code(R"({"format": "vstudio.features", "version": 1,
+                 "features": [{"id": "00000000000000000000000000000001", "type": "fillet",
+                               "edges": [{"and": {}}]}]})") == "feature.json.missing_key");
+  CHECK(code(R"({"format": "vstudio.features", "version": 1,
+                 "features": [{"id": "00000000000000000000000000000001", "type": "sweep",
+                               "profile": "00000000000000000000000000000002",
+                               "path": "00000000000000000000000000000003",
+                               "orientation": "sideways"}]})") == "feature.json.bad_value");
   CHECK(code(R"({"format": "vstudio.features", "version": 1,
                  "features": [{"id": "00000000000000000000000000000001", "type": "extrude"}]})") ==
         "feature.json.missing_key");
@@ -112,9 +141,25 @@ TEST_CASE("reading rejects malformed files and authored loops", "[feature][json]
   CHECK(r.features[0].plane->origin.y == Approx(8));
 }
 
+TEST_CASE("the sample tray file rebuilds", "[feature][json]") {
+  auto tree = feature_tree_from_json(read_file(kData / "tray.vfeatures.json"));
+  REQUIRE(tree.ok());
+  const auto r = rebuild(*tree, kSettings);
+  INFO(parts::codes(r.diagnostics));
+  REQUIRE(r.ok());
+  CHECK(parts::volume(r.body) == Approx(parts::tray_volume(2, 4)).epsilon(1e-9));
+}
+
 TEST_CASE("write the sample plate file", "[.generate]") {
   // Run with "[.generate]" to regenerate tests/data/plate.vfeatures.json.
   std::ofstream out(kData / "plate.vfeatures.json", std::ios::binary);
   out << to_json(parts::make_plate(60, 8, 12).tree);
+  REQUIRE(out.good());
+}
+
+TEST_CASE("write the sample tray file", "[.generate]") {
+  // Run by name to regenerate tests/data/tray.vfeatures.json.
+  std::ofstream out(kData / "tray.vfeatures.json", std::ios::binary);
+  out << to_json(parts::make_tray(2, 4).tree);
   REQUIRE(out.good());
 }

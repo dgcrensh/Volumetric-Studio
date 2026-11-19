@@ -101,4 +101,36 @@ Result<Solid> make_drafted_prism(const Face& profile, const dvec3& direction, do
 Result<Solid> make_revolution(const Face& profile, const Axis& axis, double angle,
                               const ProductSettings& settings);
 
+// --- sweeps and lofts -------------------------------------------------------
+
+// A chain of segments, each starting where the previous one ends (within
+// tolerance). It may be open or closed.
+struct Path {
+  std::vector<ProfileSegment> segments;
+};
+
+// How a swept profile turns as it travels along the path.
+enum class SweepOrientation {
+  FollowPath,  // keeps its angle to the path's tangent (corrected Frenet frame)
+  Fixed,       // keeps its orientation in space; only its position follows the path
+};
+
+// Sweeps a planar face along `path`. The profile should sit at the path's
+// start, across it; it is swept as placed. Codes: kernel.sweep.bad_path (an
+// empty, broken or degenerate path), kernel.sweep.tangent_in_profile (the
+// path leaves the profile along its plane, so the sweep would be flat),
+// kernel.sweep.failed (the kernel couldn't sweep, or the result intersects
+// itself: a path that turns tighter than the profile is wide).
+Result<Solid> make_sweep(const Face& profile, const Path& path, SweepOrientation orientation,
+                         const ProductSettings& settings);
+
+// A solid through two or more planar sections, in order. Only each
+// section's outer boundary is used; a section with holes is rejected
+// (kernel.loft.section_has_holes). `ruled` joins neighbouring sections with
+// straight lines instead of a smooth surface through all of them. Codes:
+// kernel.loft.too_few_sections, kernel.loft.failed (for example sections
+// with very different numbers of edges that the kernel can't match up).
+Result<Solid> make_loft(std::span<const Face> sections, bool ruled,
+                        const ProductSettings& settings);
+
 }  // namespace vs::kernel

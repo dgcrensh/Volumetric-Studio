@@ -44,8 +44,19 @@ std::string_view to_string(FeatureKind kind) {
     case FeatureKind::DatumPoint: return "Point";
     case FeatureKind::Extrude: return "Extrude";
     case FeatureKind::Revolve: return "Revolve";
+    case FeatureKind::Sweep: return "Sweep";
+    case FeatureKind::Loft: return "Loft";
+    case FeatureKind::Shell: return "Shell";
+    case FeatureKind::Fillet: return "Fillet";
+    case FeatureKind::Chamfer: return "Chamfer";
+    case FeatureKind::LinearPattern: return "Linear pattern";
+    case FeatureKind::CircularPattern: return "Circular pattern";
   }
   return "Feature";
+}
+
+std::string_view to_string(SweepOrientation orientation) {
+  return orientation == SweepOrientation::Fixed ? "fixed" : "follow_path";
 }
 
 FeatureKind Feature::kind() const {
