@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QWheelEvent>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -45,6 +46,8 @@ namespace vs::app {
 struct PreparedItem {
   ItemRole role = ItemRole::Boundary;
   core::Id subject;
+  core::Id volume;
+  bool secondary = false;
   Rgb color;
   float transparency = 0.0f;
   bool first_chunk = true;  // the item's first (or only) part
@@ -95,6 +98,8 @@ std::vector<PreparedItem> prepare_item(const SceneItem& item) {
   PreparedItem out;
   out.role = item.role;
   out.subject = item.subject;
+  out.volume = item.volume;
+  out.secondary = item.secondary;
   out.color = item.color;
   out.transparency = item.transparency;
   const DisplayMesh& m = item.mesh;
@@ -139,9 +144,9 @@ class MeshObject : public AIS_InteractiveObject {
       // The patch lies on boundary faces: draw it just in front of them.
       fill_->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
     }
-    const float edge_scale = item.role == ItemRole::Contents ? 0.45f : 0.6f;
-    line_ = new Graphic3d_AspectLine3d(qcolor(item.color, edge_scale), Aspect_TOL_SOLID,
-                                       item.role == ItemRole::Boundary ? 1.5 : 1.0);
+    const float edge_scale = item.role == ItemRole::Sketch ? 1.0f : item.role == ItemRole::Contents ? 0.45f : 0.6f;
+    const double width = item.role == ItemRole::Sketch ? 2.0 : item.role == ItemRole::Boundary ? 1.5 : 1.0;
+    line_ = new Graphic3d_AspectLine3d(qcolor(item.color, edge_scale), Aspect_TOL_SOLID, width);
     // Only see-through items go to the transparent pass: an opaque object
     // given SetTransparency(0) would still skip writing depth there.
     if (item.transparency > 0.0f) SetTransparency(item.transparency);
@@ -296,12 +301,51 @@ struct Viewport::Impl : public AIS_ViewController {
     return NCollection_Vec2<int>(static_cast<int>(p.x() * r), static_cast<int>(p.y() * r));
   }
 
+  [[nodiscard]] bool highlighted(const core::Id& subject) const {
+    return std::find(highlight.begin(), highlight.end(), subject) != highlight.end();
+  }
+
+  // Outside the volume being edited in context (see set_context()).
+  [[nodiscard]] bool dimmed(const PreparedItem& item) const {
+    if (context_volume.is_null() || item.volume == context_volume) return false;
+    return !(item.role == ItemRole::ConnectionSurface &&
+             std::find(context_inputs.begin(), context_inputs.end(), item.subject) != context_inputs.end());
+  }
+
   void display(const PreparedItem& item) {
-    occ::handle<MeshObject> obj = new MeshObject(item);
-    // Contents are picked through their boundary (see the header).
-    const int selection_mode = item.role == ItemRole::Contents ? -1 : 0;
+    const bool dim = dimmed(item);
+    occ::handle<MeshObject> obj;
+    if (dim) {
+      PreparedItem grey = item;
+      grey.color = Rgb{0.70f, 0.71f, 0.74f};
+      grey.transparency = std::max(item.transparency, 0.9f);
+      obj = new MeshObject(grey);
+    } else {
+      obj = new MeshObject(item);
+    }
+    // Contents are picked through their boundary (see the header); nothing
+    // outside the volume edited in context can be picked.
+    const int selection_mode = item.role == ItemRole::Contents || dim ? -1 : 0;
     context->Display(obj, 0, selection_mode, false);
     objects.push_back(obj);
+  }
+
+  // Removes everything shown and shows the prepared scene again (after the
+  // context or the secondary items shown changed).
+  void redisplay() {
+    for (const auto& obj : objects) context->Remove(obj, false);
+    objects.clear();
+    pending.clear();
+    if (!prepared) return;
+    for (const auto& item : prepared->items) {
+      if (item.secondary && !highlighted(item.subject)) continue;
+      if (item.first_chunk) {
+        display(item);
+      } else {
+        pending.push_back(&item);
+      }
+    }
+    if (!pending.empty()) chunk_timer->start();
   }
 
   Viewport* owner;
@@ -315,7 +359,9 @@ struct Viewport::Impl : public AIS_ViewController {
   occ::handle<AIS_ViewCube> cube;
   std::shared_ptr<const PreparedScene> prepared;
   std::vector<occ::handle<MeshObject>> objects;
-  core::Id highlight;
+  std::vector<core::Id> highlight;
+  core::Id context_volume;
+  std::vector<core::Id> context_inputs;
 };
 
 Viewport::Viewport(QWidget* parent) : QWidget(parent), impl_(std::make_unique<Impl>(this)) {
@@ -358,20 +404,9 @@ void Viewport::show_scene(const Scene& scene, std::shared_ptr<const PreparedScen
     impl_->prepared = std::move(prepared);
     return;
   }
-  auto& ctx = impl_->context;
-  for (const auto& obj : impl_->objects) ctx->Remove(obj, false);
-  impl_->objects.clear();
-  impl_->pending.clear();
   impl_->prepared = std::move(prepared);
   // Every item's first part now; the rest of big meshes one part per frame.
-  for (const auto& item : impl_->prepared->items) {
-    if (item.first_chunk) {
-      impl_->display(item);
-    } else {
-      impl_->pending.push_back(&item);
-    }
-  }
-  if (!impl_->pending.empty()) impl_->chunk_timer->start();
+  impl_->redisplay();
   set_highlight(impl_->highlight);
   if (fit) fit_all();
   update();
@@ -382,18 +417,54 @@ void Viewport::clear() {
 }
 
 void Viewport::set_highlight(const core::Id& subject) {
-  impl_->highlight = subject;
-  if (!impl_->ensure()) return;
-  auto& ctx = impl_->context;
-  ctx->ClearSelected(false);
-  if (!subject.is_null()) {
-    for (const auto& obj : impl_->objects) {
-      if (obj->item().subject == subject && obj->item().role != ItemRole::Contents) {
-        ctx->AddOrRemoveSelected(obj, false);
-      }
+  set_highlight(subject.is_null() ? std::vector<core::Id>{} : std::vector<core::Id>{subject});
+}
+
+void Viewport::set_highlight(const std::vector<core::Id>& subjects) {
+  // Secondary items (used sketches) come and go with the highlight.
+  bool secondary_changed = false;
+  if (impl_->prepared) {
+    for (const auto& item : impl_->prepared->items) {
+      if (!item.secondary) continue;
+      const bool was = impl_->highlighted(item.subject);
+      const bool now = std::find(subjects.begin(), subjects.end(), item.subject) != subjects.end();
+      secondary_changed = secondary_changed || was != now;
     }
   }
+  impl_->highlight = subjects;
+  if (!impl_->ensure()) return;
+  if (secondary_changed) impl_->redisplay();
+  auto& ctx = impl_->context;
+  ctx->ClearSelected(false);
+  for (const auto& obj : impl_->objects) {
+    const auto& item = obj->item();
+    if (item.role == ItemRole::Contents || item.role == ItemRole::Sketch || impl_->dimmed(item)) continue;
+    if (impl_->highlighted(item.subject)) ctx->AddOrRemoveSelected(obj, false);
+  }
   update();
+}
+
+void Viewport::set_context(const core::Id& volume, const std::vector<core::Id>& inputs) {
+  if (impl_->context_volume == volume && impl_->context_inputs == inputs) return;
+  impl_->context_volume = volume;
+  impl_->context_inputs = inputs;
+  if (!impl_->ensure()) return;
+  impl_->redisplay();
+  set_highlight(impl_->highlight);
+}
+
+const core::Id& Viewport::context_volume() const { return impl_->context_volume; }
+
+std::size_t Viewport::dimmed_items() const {
+  std::size_t n = 0;
+  for (const auto& obj : impl_->objects) n += obj->item().first_chunk && impl_->dimmed(obj->item()) ? 1 : 0;
+  return n;
+}
+
+std::size_t Viewport::shown_items(ItemRole role) const {
+  std::size_t n = 0;
+  for (const auto& obj : impl_->objects) n += obj->item().first_chunk && obj->item().role == role ? 1 : 0;
+  return n;
 }
 
 void Viewport::fit_all() {

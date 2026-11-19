@@ -81,7 +81,10 @@ TEST_CASE("The window opens each sample project and draws it", "[app][gui][accep
     REQUIRE(wait_shown(w));
     const auto s = w.session().latest();
     REQUIRE(s);
-    CHECK(w.viewport().displayed_items() == s->scene.items.size());
+    // Secondary items (sketches features use) show only while selected.
+    const auto shown = static_cast<std::size_t>(std::count_if(
+        s->scene.items.begin(), s->scene.items.end(), [](const auto& item) { return !item.secondary; }));
+    CHECK(w.viewport().displayed_items() == shown);
     // Every volume has a row; every diagnostic has a row.
     CHECK(w.volume_tree().topLevelItemCount() >= (s->evaluation.document.volumes.empty() ? 0 : 1));
     for (const auto& v : s->evaluation.document.volumes) CHECK(volume_item(w.volume_tree(), v.id) != nullptr);
@@ -124,7 +127,15 @@ TEST_CASE("Each kind of scene item is visible on its own", "[app][gui]") {
     // the window's pixels with the off-screen render.
     samples::wait_until([] { return false; }, 300);
     const QImage screen = viewport.screen()->grabWindow(viewport.winId()).toImage();
-    CHECK(std::abs(coverage(screen) - coverage(image)) < 0.05);
+    const bool same = std::abs(coverage(screen) - coverage(image)) < 0.05;
+    CHECK(same);
+    if (!same) {
+      // Keep both for a look.
+      const auto dir = std::filesystem::temp_directory_path();
+      const std::string name(app::to_string(role));
+      screen.save(QString::fromStdWString((dir / ("vs_app_screen_" + name + ".bmp")).wstring()));
+      image.save(QString::fromStdWString((dir / ("vs_app_render_" + name + ".bmp")).wstring()));
+    }
   }
 }
 

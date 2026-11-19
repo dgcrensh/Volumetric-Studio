@@ -12,18 +12,34 @@ find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets)
 find_package(OpenCASCADE CONFIG REQUIRED)
 
 add_library(vs_app_lib STATIC
+  src/authoring.cpp
+  src/authoring.hpp
   src/exporter.cpp
   src/exporter.hpp
+  src/feature_dialog.cpp
+  src/feature_dialog.hpp
+  src/history.cpp
+  src/history.hpp
   src/main_window.cpp
   src/main_window.hpp
+  src/model_dialogs.cpp
+  src/model_dialogs.hpp
   src/outline.cpp
   src/outline.hpp
+  src/reference_choices.cpp
+  src/reference_choices.hpp
   src/scene.cpp
   src/scene.hpp
   src/session.cpp
   src/session.hpp
+  src/sketch_editor.cpp
+  src/sketch_editor.hpp
+  src/sketch_mode.cpp
+  src/sketch_mode.hpp
   src/viewport.cpp
-  src/viewport.hpp)
+  src/viewport.hpp
+  src/widgets.cpp
+  src/widgets.hpp)
 set_target_properties(vs_app_lib PROPERTIES AUTOMOC ON)
 target_include_directories(vs_app_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(vs_app_lib PUBLIC cxx_std_20)
@@ -58,10 +74,14 @@ if(VS_BUILD_TESTS)
     tests/app_test_main.cpp
     tests/samples.cpp
     tests/samples.hpp
+    tests/test_authoring.cpp
+    tests/test_authoring_ui.cpp
     tests/test_export.cpp
+    tests/test_history.cpp
     tests/test_outline.cpp
     tests/test_scene.cpp
     tests/test_session.cpp
+    tests/test_sketch_editor.cpp
     tests/test_window.cpp)
   target_link_libraries(vs_app_tests PRIVATE vs_app_lib Catch2::Catch2)
   target_compile_definitions(vs_app_tests PRIVATE

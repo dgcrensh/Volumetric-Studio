@@ -72,15 +72,21 @@ class Session : public QObject {
   core::Diagnostics open(const std::filesystem::path& path);
   // Replaces the project (no file, or `path`) and regenerates.
   void set_project(model::Project project, std::filesystem::path path = {});
+  // An edit (or a dialog's live preview) of the same project: replaces it
+  // and regenerates, keeping the engine's cache and each volume's last
+  // valid contents, the file path and the view.
+  void update_project(std::shared_ptr<const model::Project> project);
   // Saves to `path`: a folder when `path` is an existing folder, else a
-  // zip file.
-  core::Diagnostics save(const std::filesystem::path& path);
+  // zip file. With `project`, saves that instead of the one shown (which
+  // may be a dialog's preview).
+  core::Diagnostics save(const std::filesystem::path& path, const model::Project* project = nullptr);
 
   void regenerate();
   void cancel();
   [[nodiscard]] bool busy() const;
 
   [[nodiscard]] const model::Project& project() const { return *project_; }
+  [[nodiscard]] std::shared_ptr<const model::Project> project_ptr() const { return project_; }
   [[nodiscard]] bool has_project() const { return has_project_; }
   [[nodiscard]] const std::filesystem::path& path() const { return path_; }
   [[nodiscard]] SnapshotPtr latest() const { return latest_; }
@@ -99,6 +105,8 @@ class Session : public QObject {
 
  signals:
   void projectChanged();
+  // update_project() replaced the project.
+  void projectEdited();
   void evaluationStarted(quint64 generation);
   void progressed(int done, int total);
   void evaluated(vs::app::SnapshotPtr snapshot);

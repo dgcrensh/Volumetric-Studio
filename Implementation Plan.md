@@ -387,9 +387,11 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Stale results drawn greyed out until replacements arrive; a progress indicator and cancel for long generations.
 - Swap content kind (placeholder → procedural → baked) from the volume's context menu, with nothing outside the volume touched (verified by hash in tests).
 - Habit guidance: selecting a generated face and choosing fillet, cut or mate shows an inline explanation with the right action (edit procedure parameters, add a keep-out, or use the connection surface).
+- Face and edge picking in the viewport (deferred from M14, decision 0014): B-rep items keep their per-face triangle ranges as separately pickable parts, a picked face resolves to its FaceRef name through the rebuild's named faces, and feature dialogs get a "pick in view" mode that fills face and edge fields from clicks (edit-in-context rules still apply; generated meshes stay unpickable). The labelled lists stay as the fallback.
 
 **Acceptance**
 - Dragging a layout dimension on the bracket project keeps the viewport above 30 fps with previews.
+- Every reference a feature dialog takes on the bracket (planes, faces, edges for a fillet) can be chosen by clicking in the viewport, in the layout and in context, and resolves to the same reference the list would give.
 - Swapping a volume's contents leaves every other volume's cache key unchanged.
 
 ## M17 — Ship workflow and MVP acceptance
@@ -458,4 +460,5 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | M11 | Done | #15 | Surface nets on the grid's tetrahedra, merged per cube where the link condition allows (always manifold, about two triangles a cell); the field is clipped 0.01 mm inside the boundary's tessellation and vertices move inward until every vertex and centroid is contained; seams replace the patch's grid triangles and are stitched to the rim by an arc-length strip, or a warning says the contents don't cover the patch; the engine checks and welds generated meshes (decision 0011) |
 | M12 | Done | #16 | Lattice and TPMS fields with deterministic sine and cosine, gradable; scatter and pattern frames; parametric templates are field templates (jobs can't use the kernel) and meshes are graph tools that reach contents through mesh-to-field; Manifold booleans in a canonical order; measured and graph-published outputs; node inspection; bake keeps the graph and the seam vertices; 100 mm gyroid at 0.5 mm: 23.9 s on 4 threads, 31.7 s on 1 (decision 0012) |
 | M13 | Done | #17 | Everything drawn as meshes (B-reps tessellated by vs_kernel) with OCCT's visualisation toolkits only; one worker thread delivers a preview then the full evaluation; engine pool leaves two cores to the UI; big meshes uploaded a part per frame; 862k-triangle regeneration keeps UI gaps under 40 ms (decision 0013) |
-| M14–M17 | Not started | | |
+| M14 | Done | #18 | Undo and redo store whole project snapshots, so hashes come back exactly; sketch mode is a 2D canvas in place of the viewport; references are picked from lists computed for the tree being edited (inside a volume: only its boundary faces and connection surfaces); dialogs preview edits on a copy; model errors are refused, rebuild failures kept; the bracket rebuilt in the app in 29 steps (decision 0014) |
+| M15–M17 | Not started | | |

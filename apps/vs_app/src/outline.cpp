@@ -220,7 +220,9 @@ std::vector<FeatureRow> feature_rows(const eval::Evaluation& evaluation, const I
     FeatureRow row;
     row.selection = Selection::of_feature(f.id, volume);
     row.kind = std::string(feature::to_string(f.kind()));
-    row.name = f.name.empty() ? fmt::format("{} {}", row.kind, i + 1) : f.name;
+    row.name = f.name;
+    if (const auto* s = f.as<feature::SketchFeature>(); row.name.empty() && s != nullptr) row.name = s->sketch.name();
+    if (row.name.empty()) row.name = fmt::format("{} {}", row.kind, i + 1);
     if (f.suppressed) {
       row.status = "suppressed";
     } else if (rebuild != nullptr) {
