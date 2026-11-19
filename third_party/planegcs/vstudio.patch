@@ -1,0 +1,129 @@
+diff -ru a/Constraints.cpp src/Constraints.cpp
+--- a/Constraints.cpp	2026-11-18 19:08:36.219579200 -0500
++++ b/Constraints.cpp	2026-11-18 19:08:36.373623700 -0500
+@@ -33,7 +33,7 @@
+ # include <cassert>
+ #endif
+ 
+-#include <boost/graph/graph_concepts.hpp>
++// vstudio: removed unused <boost/graph/graph_concepts.hpp>
+ 
+ #include "Constraints.h"
+ 
+diff -ru a/Constraints.h src/Constraints.h
+--- a/Constraints.h	2026-11-18 19:08:36.231699200 -0500
++++ b/Constraints.h	2026-11-18 19:08:36.278979800 -0500
+@@ -23,7 +23,7 @@
+ #ifndef PLANEGCS_CONSTRAINTS_H
+ #define PLANEGCS_CONSTRAINTS_H
+ 
+-#include "../../SketcherGlobal.h"
++#include "SketcherGlobal.h"  // vstudio: shim/SketcherGlobal.h
+ #include "Geo.h"
+ 
+ // This enables debugging code intended to extract information to file bug reports against Eigen,
+diff -ru a/GCS.cpp src/GCS.cpp
+--- a/GCS.cpp	2026-11-18 19:08:36.231699200 -0500
++++ b/GCS.cpp	2026-11-18 19:08:48.673111500 -0500
+@@ -98,8 +98,8 @@
+ #include <Base/Console.h>
+ #include <FCConfig.h>
+ 
+-#include <boost/graph/connected_components.hpp>
+-#include <boost_graph_adjacency_list.hpp>
++// vstudio: boost::graph replaced by a union-find in System::initSolution
++#include <numeric>
+ 
+ using MatrixIndexType = Eigen::FullPivHouseholderQR<Eigen::MatrixXd>::IntDiagSizeVectorType;
+ 
+@@ -455,7 +455,7 @@
+ #endif
+ 
+ 
+-using Graph = boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS>;
++
+ 
+ ///////////////////////////////////////
+ // Solver
+@@ -1749,10 +1749,19 @@
+     }
+ 
+     // partitioning into decoupled components
+-    Graph g;
+-    for (int i = 0; i < int(plist.size() + clistR.size()); i++) {
+-        boost::add_vertex(g);
+-    }
++    // vstudio: a union-find over parameters and constraints replaces
++    // boost::connected_components. Components are numbered in order of their
++    // lowest vertex, as boost numbers them.
++    const int vertexCount = int(plist.size() + clistR.size());
++    std::vector<int> parent(static_cast<size_t>(vertexCount));
++    std::iota(parent.begin(), parent.end(), 0);
++    auto findRoot = [&parent](int v) {
++        while (parent[v] != v) {
++            parent[v] = parent[parent[v]];
++            v = parent[v];
++        }
++        return v;
++    };
+ 
+     int cvtid = int(plist.size());
+     for (const auto constr : clistR) {
+@@ -1760,16 +1769,27 @@
+         for (const auto param : cparams) {
+             MAP_pD_I::const_iterator it = pIndex.find(param);
+             if (it != pIndex.end()) {
+-                boost::add_edge(cvtid, it->second, g);
++                const int a = findRoot(cvtid);
++                const int b = findRoot(it->second);
++                if (a != b) {
++                    parent[std::max(a, b)] = std::min(a, b);
++                }
+             }
+         }
+         ++cvtid;
+     }
+ 
+-    VEC_I components(boost::num_vertices(g));
++    VEC_I components(static_cast<size_t>(vertexCount));
+     int componentsSize = 0;
+-    if (!components.empty()) {
+-        componentsSize = boost::connected_components(g, &components[0]);
++    {
++        std::vector<int> label(static_cast<size_t>(vertexCount), -1);
++        for (int v = 0; v < vertexCount; ++v) {
++            const int root = findRoot(v);
++            if (label[root] < 0) {
++                label[root] = componentsSize++;
++            }
++            components[v] = label[root];
++        }
+     }
+ 
+     // identification of equality constraints and parameter reduction
+diff -ru a/GCS.h src/GCS.h
+--- a/GCS.h	2026-11-18 19:08:36.231699200 -0500
++++ b/GCS.h	2026-11-18 19:08:36.289803500 -0500
+@@ -25,7 +25,7 @@
+ 
+ #include <Eigen/QR>
+ 
+-#include "../../SketcherGlobal.h"
++#include "SketcherGlobal.h"  // vstudio: shim/SketcherGlobal.h
+ #include "SubSystem.h"
+ 
+ 
+diff -ru a/Geo.h src/Geo.h
+--- a/Geo.h	2026-11-18 19:08:36.231699200 -0500
++++ b/Geo.h	2026-11-18 19:08:36.341979000 -0500
+@@ -24,8 +24,8 @@
+ #define PLANEGCS_GEO_H
+ 
+ #include "Util.h"
+-#include <boost/math/constants/constants.hpp>
+-#include "../../SketcherGlobal.h"
++// vstudio: removed unused <boost/math/constants/constants.hpp>
++#include "SketcherGlobal.h"  // vstudio: shim/SketcherGlobal.h
+ 
+ #ifdef _MSC_VER
+ # pragma warning(disable : 4251)

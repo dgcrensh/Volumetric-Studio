@@ -8,6 +8,8 @@ option(VS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
 # vs_kernel wraps Open CASCADE from M1 onward, so every build needs it.
 list(APPEND VCPKG_MANIFEST_FEATURES "kernel")
+# vs_sketch vendors PlaneGCS, which needs Eigen, from M2 onward.
+list(APPEND VCPKG_MANIFEST_FEATURES "sketch")
 if(VS_BUILD_APP)
   list(APPEND VCPKG_MANIFEST_FEATURES "app")
 endif()
@@ -32,6 +34,10 @@ if(VS_BUILD_TESTS)
   find_package(Catch2 3 CONFIG REQUIRED)
   include(Catch)
 endif()
+
+# Vendored third-party code. These are not modules, so the dependency rule
+# doesn't judge them; each is linked privately by its one wrapper module.
+add_subdirectory(third_party/planegcs)
 
 # Libraries, bottom up. The order here mirrors VS_MODULE_ORDER in
 # cmake/VsModuleRules.cmake; a module may link only modules listed before it.

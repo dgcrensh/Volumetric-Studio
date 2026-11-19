@@ -58,7 +58,7 @@ installs only what it uses (see `docs/decisions/0000-optional-vcpkg-features.md`
 `kernel` (OCCT, from M1), `sketch` (Eigen, from M2), `proc` (Manifold, from
 M12) and `app` (Qt). A milestone that starts using one appends it to
 `VCPKG_MANIFEST_FEATURES` in the top-level `CMakeLists.txt`, before `project()`.
-`kernel` is on in every build since M1.
+`kernel` is on in every build since M1, and `sketch` since M2.
 
 ## Layout
 
@@ -68,6 +68,7 @@ libs/<module>/          one directory per library
   include/vs/<short>/   public headers (namespace vs::<short>)
   src/                  sources and private headers
   tests/                Catch2 tests, built as <module>_tests
+third_party/<name>/     vendored code with its own CMake target (PlaneGCS); see its README
 apps/vstudio-cli/       command-line driver (subcommands grow with each milestone)
 apps/vs_app/            Qt application (VS_BUILD_APP=ON only)
 tests/cmake/            tests of the build system itself
@@ -151,6 +152,28 @@ so they are registered. A new library must also be added to
   are serialised because OCCT's exchange layer has global state.
 - **Tolerance findings** are in `docs/decisions/0001-working-space-and-tolerance.md`;
   `vstudio-cli tolerance-spike` reruns the measurements.
+
+## vs_sketch essentials
+
+- **Model.** A `Sketch` holds entities (points, lines, circles, arcs) and
+  constraints, each with a stable `Id`. Curves refer to point entities, so
+  sharing a point joins two curves. Arcs run counter-clockwise from start to
+  end. Dimensions carry a `value` and an optional `expression` (evaluated by
+  M3; until then only `value` is used). `validate()` reports broken
+  references and malformed constraints (`sketch.reference.*`,
+  `sketch.constraint.*`).
+- **Solver.** `SketchSolver` (`make_solver()`, or the free `solve()` and
+  `drag()`) wraps PlaneGCS, vendored in `third_party/planegcs` and linked
+  privately; ctest checks that no public header includes it or Eigen. A
+  solve reports `Solved`, `UnderConstrained` (dof and free entities),
+  `OverConstrained` (conflicting and redundant constraints by id) or
+  `Failed`, also as `sketch.solve.*` diagnostics. Conflicts leave the sketch
+  untouched; redundancy alone still solves.
+- **Profiles.** `extract_profiles()` finds closed loops of non-construction
+  geometry, nests them (even depth: outer, odd: hole) and `make_face()`
+  turns them into `vs_kernel` faces on the sketch plane.
+- **Files.** `to_json()` / `sketch_from_json()` round-trip exactly, ids
+  included. `vstudio-cli sketch-solve <file>` solves one from the command line.
 
 ## Code style
 
