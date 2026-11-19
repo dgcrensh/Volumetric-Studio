@@ -18,6 +18,7 @@
 #include <QWidget>
 
 #include <memory>
+#include <vector>
 
 #include "scene.hpp"
 #include "vs/core/id.hpp"
@@ -47,6 +48,18 @@ class Viewport : public QWidget {
   // Highlights the items of `subject` (a volume or a connection surface);
   // null clears the highlight. Doesn't emit picked().
   void set_highlight(const core::Id& subject);
+  // Highlights several subjects at once (a feature and its volume, say).
+  // Secondary items (sketches a feature uses) are shown only while their
+  // subject is highlighted.
+  void set_highlight(const std::vector<core::Id>& subjects);
+  // Edit in context (M14): everything but olume's own items (its
+  // boundary, contents and sketches) and the connection surfaces in
+  // inputs is drawn dimmed and can't be picked. A null volume ends it.
+  void set_context(const core::Id& volume, const std::vector<core::Id>& inputs);
+  [[nodiscard]] const core::Id& context_volume() const;
+  // Items shown dimmed; items of a role shown (parts of big meshes once).
+  [[nodiscard]] std::size_t dimmed_items() const;
+  [[nodiscard]] std::size_t shown_items(ItemRole role) const;
   void fit_all();
   void set_view(StandardView view);
 

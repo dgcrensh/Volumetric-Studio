@@ -18,6 +18,14 @@
 // clearance, bolted flange) and drawn just in front of the boundary faces
 // it lies on.
 //
+// While authoring (M14) the scene also has
+//
+//   - each solid feature of the layout that no boundary uses yet (blocked
+//     out, not made a volume), as a grey tint with its edges;
+//   - each sketch of the layout and of parametric contents, as lines on its
+//     plane. Sketches a feature or connection surface already uses are
+//     "secondary": the viewport shows them only while selected.
+//
 // Display meshes are FP32, indexed, with one normal per vertex: vertices
 // where the surface creases by more than `crease_angle` are split, so flat
 // faces stay flat and curved ones smooth.
@@ -35,6 +43,7 @@
 #include "vs/kernel/shape.hpp"
 #include "vs/mesh/mesh.hpp"
 #include "vs/model/document.hpp"
+#include "vs/sketch/sketch.hpp"
 
 namespace vs::app {
 
@@ -58,12 +67,18 @@ struct DisplayMesh {
   [[nodiscard]] fbox3 bounds() const;
 };
 
-enum class ItemRole { Boundary, Contents, ConnectionSurface };
+enum class ItemRole { Boundary, Contents, ConnectionSurface, LayoutSolid, Sketch };
 std::string_view to_string(ItemRole role);
 
 struct SceneItem {
   ItemRole role = ItemRole::Boundary;
-  Id subject;  // the volume (boundary, contents) or the connection surface
+  // The volume (boundary, contents), the connection surface, or the
+  // feature (layout solids, sketches).
+  Id subject;
+  // The volume whose contents hold it (sketches of parametric contents);
+  // null for everything of the layout. Boundaries and contents: the volume.
+  Id volume;
+  bool secondary = false;  // shown only while selected (see above)
   DisplayMesh mesh;
   Rgb color;
   float transparency = 0.0f;  // 0 opaque .. 1 invisible
@@ -93,6 +108,13 @@ Rgb volume_color(std::size_t index);
 Rgb connection_color(model::ConnectionType type);
 // Stale contents.
 inline constexpr Rgb kStaleColor{0.55f, 0.55f, 0.55f};
+// Layout solids no volume uses yet, and sketches.
+inline constexpr Rgb kLayoutColor{0.62f, 0.64f, 0.68f};
+inline constexpr Rgb kSketchColor{0.10f, 0.22f, 0.60f};
+
+// A placed sketch as polylines in model space (arcs and circles divided
+// finely enough to look round).
+std::vector<std::vector<fvec3>> sketch_lines(const sketch::Sketch& sketch);
 
 // A kernel shape (solid or face) as a display mesh with its edges.
 core::Result<DisplayMesh> display_mesh(const kernel::Shape& shape, const core::ProductSettings& settings,

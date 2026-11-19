@@ -491,8 +491,21 @@ so they are registered. A new library must also be added to
   a preview snapshot, then the full one, on the UI thread. `viewport.*` is
   OCCT's AIS/V3d in a native `QWidget` (OCCT's visualisation toolkits
   only; no OCCT in any header). `main_window.*` lays out the docks.
+- **Authoring** (M14, decision 0014): every edit is a `Command`
+  (`authoring.hpp`) applied through `History` (`history.hpp`), which keeps
+  whole project snapshots, so undo restores identical hashes and refuses
+  changes that add a `model::check()` error. `reference_choices.hpp` lists
+  what a feature may refer to (inside a volume: only its boundary faces,
+  connection surfaces and own features). `sketch_editor.*` is sketch mode's
+  rules (no Qt); `sketch_mode.*` its canvas and panel, replacing the
+  viewport until Finish. `feature_dialog.*` and `model_dialogs.*` are
+  modeless `EditDialog`s (`widgets.hpp`): `changed()` previews through
+  `History::try_apply()`, OK commits. `MainWindow::edit_in_context()` dims
+  every other volume. Tests drive these entry points; the bracket is
+  rebuilt from scratch in `test_authoring_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
-  [--select <name>] [--view iso|top|front|...] [--size WxH]
+  [--select <name>] [--view iso|top|front|...] [--context <volume>]
+  [--sketch <sketch>] [--edit <feature>] [--size WxH]
   [--screenshot out.bmp] [--viewport-image out.bmp]`; the capture flags
   wait for the evaluation, save (BMP: this Qt has no PNG) and quit.
 - **From a Claude desktop-app session** `%LOCALAPPDATA%` is virtualised and

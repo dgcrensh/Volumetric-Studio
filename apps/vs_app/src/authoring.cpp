@@ -1,0 +1,418 @@
+#include "authoring.hpp"
+
+#include <fmt/format.h>
+
+#include <algorithm>
+#include <utility>
+
+#include "reference_choices.hpp"
+#include "vs/eval/import.hpp"
+
+namespace vs::app {
+
+namespace {
+
+using core::Diagnostic;
+using core::Diagnostics;
+
+Diagnostics error(std::string code, std::string message) {
+  Diagnostics d;
+  d.add(Diagnostic::error(std::move(code), std::move(message)));
+  return d;
+}
+
+Diagnostics no_tree() { return error("app.edit.no_tree", "That volume has no feature tree to edit."); }
+Diagnostics no_feature() { return error("app.edit.no_feature", "That feature is no longer there."); }
+
+std::string feature_title(const feature::Feature& f) {
+  if (!f.name.empty()) return f.name;
+  if (const auto* s = f.as<feature::SketchFeature>(); s != nullptr && !s->sketch.name().empty()) {
+    return s->sketch.name();
+  }
+  return kind_title(f.kind());
+}
+
+template <typename T, typename Pred>
+bool erase_if_any(std::vector<T>& v, Pred pred) {
+  const auto before = v.size();
+  v.erase(std::remove_if(v.begin(), v.end(), pred), v.end());
+  return v.size() != before;
+}
+
+}  // namespace
+
+std::string kind_title(feature::FeatureKind kind) {
+  switch (kind) {
+    case feature::FeatureKind::Sketch: return "Sketch";
+    case feature::FeatureKind::DatumPlane: return "Datum plane";
+    case feature::FeatureKind::DatumAxis: return "Datum axis";
+    case feature::FeatureKind::DatumPoint: return "Datum point";
+    case feature::FeatureKind::Extrude: return "Extrude";
+    case feature::FeatureKind::Revolve: return "Revolve";
+    case feature::FeatureKind::Sweep: return "Sweep";
+    case feature::FeatureKind::Loft: return "Loft";
+    case feature::FeatureKind::Shell: return "Shell";
+    case feature::FeatureKind::Fillet: return "Fillet";
+    case feature::FeatureKind::Chamfer: return "Chamfer";
+    case feature::FeatureKind::LinearPattern: return "Linear pattern";
+    case feature::FeatureKind::CircularPattern: return "Circular pattern";
+  }
+  return "Feature";
+}
+
+std::string unique_name(const std::string& base, const std::vector<std::string>& taken) {
+  auto free = [&](const std::string& n) { return std::find(taken.begin(), taken.end(), n) == taken.end(); };
+  if (free(base)) return base;
+  for (int i = 2;; ++i) {
+    std::string n = fmt::format("{} {}", base, i);
+    if (free(n)) return n;
+  }
+}
+
+// --- features ------------------------------------------------------------------------
+
+Command add_feature(Id volume, feature::Feature f, std::optional<std::size_t> index) {
+  std::string label = "Add " + feature_title(f);
+  return {std::move(label), [volume, f = std::move(f), index](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            feature::Feature copy = f;
+            if (copy.id.is_null()) {
+              if (const auto* s = copy.as<feature::SketchFeature>()) {
+                copy.id = s->sketch.id();
+              } else {
+                copy.id = Id::random();
+              }
+            }
+            tree->insert(index ? *index : tree->features().size(), std::move(copy));
+            return {};
+          }};
+}
+
+Command replace_feature(Id volume, feature::Feature f) {
+  std::string label = "Edit " + feature_title(f);
+  return {std::move(label), [volume, f = std::move(f)](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            feature::Feature* existing = tree->find(f.id);
+            if (existing == nullptr) return no_feature();
+            *existing = f;
+            return {};
+          }};
+}
+
+Command remove_feature(Id volume, Id id) {
+  return {"Delete feature", [volume, id](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            if (!tree->remove(id)) return no_feature();
+            return {};
+          }};
+}
+
+Command move_feature(Id volume, Id id, std::size_t index) {
+  return {"Move feature", [volume, id, index](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            if (!tree->move(id, index)) return no_feature();
+            return {};
+          }};
+}
+
+Command set_suppressed(Id volume, Id id, bool suppressed) {
+  return {suppressed ? "Suppress feature" : "Unsuppress feature",
+          [volume, id, suppressed](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            if (!tree->set_suppressed(id, suppressed)) return no_feature();
+            return {};
+          }};
+}
+
+Command rename_feature(Id volume, Id id, std::string name) {
+  return {"Rename feature", [volume, id, name = std::move(name)](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            feature::Feature* f = tree->find(id);
+            if (f == nullptr) return no_feature();
+            f->name = name;
+            return {};
+          }};
+}
+
+Command set_sketch(Id volume, Id id, sketch::Sketch sk) {
+  std::string label = "Edit sketch" + (sk.name().empty() ? std::string() : " " + sk.name());
+  return {std::move(label), [volume, id, sk = std::move(sk)](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            sketch::Sketch* existing = tree->sketch(id);
+            if (existing == nullptr) return no_feature();
+            *existing = sk;
+            return {};
+          }};
+}
+
+// --- variables -----------------------------------------------------------------------
+
+Command add_variable(Id volume, std::string name, std::string expression) {
+  std::string label = "Add variable " + name;
+  return {std::move(label), [volume, name = std::move(name), expression = std::move(expression)](
+                                model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            auto added = tree->variables().add(name, expression);
+            if (!added) {
+              Diagnostics d;
+              d.add(added.error());
+              return d;
+            }
+            return {};
+          }};
+}
+
+Command set_variable(Id volume, Id variable, std::string name, std::string expression) {
+  std::string label = "Edit variable " + name;
+  return {std::move(label), [volume, variable, name = std::move(name), expression = std::move(expression)](
+                                model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            auto& table = tree->variables();
+            const feature::Variable* v = table.find(variable);
+            if (v == nullptr) return error("app.edit.no_variable", "That variable is no longer there.");
+            if (v->name != name) {
+              // Renaming: rebuild the table with the new name, keeping order
+              // and id, and check it as a whole (a rename can't be checked by
+              // set_expression()).
+              if (!feature::is_valid_name(name)) {
+                return error("feature.variable.bad_name", fmt::format("'{}' isn't a legal variable name.", name));
+              }
+              if (table.find(name) != nullptr) {
+                return error("feature.variable.duplicate_name",
+                             fmt::format("There is already a variable named '{}'.", name));
+              }
+              feature::VariableTable renamed;
+              for (const auto& var : table.variables()) {
+                feature::Variable copy = var;
+                if (copy.id == variable) copy.name = name;
+                renamed.add_unchecked(std::move(copy));
+              }
+              table = std::move(renamed);
+            }
+            Diagnostics d = table.set_expression(variable, expression);
+            if (d.has_errors()) return d;
+            Diagnostics check = table.check();
+            return check;
+          }};
+}
+
+Command remove_variable(Id volume, Id variable) {
+  return {"Delete variable", [volume, variable](model::Project& p) -> Diagnostics {
+            feature::FeatureTree* tree = tree_of(p.document, volume);
+            if (tree == nullptr) return no_tree();
+            if (!tree->variables().remove(variable)) {
+              return error("app.edit.no_variable", "That variable is no longer there.");
+            }
+            return {};
+          }};
+}
+
+// --- volumes -------------------------------------------------------------------------
+
+model::Volume volume_from_features(std::string name, std::vector<Id> features) {
+  model::Volume v;
+  v.id = Id::random();
+  v.name = std::move(name);
+  v.boundary = model::FeatureBoundary{std::move(features)};
+  v.contents = model::StaticContents{};
+  return v;
+}
+
+model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max) {
+  model::Volume v;
+  v.id = Id::random();
+  v.name = std::move(name);
+  v.boundary = model::BoxBoundary{std::move(min), std::move(max)};
+  v.contents = model::StaticContents{};
+  return v;
+}
+
+Command add_volume(model::Volume volume) {
+  std::string label = "Add volume " + volume.name;
+  return {std::move(label), [volume = std::move(volume)](model::Project& p) -> Diagnostics {
+            p.document.volumes.push_back(volume);
+            return {};
+          }};
+}
+
+Command update_volume(model::Volume volume) {
+  std::string label = "Edit volume " + volume.name;
+  return {std::move(label), [volume = std::move(volume)](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume.id);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            *v = volume;
+            return {};
+          }};
+}
+
+Command remove_volume(Id volume) {
+  return {"Delete volume", [volume](model::Project& p) -> Diagnostics {
+            model::Document& doc = p.document;
+            if (!erase_if_any(doc.volumes, [&](const model::Volume& v) { return v.id == volume; })) {
+              return error("app.edit.no_volume", "That volume is no longer there.");
+            }
+            erase_if_any(doc.links, [&](const model::Link& l) {
+              if (l.source.volume == volume) return true;
+              // A link driving one of its parameters.
+              return std::none_of(doc.volumes.begin(), doc.volumes.end(),
+                                  [&](const model::Volume& v) { return v.find_parameter(l.target) != nullptr; }) &&
+                     doc.layout.variables().find(l.target) == nullptr;
+            });
+            for (auto& s : doc.connections) {
+              erase_if_any(s.volumes, [&](const Id& v) { return v == volume; });
+            }
+            erase_if_any(doc.connections, [](const model::ConnectionSurface& s) { return s.volumes.empty(); });
+            for (auto& k : doc.keep_outs) {
+              erase_if_any(k.volumes, [&](const Id& v) { return v == volume; });
+              erase_if_any(k.cutters, [&](const Id& v) { return v == volume; });
+            }
+            erase_if_any(doc.keep_outs,
+                         [](const model::KeepOut& k) { return k.volumes.empty() || k.cutters.empty(); });
+            return {};
+          }};
+}
+
+Command set_keep_out(Id volume, bool keep_out) {
+  return {keep_out ? "Mark keep-out" : "Unmark keep-out", [volume, keep_out](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            if (keep_out && !v->contents_empty()) {
+              return error("app.edit.keep_out_contents",
+                           fmt::format("{} has contents; a keep-out is empty space. Clear its contents first.",
+                                       v->name));
+            }
+            v->keep_out = keep_out;
+            if (keep_out) {
+              // Keep-outs join no connection surface.
+              for (auto& s : p.document.connections) {
+                if (s.joins(volume)) {
+                  return error("app.edit.keep_out_connected",
+                               fmt::format("{} is joined by {}; remove the surface first.", v->name, s.name));
+                }
+              }
+            }
+            return {};
+          }};
+}
+
+Command make_parametric(Id volume) {
+  return {"Fill by modelling", [volume](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            if (v->keep_out) return error("app.edit.keep_out_contents", "A keep-out has no contents.");
+            if (v->tree() != nullptr) return {};
+            v->contents = model::ParametricContents{};
+            return {};
+          }};
+}
+
+Command make_placeholder(Id volume) {
+  return {"Clear contents", [volume](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            v->contents = model::StaticContents{};
+            return {};
+          }};
+}
+
+Command import_contents(Id volume, std::vector<std::byte> file, std::string format,
+                        core::ProductSettings settings) {
+  return {"Import contents", [volume, file = std::move(file), format = std::move(format),
+                              settings](model::Project& p) -> Diagnostics {
+            return eval::import_contents(p, volume, file, format, settings);
+          }};
+}
+
+// --- connection surfaces, keep-outs, links --------------------------------------------------
+
+Command add_connection(model::ConnectionSurface surface) {
+  std::string label = "Add connection surface " + surface.name;
+  return {std::move(label), [surface = std::move(surface)](model::Project& p) -> Diagnostics {
+            p.document.connections.push_back(surface);
+            return {};
+          }};
+}
+
+Command update_connection(model::ConnectionSurface surface) {
+  std::string label = "Edit connection surface " + surface.name;
+  return {std::move(label), [surface = std::move(surface)](model::Project& p) -> Diagnostics {
+            model::ConnectionSurface* s = p.document.find_connection(surface.id);
+            if (s == nullptr) return error("app.edit.no_connection", "That connection surface is no longer there.");
+            *s = surface;
+            return {};
+          }};
+}
+
+Command remove_connection(Id surface) {
+  return {"Delete connection surface", [surface](model::Project& p) -> Diagnostics {
+            if (!erase_if_any(p.document.connections,
+                              [&](const model::ConnectionSurface& s) { return s.id == surface; })) {
+              return error("app.edit.no_connection", "That connection surface is no longer there.");
+            }
+            return {};
+          }};
+}
+
+Command add_keep_out(model::KeepOut keep_out) {
+  std::string label = "Add keep-out region " + keep_out.name;
+  return {std::move(label), [keep_out = std::move(keep_out)](model::Project& p) -> Diagnostics {
+            p.document.keep_outs.push_back(keep_out);
+            return {};
+          }};
+}
+
+Command update_keep_out(model::KeepOut keep_out) {
+  std::string label = "Edit keep-out region " + keep_out.name;
+  return {std::move(label), [keep_out = std::move(keep_out)](model::Project& p) -> Diagnostics {
+            for (auto& k : p.document.keep_outs) {
+              if (k.id == keep_out.id) {
+                k = keep_out;
+                return {};
+              }
+            }
+            return error("app.edit.no_keep_out", "That keep-out region is no longer there.");
+          }};
+}
+
+Command remove_keep_out(Id keep_out) {
+  return {"Delete keep-out region", [keep_out](model::Project& p) -> Diagnostics {
+            if (!erase_if_any(p.document.keep_outs, [&](const model::KeepOut& k) { return k.id == keep_out; })) {
+              return error("app.edit.no_keep_out", "That keep-out region is no longer there.");
+            }
+            return {};
+          }};
+}
+
+Command add_link(model::Link link) {
+  return {"Add link", [link = std::move(link)](model::Project& p) -> Diagnostics {
+            p.document.links.push_back(link);
+            return {};
+          }};
+}
+
+Command remove_link(Id link) {
+  return {"Delete link", [link](model::Project& p) -> Diagnostics {
+            if (!erase_if_any(p.document.links, [&](const model::Link& l) { return l.id == link; })) {
+              return error("app.edit.no_link", "That link is no longer there.");
+            }
+            return {};
+          }};
+}
+
+Command rename_document(std::string name) {
+  return {"Rename project", [name = std::move(name)](model::Project& p) -> Diagnostics {
+            p.document.name = name;
+            return {};
+          }};
+}
+
+}  // namespace vs::app

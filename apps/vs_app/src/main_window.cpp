@@ -5,36 +5,49 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPushButton>
 #include <QSettings>
+#include <QStackedWidget>
 #include <QStatusBar>
+#include <QTableWidget>
 #include <QTimer>
+#include <QToolBar>
 #include <QTreeWidget>
+#include <QVBoxLayout>
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <fstream>
+#include <iterator>
+
+#include "authoring.hpp"
+#include "feature_dialog.hpp"
+#include "model_dialogs.hpp"
+#include "reference_choices.hpp"
+#include "sketch_mode.hpp"
 #include "viewport.hpp"
 #include "vs/core/version.hpp"
+#include "vs/eval/import.hpp"
 #include "vs/validate/validate.hpp"
+#include "widgets.hpp"
 
 namespace vs::app {
 
 namespace {
 
 constexpr int kRecentMax = 8;
-constexpr int kRoleKind = Qt::UserRole;      // 0 volume, 1 surface, 2 feature/node row, 3 diagnostic
+constexpr int kRoleKind = Qt::UserRole;      // 0 volume, 1 surface, 3 feature, 4 node
 constexpr int kRoleId = Qt::UserRole + 1;    // the subject's id
-constexpr int kRoleIndex = Qt::UserRole + 2; // feature row or diagnostic index
-
-QString qstr(std::string_view s) {
-  return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
-}
 
 QString qpath(const std::filesystem::path& p) { return QString::fromStdWString(p.wstring()); }
 std::filesystem::path fspath(const QString& s) { return std::filesystem::path(s.toStdWString()); }
@@ -120,15 +133,51 @@ QTreeWidget* make_tree(const QStringList& headers) {
   return tree;
 }
 
+std::optional<Id> row_id(const QTreeWidgetItem* item, int column = 0) {
+  if (item == nullptr) return std::nullopt;
+  return Id::parse(sstr(item->data(column, kRoleId).toString()));
+}
+
+// Values a sketch's dimension expressions can use: the layout's variables,
+// or inside a volume its parameters and its contents' variables.
+std::map<std::string, double, std::less<>> variable_values(const eval::Evaluation& ev, const Id& volume) {
+  std::map<std::string, double, std::less<>> out;
+  if (volume.is_null()) return ev.build.layout.variables.values;
+  if (const auto* vb = ev.build.find_volume(volume)) out = vb->parameters;
+  if (const auto* r = rebuild_of(ev, volume)) {
+    for (const auto& [k, v] : r->variables.values) out[k] = v;
+  }
+  return out;
+}
+
+std::string first_error(const core::Diagnostics& d) {
+  for (const auto& x : d) {
+    if (x.severity == core::Severity::Error) return x.message;
+  }
+  return d.empty() ? std::string() : d.items().front().message;
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   session_ = new Session({}, this);
   session_->set_preparer(&Viewport::prepare);
-  viewport_ = new Viewport(this);
-  setCentralWidget(viewport_);
+  viewport_ = new Viewport;
+  central_ = new QStackedWidget;
+  central_->addWidget(viewport_);
+  setCentralWidget(central_);
   build_docks();
   build_menus();
+
+  context_bar_ = new QToolBar(tr("Editing in context"), this);
+  context_bar_->setObjectName(QStringLiteral("context"));
+  context_bar_->setMovable(false);
+  context_label_ = new QLabel;
+  context_label_->setStyleSheet(QStringLiteral("QLabel { padding: 2px 8px; font-weight: bold; color: #1d4f91; }"));
+  context_bar_->addWidget(context_label_);
+  context_bar_->addAction(leave_context_action_);
+  addToolBar(Qt::TopToolBarArea, context_bar_);
+  context_bar_->setVisible(false);
 
   status_label_ = new QLabel(tr("No project"));
   frame_label_ = new QLabel;
@@ -138,6 +187,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   state_timer_ = new QTimer(this);
   state_timer_->setInterval(100);
   connect(state_timer_, &QTimer::timeout, this, &MainWindow::refresh_states);
+  preview_timer_ = new QTimer(this);
+  preview_timer_->setSingleShot(true);
+  preview_timer_->setInterval(150);
+  connect(preview_timer_, &QTimer::timeout, this, &MainWindow::run_preview);
 
   connect(session_, &Session::evaluated, this, &MainWindow::show_snapshot);
   connect(session_, &Session::evaluationStarted, this, [this] {
@@ -149,8 +202,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     status_label_->setText(tr("Regenerating… %1 of %2 volumes").arg(done).arg(total));
   });
   connect(session_, &Session::projectChanged, this, [this] {
+    // A new project (opened, or set by a script): a fresh history.
+    close_dialog();
+    if (sketch_mode_ != nullptr) finish_sketch(false);
+    history_.reset(session_->project());
+    editing_volume_ = {};
+    viewport_->set_context({}, {});
+    context_bar_->setVisible(false);
     fitted_ = false;
     selection_ = {};
+    refresh_edit_actions();
     update_title();
   });
   connect(viewport_, &Viewport::picked, this, [this](core::Id subject) {
@@ -159,8 +220,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
       select(Selection::none());
     } else if (s->evaluation.document.find_connection(subject) != nullptr) {
       select(Selection::of_surface(subject));
-    } else {
+    } else if (s->evaluation.document.find_volume(subject) != nullptr) {
       select(Selection::of_volume(subject));
+    } else if (s->evaluation.document.layout.find(subject) != nullptr) {
+      select(Selection::of_feature(subject));
+    } else {
+      select(Selection::none());
     }
   });
   connect(viewport_, &Viewport::frameRendered, this, [this](double ms) {
@@ -168,14 +233,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   });
 
   resize(1440, 900);
+  refresh_edit_actions();
   update_title();
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+  if (dialog_) dialog_->disconnect(this);
+}
+
+// --- menus and docks -----------------------------------------------------------------------
 
 void MainWindow::build_menus() {
   QMenu* file = menuBar()->addMenu(tr("&File"));
-  file->addAction(tr("&Open…"), QKeySequence::Open, this, &MainWindow::open_dialog);
+  file->addAction(tr("&New"), QKeySequence::New, this, [this] { new_project(); });
+  file->addAction(tr("&Open…"), QKeySequence::Open, this, &MainWindow::open_dialog_box);
   recent_menu_ = file->addMenu(tr("Open &Recent"));
   rebuild_recent_menu();
   file->addSeparator();
@@ -187,13 +258,54 @@ void MainWindow::build_menus() {
   file->addSeparator();
   file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
 
+  QMenu* edit = menuBar()->addMenu(tr("&Edit"));
+  undo_action_ = edit->addAction(tr("&Undo"), QKeySequence::Undo, this, &MainWindow::undo);
+  redo_action_ = edit->addAction(tr("&Redo"), QKeySequence::Redo, this, &MainWindow::redo);
+
+  QMenu* insert = menuBar()->addMenu(tr("&Insert"));
+  using K = feature::FeatureKind;
+  auto add_kind = [&](K kind, const QKeySequence& key = {}) {
+    QAction* a = insert->addAction(qstr(kind_title(kind)) + QStringLiteral("…"), this,
+                                   [this, kind] { insert_feature(kind); });
+    if (!key.isEmpty()) a->setShortcut(key);
+  };
+  add_kind(K::Sketch, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+  insert->addSeparator();
+  add_kind(K::DatumPlane);
+  add_kind(K::DatumAxis);
+  add_kind(K::DatumPoint);
+  insert->addSeparator();
+  add_kind(K::Extrude, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+  add_kind(K::Revolve);
+  add_kind(K::Sweep);
+  add_kind(K::Loft);
+  insert->addSeparator();
+  add_kind(K::Shell);
+  add_kind(K::Fillet);
+  add_kind(K::Chamfer);
+  insert->addSeparator();
+  add_kind(K::LinearPattern);
+  add_kind(K::CircularPattern);
+
+  QMenu* volume = menuBar()->addMenu(tr("&Volume"));
+  volume->addAction(tr("New &volume…"), this, [this] { new_volume(); });
+  volume->addAction(tr("New &connection surface…"), this, [this] { new_connection(); });
+  volume->addAction(tr("New &keep-out region…"), this, [this] { new_keep_out(); });
+  volume->addAction(tr("New &link…"), this, [this] { new_link(); });
+  volume->addSeparator();
+  volume->addAction(tr("&Edit contents in context"), QKeySequence(Qt::CTRL | Qt::Key_E), this, [this] {
+    if (selection_.kind == Selection::Kind::Volume) edit_in_context(selection_.id);
+  });
+  leave_context_action_ = volume->addAction(tr("&Done editing contents"), this, &MainWindow::leave_context);
+  leave_context_action_->setEnabled(false);
+
   QMenu* model = menuBar()->addMenu(tr("&Model"));
   model->addAction(tr("&Regenerate"), QKeySequence(Qt::Key_F5), session_, &Session::regenerate);
   cancel_action_ = model->addAction(tr("&Cancel"), QKeySequence(Qt::Key_Escape), session_, &Session::cancel);
   cancel_action_->setEnabled(false);
   model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::validate);
 
-  QMenu* view = menuBar()->addMenu(tr("&View"));
+  QMenu* view = menuBar()->addMenu(tr("V&iew"));
   view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
   view->addSeparator();
   const std::pair<const char*, StandardView> views[] = {
@@ -231,32 +343,87 @@ void MainWindow::build_docks() {
   volumes_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   volumes_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   volumes_->setMinimumWidth(360);
+  volumes_->setContextMenuPolicy(Qt::CustomContextMenu);
   dock(tr("Volumes"), "volumes", volumes_, Qt::LeftDockWidgetArea);
   connect(volumes_, &QTreeWidget::itemSelectionChanged, this, [this] {
     if (syncing_) return;
     const auto items = volumes_->selectedItems();
     if (items.isEmpty()) return select(Selection::none());
-    const auto id = core::Id::parse(items.front()->data(0, kRoleId).toString().toStdString());
+    const auto id = row_id(items.front());
     if (!id) return select(Selection::none());
-    select(items.front()->data(0, kRoleKind).toInt() == 1 ? Selection::of_surface(*id)
-                                                          : Selection::of_volume(*id));
+    select(items.front()->data(0, kRoleKind).toInt() == 1 ? Selection::of_surface(*id) : Selection::of_volume(*id));
+  });
+  connect(volumes_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::volume_context_menu);
+  connect(volumes_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
+    const auto id = row_id(item);
+    if (!id) return;
+    if (item->data(0, kRoleKind).toInt() == 1) {
+      edit_connection(*id);
+    } else {
+      edit_volume(*id);
+    }
   });
 
   features_ = make_tree({tr("Feature"), tr("Kind"), tr("Status")});
   features_->setRootIsDecorated(false);
   features_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   features_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  features_->setContextMenuPolicy(Qt::CustomContextMenu);
   dock(tr("Features"), "features", features_, Qt::LeftDockWidgetArea);
   connect(features_, &QTreeWidget::itemSelectionChanged, this, [this] {
     if (syncing_) return;
     const auto items = features_->selectedItems();
     if (items.isEmpty()) return;
-    const auto id = core::Id::parse(items.front()->data(0, kRoleId).toString().toStdString());
-    const auto volume = core::Id::parse(items.front()->data(1, kRoleId).toString().toStdString());
+    const auto id = row_id(items.front());
+    const auto volume = row_id(items.front(), 1);
     if (!id) return;
     const bool node = items.front()->data(0, kRoleKind).toInt() == 4;
     const core::Id v = volume ? *volume : core::Id{};
     select(node ? Selection::of_node(*id, v) : Selection::of_feature(*id, v));
+  });
+  connect(features_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::feature_context_menu);
+  connect(features_, &QTreeWidget::itemDoubleClicked, this,
+          [this](QTreeWidgetItem* item, int) { activate_feature_row(item); });
+
+  // Variables of the tree the feature panel shows.
+  auto* vars = new QWidget;
+  auto* vl = new QVBoxLayout(vars);
+  vl->setContentsMargins(0, 0, 0, 0);
+  variables_ = new QTableWidget(0, 3);
+  variables_->setHorizontalHeaderLabels({tr("Name"), tr("Expression"), tr("Value")});
+  variables_->horizontalHeader()->setStretchLastSection(true);
+  variables_->verticalHeader()->setVisible(false);
+  vl->addWidget(variables_);
+  auto* vb = new QHBoxLayout;
+  auto* add_var = new QPushButton(tr("Add variable"));
+  auto* remove_var = new QPushButton(tr("Delete"));
+  vb->addWidget(add_var);
+  vb->addWidget(remove_var);
+  vb->addStretch(1);
+  vl->addLayout(vb);
+  dock(tr("Variables"), "variables", vars, Qt::LeftDockWidgetArea);
+  connect(add_var, &QPushButton::clicked, this, [this] {
+    const Id volume = shown_tree();
+    const auto* tree = tree_of(history_.project().document, volume);
+    if (tree == nullptr) return;
+    int n = 1;
+    while (tree->variables().find(fmt::format("var{}", n)) != nullptr) ++n;
+    apply(add_variable(volume, fmt::format("var{}", n), "0"));
+  });
+  connect(remove_var, &QPushButton::clicked, this, [this] {
+    const int row = variables_->currentRow();
+    if (row < 0) return;
+    const auto id = Id::parse(sstr(variables_->item(row, 0)->data(Qt::UserRole).toString()));
+    if (id) apply(remove_variable(shown_tree(), *id));
+  });
+  connect(variables_, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
+    if (syncing_ || item->column() > 1) return;
+    const int row = item->row();
+    const auto id = Id::parse(sstr(variables_->item(row, 0)->data(Qt::UserRole).toString()));
+    if (!id) return;
+    const auto d = apply(set_variable(shown_tree(), *id, sstr(variables_->item(row, 0)->text().trimmed()),
+                                      sstr(variables_->item(row, 1)->text().trimmed())));
+    if (d.has_errors()) refresh_variables();  // put the cell back
   });
 
   inspector_ = make_tree({tr("Property"), tr("Value")});
@@ -278,6 +445,8 @@ void MainWindow::build_docks() {
   });
 }
 
+// --- projects ---------------------------------------------------------------------------
+
 bool MainWindow::open_project(const std::filesystem::path& path) {
   const core::Diagnostics d = session_->open(path);
   if (d.has_errors()) {
@@ -289,11 +458,89 @@ bool MainWindow::open_project(const std::filesystem::path& path) {
   return true;
 }
 
+void MainWindow::new_project(const std::string& name) {
+  model::Project project;
+  project.document = model::make_document(name);
+  session_->set_project(std::move(project));
+}
+
+void MainWindow::show_project() {
+  session_->update_project(history_.current());
+  previewing_ = false;
+  refresh_edit_actions();
+  update_title();
+  emit historyChanged();
+}
+
+core::Diagnostics MainWindow::apply(const Command& command) {
+  const core::Diagnostics d = history_.apply(command);
+  if (d.has_errors()) {
+    show_diagnostics(d, tr("Refused edit"));
+    status_label_->setText(tr("Can't %1: %2").arg(qstr(command.label).toLower(), qstr(first_error(d))));
+    // A preview may be on screen: put the project back.
+    if (previewing_) session_->update_project(history_.current());
+    previewing_ = false;
+    return d;
+  }
+  show_project();
+  status_label_->setText(qstr(command.label));
+  return d;
+}
+
+void MainWindow::undo() {
+  if (sketch_mode_ != nullptr) return sketch_mode_->undo();
+  close_dialog();
+  if (history_.undo()) {
+    status_label_->setText(tr("Undid: %1").arg(qstr(history_.redo_label())));
+    show_project();
+  }
+}
+
+void MainWindow::redo() {
+  if (sketch_mode_ != nullptr) return sketch_mode_->redo();
+  close_dialog();
+  if (history_.redo()) {
+    status_label_->setText(tr("Redid: %1").arg(qstr(history_.undo_label())));
+    show_project();
+  }
+}
+
+void MainWindow::refresh_edit_actions() {
+  if (undo_action_ == nullptr) return;
+  undo_action_->setEnabled(history_.can_undo());
+  redo_action_->setEnabled(history_.can_redo());
+  undo_action_->setText(history_.can_undo() ? tr("&Undo %1").arg(qstr(history_.undo_label())) : tr("&Undo"));
+  redo_action_->setText(history_.can_redo() ? tr("&Redo %1").arg(qstr(history_.redo_label())) : tr("&Redo"));
+}
+
+// --- selection and panels -------------------------------------------------------------------
+
+std::vector<Id> MainWindow::highlight_for(const Selection& s) const {
+  switch (s.kind) {
+    case Selection::Kind::None: return {};
+    case Selection::Kind::Volume:
+    case Selection::Kind::ConnectionSurface: return {s.id};
+    case Selection::Kind::Feature:
+      if (s.volume.is_null()) return {s.id};
+      return {s.volume, s.id};
+    case Selection::Kind::Node: return {s.volume};
+  }
+  return {};
+}
+
+Id MainWindow::shown_tree() const {
+  if (!editing_volume_.is_null()) return editing_volume_;
+  if (selection_.kind == Selection::Kind::Volume) return selection_.id;
+  if (selection_.kind == Selection::Kind::Feature || selection_.kind == Selection::Kind::Node) return selection_.volume;
+  return {};
+}
+
 void MainWindow::select(const Selection& selection) {
   selection_ = selection;
-  viewport_->set_highlight(viewport_subject(selection));
+  viewport_->set_highlight(highlight_for(selection));
   sync_tree_selection();
   refresh_features();
+  refresh_variables();
   refresh_inspector();
 }
 
@@ -304,13 +551,27 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   // Keep the selection if it still exists.
   const auto& doc = snapshot->evaluation.document;
   if ((selection_.kind == Selection::Kind::Volume && doc.find_volume(selection_.id) == nullptr) ||
-      (selection_.kind == Selection::Kind::ConnectionSurface && doc.find_connection(selection_.id) == nullptr)) {
+      (selection_.kind == Selection::Kind::ConnectionSurface && doc.find_connection(selection_.id) == nullptr) ||
+      (selection_.kind == Selection::Kind::Feature && tree_of(doc, selection_.volume) != nullptr &&
+       tree_of(doc, selection_.volume)->find(selection_.id) == nullptr)) {
     selection_ = {};
+  }
+  if (!editing_volume_.is_null()) {
+    if (doc.find_volume(editing_volume_) == nullptr || tree_of(doc, editing_volume_) == nullptr) {
+      leave_context();
+    } else {
+      std::vector<Id> inputs;
+      for (const auto& s : doc.connections) {
+        if (s.joins(editing_volume_)) inputs.push_back(s.id);
+      }
+      viewport_->set_context(editing_volume_, inputs);
+    }
   }
   refresh_volume_tree();
   refresh_features();
+  refresh_variables();
   refresh_inspector();
-  viewport_->set_highlight(viewport_subject(selection_));
+  viewport_->set_highlight(highlight_for(selection_));
   core::Diagnostics all = snapshot->evaluation.diagnostics;
   all.append(snapshot->scene.diagnostics);
   show_diagnostics(all, snapshot->preview ? tr("Preview") : tr("Evaluation"));
@@ -322,15 +583,15 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   last_states_.clear();
   cancel_action_->setEnabled(false);
   const auto& st = snapshot->evaluation.stats;
-  status_label_->setText(
-      tr("%1 — %2 volumes, %3 regenerated, %4 from cache, %5 ms (display %6 ms)%7")
-          .arg(qstr(doc.name))
-          .arg(doc.volumes.size())
-          .arg(st.regenerated)
-          .arg(st.cache_hits)
-          .arg(snapshot->evaluate_ms, 0, 'f', 0)
-          .arg(snapshot->scene_ms, 0, 'f', 0)
-          .arg(snapshot->evaluation.cancelled ? tr(" — cancelled") : QString()));
+  status_label_->setText(tr("%1 — %2 volumes, %3 regenerated, %4 from cache, %5 ms (display %6 ms)%7%8")
+                             .arg(qstr(doc.name))
+                             .arg(doc.volumes.size())
+                             .arg(st.regenerated)
+                             .arg(st.cache_hits)
+                             .arg(snapshot->evaluate_ms, 0, 'f', 0)
+                             .arg(snapshot->scene_ms, 0, 'f', 0)
+                             .arg(snapshot->evaluation.cancelled ? tr(" — cancelled") : QString())
+                             .arg(previewing_ ? tr(" — preview") : QString()));
   emit evaluationShown();
 }
 
@@ -357,6 +618,13 @@ void MainWindow::refresh_volume_tree() {
       item->setIcon(2, dot(status_color(r.status)));
       item->setData(0, kRoleKind, 0);
       item->setData(0, kRoleId, qstr(r.id.to_string()));
+      if (r.id == editing_volume_) {
+        QFont f = item->font(0);
+        f.setBold(true);
+        item->setFont(0, f);
+      } else if (!editing_volume_.is_null()) {
+        for (int c = 0; c < 3; ++c) item->setForeground(c, QColor(150, 150, 155));
+      }
     }
     const auto surfaces = surface_rows(ev);
     if (!surfaces.empty()) {
@@ -401,26 +669,55 @@ void MainWindow::refresh_features() {
   features_->clear();
   const SnapshotPtr s = session_->latest();
   if (s) {
-    core::Id volume;
-    if (selection_.kind == Selection::Kind::Volume) volume = selection_.id;
-    if (selection_.kind == Selection::Kind::Feature || selection_.kind == Selection::Kind::Node) {
-      volume = selection_.volume;
-    }
+    const Id volume = shown_tree();
     const auto* v = s->evaluation.document.find_volume(volume);
-    features_->setHeaderLabels({v != nullptr ? tr("%1 — features").arg(qstr(v->name)) : tr("Layout features"),
-                                tr("Kind"), tr("Status")});
+    QString title = v != nullptr ? tr("%1 — features").arg(qstr(v->name)) : tr("Layout features");
+    if (!editing_volume_.is_null()) title = tr("%1 — contents (in context)").arg(v != nullptr ? qstr(v->name) : QString());
+    features_->setHeaderLabels({title, tr("Kind"), tr("Status")});
     for (const FeatureRow& row : feature_rows(s->evaluation, volume)) {
       auto* item = new QTreeWidgetItem(features_);
       item->setText(0, qstr(row.name));
       item->setText(1, qstr(row.kind));
       item->setText(2, qstr(row.status));
       if (row.status == "failed") item->setForeground(2, QColor(208, 48, 48));
+      if (row.status == "suppressed") {
+        for (int c = 0; c < 3; ++c) item->setForeground(c, QColor(150, 150, 155));
+      }
       item->setData(0, kRoleKind, row.selection.kind == Selection::Kind::Node ? 4 : 3);
       item->setData(0, kRoleId, qstr(row.selection.id.to_string()));
       item->setData(1, kRoleId, qstr(row.selection.volume.to_string()));
       if (row.selection == selection_) item->setSelected(true);
     }
   }
+  syncing_ = false;
+}
+
+void MainWindow::refresh_variables() {
+  syncing_ = true;
+  variables_->setRowCount(0);
+  const SnapshotPtr s = session_->latest();
+  const Id volume = shown_tree();
+  const auto* tree = tree_of(history_.project().document, volume);
+  if (tree != nullptr) {
+    std::map<std::string, double, std::less<>> values;
+    if (s) {
+      if (const auto* r = rebuild_of(s->evaluation, volume)) values = r->variables.values;
+    }
+    for (const auto& var : tree->variables().variables()) {
+      const int row = variables_->rowCount();
+      variables_->insertRow(row);
+      auto* name = new QTableWidgetItem(qstr(var.name));
+      name->setData(Qt::UserRole, qstr(var.id.to_string()));
+      variables_->setItem(row, 0, name);
+      variables_->setItem(row, 1, new QTableWidgetItem(qstr(var.expression)));
+      const auto it = values.find(var.name);
+      auto* value = new QTableWidgetItem(it != values.end() ? QString::number(it->second, 'g', 10) : tr("?"));
+      value->setFlags(value->flags() & ~Qt::ItemIsEditable);
+      value->setForeground(QColor(90, 90, 100));
+      variables_->setItem(row, 2, value);
+    }
+  }
+  variables_->setEnabled(tree != nullptr);
   syncing_ = false;
 }
 
@@ -447,7 +744,6 @@ void MainWindow::refresh_inspector() {
 void MainWindow::show_diagnostics(const core::Diagnostics& diagnostics, const QString& source) {
   shown_diagnostics_ = diagnostics;
   diagnostics_->clear();
-  const SnapshotPtr s = session_->latest();
   for (const core::Diagnostic& d : diagnostics) {
     auto* item = new QTreeWidgetItem(diagnostics_);
     item->setText(0, severity_text(d.severity));
@@ -465,7 +761,6 @@ void MainWindow::show_diagnostics(const core::Diagnostics& diagnostics, const QS
   if (auto* dock = qobject_cast<QDockWidget*>(diagnostics_->parentWidget())) {
     dock->setWindowTitle(tr("Diagnostics — %1: %2 errors, %3 warnings").arg(source).arg(errors).arg(warnings));
   }
-  (void)s;
 }
 
 void MainWindow::activate_diagnostic(int row) {
@@ -499,10 +794,431 @@ void MainWindow::sync_tree_selection() {
 void MainWindow::update_title() {
   QString title = tr("Volumetric CAD Studio");
   if (session_->has_project()) {
-    title = qstr(session_->project().document.name) + QStringLiteral(" — ") + title;
+    title = qstr(history_.project().document.name) + (history_.dirty() ? QStringLiteral(" *") : QString()) +
+            QStringLiteral(" — ") + title;
   }
   setWindowTitle(title);
 }
+
+// --- context menus ------------------------------------------------------------------------------
+
+void MainWindow::activate_feature_row(QTreeWidgetItem* item) {
+  const auto id = row_id(item);
+  if (!id || item->data(0, kRoleKind).toInt() != 3) return;
+  const Id volume = row_id(item, 1).value_or(Id{});
+  const auto* tree = tree_of(history_.project().document, volume);
+  const auto* f = tree != nullptr ? tree->find(*id) : nullptr;
+  if (f == nullptr) return;
+  if (f->kind() == feature::FeatureKind::Sketch) {
+    edit_sketch(volume, *id);
+  } else {
+    edit_feature(volume, *id);
+  }
+}
+
+void MainWindow::feature_context_menu(const QPoint& pos) {
+  QTreeWidgetItem* item = features_->itemAt(pos);
+  const auto id = row_id(item);
+  if (!id || item->data(0, kRoleKind).toInt() != 3) return;
+  const Id volume = row_id(item, 1).value_or(Id{});
+  const auto* tree = tree_of(history_.project().document, volume);
+  const auto* f = tree != nullptr ? tree->find(*id) : nullptr;
+  if (f == nullptr) return;
+  const Id fid = *id;
+  QMenu menu(this);
+  if (f->kind() == feature::FeatureKind::Sketch) {
+    menu.addAction(tr("Edit sketch"), this, [this, volume, fid] { edit_sketch(volume, fid); });
+    menu.addAction(tr("Sketch plane…"), this, [this, volume, fid] { edit_feature(volume, fid); });
+  } else {
+    menu.addAction(tr("Edit…"), this, [this, volume, fid] { edit_feature(volume, fid); });
+  }
+  menu.addAction(tr("Rename…"), this, [this, volume, fid] {
+    const auto* t = tree_of(history_.project().document, volume);
+    if (t == nullptr || t->find(fid) == nullptr) return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Rename feature"), tr("Name"), QLineEdit::Normal,
+                                               qstr(t->label(fid)), &ok);
+    if (ok) apply(rename_feature(volume, fid, sstr(name.trimmed())));
+  });
+  menu.addAction(f->suppressed ? tr("Unsuppress") : tr("Suppress"), this,
+                 [this, volume, fid, s = f->suppressed] { apply(set_suppressed(volume, fid, !s)); });
+  menu.addSeparator();
+  menu.addAction(tr("Move up"), this, [this, volume, fid] { move_feature(volume, fid, -1); });
+  menu.addAction(tr("Move down"), this, [this, volume, fid] { move_feature(volume, fid, +1); });
+  menu.addSeparator();
+  menu.addAction(tr("Delete"), this, [this, volume, fid] { apply(remove_feature(volume, fid)); });
+  menu.exec(features_->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::move_feature(const Id& volume, const Id& feature, int delta) {
+  const auto* tree = tree_of(history_.project().document, volume);
+  if (tree == nullptr) return;
+  const auto index = tree->index_of(feature);
+  if (!index) return;
+  const long long to = static_cast<long long>(*index) + delta;
+  if (to < 0 || to >= static_cast<long long>(tree->features().size())) return;
+  apply(app::move_feature(volume, feature, static_cast<std::size_t>(to)));
+}
+
+void MainWindow::volume_context_menu(const QPoint& pos) {
+  QTreeWidgetItem* item = volumes_->itemAt(pos);
+  const auto id = row_id(item);
+  if (!id) return;
+  QMenu menu(this);
+  const Id vid = *id;
+  if (item->data(0, kRoleKind).toInt() == 1) {
+    menu.addAction(tr("Edit…"), this, [this, vid] { edit_connection(vid); });
+    menu.addAction(tr("Delete"), this, [this, vid] { apply(remove_connection(vid)); });
+    menu.exec(volumes_->viewport()->mapToGlobal(pos));
+    return;
+  }
+  const model::Volume* v = history_.project().document.find_volume(vid);
+  if (v == nullptr) return;
+  menu.addAction(tr("Properties…"), this, [this, vid] { edit_volume(vid); });
+  if (!v->keep_out) {
+    if (v->tree() != nullptr || v->contents_empty()) {
+      menu.addAction(v->tree() != nullptr ? tr("Edit contents in context") : tr("Fill by modelling"), this,
+                     [this, vid] { edit_in_context(vid); });
+    }
+    menu.addAction(tr("Import contents…"), this, [this, vid] {
+      const QString path = QFileDialog::getOpenFileName(this, tr("Import contents"), QString(),
+                                                        tr("Geometry (*.step *.stp *.iges *.igs *.stl *.3mf *.obj)"));
+      if (path.isEmpty()) return;
+      std::ifstream f(fspath(path), std::ios::binary);
+      const std::vector<char> chars((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+      std::vector<std::byte> bytes(chars.size());
+      std::transform(chars.begin(), chars.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+      const std::string format(eval::import_format(sstr(QFileInfo(path).suffix())));
+      apply(import_contents(vid, std::move(bytes), format, session_->settings()));
+    });
+    if (!v->contents_empty()) menu.addAction(tr("Clear contents"), this, [this, vid] { apply(make_placeholder(vid)); });
+  }
+  menu.addAction(v->keep_out ? tr("Unmark keep-out") : tr("Mark as keep-out"), this,
+                 [this, vid, k = v->keep_out] { apply(set_keep_out(vid, !k)); });
+  menu.addSeparator();
+  menu.addAction(tr("Delete"), this, [this, vid] { apply(remove_volume(vid)); });
+  menu.exec(volumes_->viewport()->mapToGlobal(pos));
+}
+
+// --- edit in context ------------------------------------------------------------------------------
+
+bool MainWindow::edit_in_context(const Id& volume) {
+  const model::Volume* v = history_.project().document.find_volume(volume);
+  if (v == nullptr || v->keep_out) return false;
+  if (v->tree() == nullptr) {
+    if (!v->contents_empty()) {
+      status_label_->setText(tr("%1 has %2 contents; clear them to fill it by modelling")
+                                 .arg(qstr(v->name), qstr(model::to_string(v->kind())).toLower()));
+      return false;
+    }
+    if (apply(make_parametric(volume)).has_errors()) return false;
+    v = history_.project().document.find_volume(volume);
+  }
+  close_dialog();
+  editing_volume_ = volume;
+  std::vector<Id> inputs;
+  for (const auto& s : history_.project().document.connections) {
+    if (s.joins(volume)) inputs.push_back(s.id);
+  }
+  viewport_->set_context(volume, inputs);
+  context_label_->setText(tr("Editing the contents of %1: only its boundary and connection surfaces can be "
+                             "referenced")
+                              .arg(qstr(v->name)));
+  context_bar_->setVisible(true);
+  leave_context_action_->setEnabled(true);
+  select(Selection::of_volume(volume));
+  refresh_volume_tree();
+  return true;
+}
+
+void MainWindow::leave_context() {
+  if (editing_volume_.is_null()) return;
+  close_dialog();
+  const Id was = editing_volume_;
+  editing_volume_ = {};
+  viewport_->set_context({}, {});
+  context_bar_->setVisible(false);
+  leave_context_action_->setEnabled(false);
+  select(Selection::of_volume(was));
+  refresh_volume_tree();
+}
+
+// --- dialogs ---------------------------------------------------------------------------------------
+
+void MainWindow::start_dialog(EditDialog* d, std::function<Command()> make, std::function<bool()> commit_override) {
+  close_dialog();
+  dialog_ = d;
+  dialog_command_ = std::move(make);
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  connect(d, &EditDialog::changed, this, [this] { preview_timer_->start(); });
+  connect(d, &EditDialog::commitRequested, this, [this, d, commit_override] {
+    if (!d->complete()) {
+      d->set_message(tr("Choose every reference and enter every number first."));
+      return;
+    }
+    preview_timer_->stop();
+    if (commit_override) {
+      if (commit_override()) {
+        dialog_ = nullptr;
+        d->accept();
+      }
+      return;
+    }
+    const auto result = apply(dialog_command_());
+    if (result.has_errors()) {
+      d->set_message(qstr(first_error(result)));
+      return;
+    }
+    dialog_ = nullptr;
+    d->accept();
+  });
+  connect(d, &QDialog::rejected, this, [this, d] {
+    preview_timer_->stop();
+    if (dialog_ == d) dialog_ = nullptr;
+    end_preview();
+  });
+  d->show();
+  if (!commit_override) preview_timer_->start();
+}
+
+void MainWindow::run_preview() {
+  if (!dialog_ || !dialog_command_) return;
+  if (!dialog_->complete()) return;
+  core::Diagnostics why;
+  auto preview = history_.try_apply(dialog_command_(), &why);
+  if (!preview) {
+    dialog_->set_message(qstr(first_error(why)));
+    end_preview();
+    return;
+  }
+  dialog_->set_message({});
+  previewing_ = true;
+  session_->update_project(std::move(preview));
+}
+
+void MainWindow::flush_preview() {
+  if (preview_timer_->isActive()) {
+    preview_timer_->stop();
+    run_preview();
+  }
+}
+
+void MainWindow::end_preview() {
+  if (!previewing_) return;
+  previewing_ = false;
+  session_->update_project(history_.current());
+}
+
+void MainWindow::close_dialog() {
+  if (dialog_) {
+    EditDialog* d = dialog_;
+    dialog_ = nullptr;
+    d->reject();
+  }
+  end_preview();
+}
+
+FeatureDialog* MainWindow::insert_feature(feature::FeatureKind kind) {
+  const SnapshotPtr s = session_->latest();
+  if (!s || !session_->has_project()) return nullptr;
+  const Id volume = editing_volume_;
+  const auto* tree = tree_of(history_.project().document, volume);
+  if (tree == nullptr) return nullptr;
+  feature::Feature f;
+  f.id = Id::random();
+  switch (kind) {
+    case feature::FeatureKind::Sketch: f.definition = feature::SketchFeature{}; break;
+    case feature::FeatureKind::DatumPlane: f.definition = feature::DatumPlaneFeature{}; break;
+    case feature::FeatureKind::DatumAxis: f.definition = feature::DatumAxisFeature{}; break;
+    case feature::FeatureKind::DatumPoint: f.definition = feature::DatumPointFeature{}; break;
+    case feature::FeatureKind::Extrude: f.definition = feature::ExtrudeFeature{}; break;
+    case feature::FeatureKind::Revolve: f.definition = feature::RevolveFeature{}; break;
+    case feature::FeatureKind::Sweep: f.definition = feature::SweepFeature{}; break;
+    case feature::FeatureKind::Loft: f.definition = feature::LoftFeature{}; break;
+    case feature::FeatureKind::Shell: f.definition = feature::ShellFeature{}; break;
+    case feature::FeatureKind::Fillet: f.definition = feature::FilletFeature{}; break;
+    case feature::FeatureKind::Chamfer: f.definition = feature::ChamferFeature{}; break;
+    case feature::FeatureKind::LinearPattern: f.definition = feature::LinearPatternFeature{}; break;
+    case feature::FeatureKind::CircularPattern: f.definition = feature::CircularPatternFeature{}; break;
+  }
+  ReferenceChoices choices = reference_choices(s->evaluation, volume);
+  // Sensible first choices: the last sketch, a principal or first plane.
+  if (auto* e = f.as<feature::ExtrudeFeature>(); e != nullptr && !choices.sketches.empty()) {
+    e->sketch = choices.sketches.back().ref;
+  }
+  if (auto* r = f.as<feature::RevolveFeature>(); r != nullptr && !choices.sketches.empty()) {
+    r->sketch = choices.sketches.back().ref;
+  }
+  if (auto* sk = f.as<feature::SketchFeature>(); sk != nullptr && !choices.planes.empty()) {
+    sk->plane = choices.planes.front().ref;
+  }
+  auto* d = new FeatureDialog(f, std::move(choices), this, true);
+  if (kind == feature::FeatureKind::Sketch) {
+    // OK picks the plane, then sketch mode draws the sketch.
+    start_dialog(d, {}, [this, d] {
+      const feature::Feature chosen = d->feature();
+      new_sketch(chosen.as<feature::SketchFeature>()->plane, chosen.name);
+      return true;
+    });
+    return d;
+  }
+  start_dialog(d, [volume, d] { return add_feature(volume, d->feature()); });
+  return d;
+}
+
+FeatureDialog* MainWindow::edit_feature(const Id& volume, const Id& feature) {
+  const SnapshotPtr s = session_->latest();
+  const auto* tree = tree_of(history_.project().document, volume);
+  if (!s || tree == nullptr) return nullptr;
+  const auto index = tree->index_of(feature);
+  if (!index) return nullptr;
+  const feature::Feature f = *tree->find(feature);
+  auto* d = new FeatureDialog(f, reference_choices(s->evaluation, volume, *index), this);
+  start_dialog(d, [volume, d] { return replace_feature(volume, d->feature()); });
+  return d;
+}
+
+VolumeDialog* MainWindow::new_volume() {
+  const SnapshotPtr s = session_->latest();
+  if (!s) return nullptr;
+  std::vector<std::string> taken;
+  for (const auto& v : history_.project().document.volumes) taken.push_back(v.name);
+  model::Volume v = volume_from_features(unique_name("Volume", taken), {});
+  // A layout solid that is selected is the likely boundary.
+  if (selection_.kind == Selection::Kind::Feature && selection_.volume.is_null()) {
+    std::get<model::FeatureBoundary>(v.boundary).features.push_back(selection_.id);
+  }
+  auto* d = new VolumeDialog(v, s->evaluation, this);
+  start_dialog(d, [d] { return add_volume(d->value()); });
+  return d;
+}
+
+VolumeDialog* MainWindow::edit_volume(const Id& volume) {
+  const SnapshotPtr s = session_->latest();
+  const model::Volume* v = history_.project().document.find_volume(volume);
+  if (!s || v == nullptr) return nullptr;
+  auto* d = new VolumeDialog(*v, s->evaluation, this);
+  start_dialog(d, [d] { return update_volume(d->value()); });
+  return d;
+}
+
+ConnectionDialog* MainWindow::new_connection() {
+  const SnapshotPtr s = session_->latest();
+  if (!s) return nullptr;
+  std::vector<std::string> taken;
+  for (const auto& c : history_.project().document.connections) taken.push_back(c.name);
+  model::ConnectionSurface c;
+  c.id = Id::random();
+  c.name = unique_name("Surface", taken);
+  c.geometry = model::SketchPatch{};
+  auto* d = new ConnectionDialog(c, s->evaluation, this);
+  start_dialog(d, [d] { return add_connection(d->value()); });
+  return d;
+}
+
+ConnectionDialog* MainWindow::edit_connection(const Id& surface) {
+  const SnapshotPtr s = session_->latest();
+  const model::ConnectionSurface* c = history_.project().document.find_connection(surface);
+  if (!s || c == nullptr) return nullptr;
+  auto* d = new ConnectionDialog(*c, s->evaluation, this);
+  start_dialog(d, [d] { return update_connection(d->value()); });
+  return d;
+}
+
+KeepOutDialog* MainWindow::new_keep_out() {
+  const SnapshotPtr s = session_->latest();
+  if (!s) return nullptr;
+  std::vector<std::string> taken;
+  for (const auto& k : history_.project().document.keep_outs) taken.push_back(k.name);
+  model::KeepOut k;
+  k.id = Id::random();
+  k.name = unique_name("Keep-out", taken);
+  auto* d = new KeepOutDialog(k, s->evaluation, this);
+  start_dialog(d, [d] { return add_keep_out(d->value()); });
+  return d;
+}
+
+LinkDialog* MainWindow::new_link() {
+  const SnapshotPtr s = session_->latest();
+  if (!s) return nullptr;
+  model::Link l;
+  l.id = Id::random();
+  auto* d = new LinkDialog(l, s->evaluation, this);
+  start_dialog(d, [d] { return add_link(d->value()); });
+  return d;
+}
+
+// --- sketch mode --------------------------------------------------------------------------------
+
+SketchMode* MainWindow::new_sketch(const feature::PlaneRef& plane, const std::string& name) {
+  const auto* tree = tree_of(history_.project().document, editing_volume_);
+  if (tree == nullptr) return nullptr;
+  std::size_t n = 1;
+  for (const auto& f : tree->features()) n += f.kind() == feature::FeatureKind::Sketch ? 1 : 0;
+  sketch::Sketch sk(Id::random(), name.empty() ? fmt::format("Sketch {}", n) : name);
+  feature::Feature f;
+  f.id = sk.id();
+  f.definition = feature::SketchFeature{std::move(sk), plane};
+  return open_sketch_mode(editing_volume_, std::move(f), true);
+}
+
+SketchMode* MainWindow::edit_sketch(const Id& volume, const Id& feature) {
+  const auto* tree = tree_of(history_.project().document, volume);
+  const auto* f = tree != nullptr ? tree->find(feature) : nullptr;
+  if (f == nullptr || f->as<feature::SketchFeature>() == nullptr) return nullptr;
+  return open_sketch_mode(volume, *f, false);
+}
+
+SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, bool is_new) {
+  if (sketch_mode_ != nullptr) finish_sketch(false);
+  close_dialog();
+  const SnapshotPtr s = session_->latest();
+  std::map<std::string, double, std::less<>> values;
+  if (s) values = variable_values(s->evaluation, volume);
+  auto lookup = [values](std::string_view name) -> std::optional<double> {
+    const auto it = values.find(name);
+    if (it == values.end()) return std::nullopt;
+    return it->second;
+  };
+  const auto& sk = f.as<feature::SketchFeature>()->sketch;
+  QString where;
+  if (s) where = qstr(reference_choices(s->evaluation, volume).label_of(f.as<feature::SketchFeature>()->plane));
+  const QString title = qstr(sk.name().empty() ? std::string("Sketch") : sk.name()) +
+                        (where.isEmpty() ? QString() : tr(" on %1").arg(where));
+  auto editor = std::make_unique<SketchEditor>(sk, session_->settings(), lookup);
+  sketch_mode_ = new SketchMode(std::move(editor), title);
+  central_->addWidget(sketch_mode_);
+  central_->setCurrentWidget(sketch_mode_);
+  sketch_session_ = SketchSession{volume, std::move(f), is_new};
+  connect(sketch_mode_, &SketchMode::finished, this, &MainWindow::finish_sketch);
+  sketch_mode_->view().setFocus();
+  status_label_->setText(tr("Sketch mode: draw, constrain, then Finish sketch"));
+  return sketch_mode_;
+}
+
+void MainWindow::finish_sketch(bool accept) {
+  if (sketch_mode_ == nullptr || !sketch_session_) return;
+  if (accept) {
+    const sketch::Sketch& sk = sketch_mode_->editor().sketch();
+    core::Diagnostics d;
+    if (sketch_session_->is_new) {
+      feature::Feature f = sketch_session_->feature;
+      f.as<feature::SketchFeature>()->sketch = sk;
+      d = apply(add_feature(sketch_session_->volume, std::move(f)));
+    } else if (sketch_mode_->editor().changed()) {
+      d = apply(set_sketch(sketch_session_->volume, sketch_session_->feature.id, sk));
+    }
+    if (d.has_errors()) return;  // stay in sketch mode; the reason is shown
+  }
+  central_->setCurrentWidget(viewport_);
+  central_->removeWidget(sketch_mode_);
+  sketch_mode_->deleteLater();
+  sketch_mode_ = nullptr;
+  sketch_session_.reset();
+  refresh_edit_actions();
+}
+
+// --- files -------------------------------------------------------------------------------------------
 
 void MainWindow::add_recent(const std::filesystem::path& path) {
   QSettings settings(QStringLiteral("Volumetric Studio"), QStringLiteral("vs_app"));
@@ -525,7 +1241,7 @@ void MainWindow::rebuild_recent_menu() {
   recent_menu_->setEnabled(!list.isEmpty());
 }
 
-void MainWindow::open_dialog() {
+void MainWindow::open_dialog_box() {
   // A project is a folder or a zip file, so offer both.
   QFileDialog dialog(this, tr("Open project"));
   dialog.setNameFilters({tr("Projects (*.vsproj project.json)"), tr("All files (*)")});
@@ -540,16 +1256,22 @@ void MainWindow::open_dialog() {
 void MainWindow::save() {
   if (!session_->has_project()) return;
   if (session_->path().empty()) return save_as();
-  report(session_->save(session_->path()), tr("Saved %1").arg(qpath(session_->path())));
+  const auto d = session_->save(session_->path(), &history_.project());
+  if (!d.has_errors()) history_.mark_saved();
+  update_title();
+  report(d, tr("Saved %1").arg(qpath(session_->path())));
 }
 
 void MainWindow::save_as() {
   if (!session_->has_project()) return;
-  const QString path = QFileDialog::getSaveFileName(this, tr("Save project as"), QString(),
-                                                    tr("Project (*.vsproj)"));
+  const QString path = QFileDialog::getSaveFileName(this, tr("Save project as"), QString(), tr("Project (*.vsproj)"));
   if (path.isEmpty()) return;
-  const auto d = session_->save(fspath(path));
-  if (!d.has_errors()) add_recent(fspath(path));
+  const auto d = session_->save(fspath(path), &history_.project());
+  if (!d.has_errors()) {
+    add_recent(fspath(path));
+    history_.mark_saved();
+  }
+  update_title();
   report(d, tr("Saved %1").arg(path));
 }
 
@@ -564,10 +1286,11 @@ void MainWindow::export_dialog(ExportFormat format) {
 void MainWindow::export_to(const std::filesystem::path& path, ExportFormat format,
                            std::function<void(const ExportResult&)> done) {
   const SnapshotPtr s = session_->latest();
-  if (!s || s->preview || session_->busy()) {
+  if (!s || s->preview || session_->busy() || previewing_) {
     ExportResult r;
     r.diagnostics.add(core::Diagnostic::error("app.export.busy",
-                                              "Wait for the evaluation to finish before exporting."));
+                                              "Wait for the evaluation to finish (and close the open dialog) "
+                                              "before exporting."));
     report(r.diagnostics, {});
     if (done) done(r);
     return;
@@ -581,11 +1304,10 @@ void MainWindow::export_to(const std::filesystem::path& path, ExportFormat forma
         if (result->ok()) result->diagnostics.append(write_file(path, result->bytes));
       },
       [this, result, path, done] {
-        report(result->diagnostics,
-               tr("Exported %1 (%2 triangles, %3 objects)")
-                   .arg(qpath(path))
-                   .arg(result->triangles)
-                   .arg(result->objects));
+        report(result->diagnostics, tr("Exported %1 (%2 triangles, %3 objects)")
+                                        .arg(qpath(path))
+                                        .arg(result->triangles)
+                                        .arg(result->objects));
         if (done) done(*result);
       });
 }

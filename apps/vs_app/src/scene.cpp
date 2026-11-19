@@ -1,7 +1,10 @@
 #include "scene.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <set>
 #include <utility>
+#include <variant>
 
 #include "vs/kernel/tessellate.hpp"
 
@@ -105,6 +108,8 @@ std::string_view to_string(ItemRole role) {
     case ItemRole::Boundary: return "boundary";
     case ItemRole::Contents: return "contents";
     case ItemRole::ConnectionSurface: return "connection surface";
+    case ItemRole::LayoutSolid: return "layout solid";
+    case ItemRole::Sketch: return "sketch";
   }
   return "?";
 }
@@ -210,6 +215,7 @@ Scene build_scene(const eval::Evaluation& evaluation, const core::ProductSetting
       SceneItem item;
       item.role = ItemRole::Boundary;
       item.subject = volume.id;
+      item.volume = volume.id;
       item.mesh = shape_item(vb->boundary, doc.boundary_subject(volume.id));
       item.color = color;
       // A placeholder's boundary is all there is to see; over contents it
@@ -222,6 +228,7 @@ Scene build_scene(const eval::Evaluation& evaluation, const core::ProductSetting
       SceneItem item;
       item.role = ItemRole::Contents;
       item.subject = volume.id;
+      item.volume = volume.id;
       item.mesh = c.mesh ? display_mesh(*c.mesh, options)
                          : shape_item(c.solid, doc.volume_subject(volume.id));
       item.stale = result->stale_contents;
@@ -241,7 +248,115 @@ Scene build_scene(const eval::Evaluation& evaluation, const core::ProductSetting
     item.transparency = 0.25f;
     add(std::move(item));
   }
+
+  // --- authoring: layout solids no boundary uses, and sketches.
+  std::set<Id> in_boundaries;
+  for (const auto& v : doc.volumes) {
+    if (const auto* fb = std::get_if<model::FeatureBoundary>(&v.boundary)) {
+      in_boundaries.insert(fb->features.begin(), fb->features.end());
+    }
+  }
+  for (const auto& k : doc.keep_outs) in_boundaries.insert(k.cutters.begin(), k.cutters.end());
+  for (const auto& r : evaluation.build.layout.features) {
+    if (!r.ok() || r.tool.is_empty() || r.operation != feature::Operation::Add) continue;
+    if (in_boundaries.count(r.feature) != 0) continue;
+    SceneItem item;
+    item.role = ItemRole::LayoutSolid;
+    item.subject = r.feature;
+    item.mesh = shape_item(r.tool, doc.layout.subject(r.feature));
+    item.color = kLayoutColor;
+    item.transparency = 0.55f;
+    add(std::move(item));
+  }
+
+  // Sketches some feature or connection surface uses are secondary.
+  auto used_sketches = [&](const feature::FeatureTree& tree) {
+    std::set<Id> used;
+    for (const auto& f : tree.features()) {
+      if (const auto* e = f.as<feature::ExtrudeFeature>()) used.insert(e->sketch);
+      if (const auto* r = f.as<feature::RevolveFeature>()) used.insert(r->sketch);
+      if (const auto* s = f.as<feature::SweepFeature>()) used.insert({s->profile, s->path});
+      if (const auto* l = f.as<feature::LoftFeature>()) used.insert(l->sections.begin(), l->sections.end());
+    }
+    return used;
+  };
+  auto add_sketches = [&](const feature::FeatureTree& tree, const feature::RebuildResult& rebuild,
+                          const Id& volume, std::set<Id> used) {
+    for (const auto& r : rebuild.features) {
+      if (!r.ok() || !r.sketch || tree.find(r.feature) == nullptr) continue;
+      SceneItem item;
+      item.role = ItemRole::Sketch;
+      item.subject = r.feature;
+      item.volume = volume;
+      item.mesh.edges = sketch_lines(*r.sketch);
+      item.color = kSketchColor;
+      item.secondary = used.count(r.feature) != 0;
+      if (item.mesh.edges.empty()) continue;
+      // Secondary sketches don't take part in framing the view.
+      if (item.secondary) {
+        scene.items.push_back(std::move(item));
+      } else {
+        add(std::move(item));
+      }
+    }
+  };
+  {
+    std::set<Id> used = used_sketches(doc.layout);
+    for (const auto& s : doc.connections) {
+      if (const auto* sp = std::get_if<model::SketchPatch>(&s.geometry)) used.insert(sp->sketch);
+    }
+    add_sketches(doc.layout, evaluation.build.layout, {}, std::move(used));
+  }
+  for (const auto& v : doc.volumes) {
+    const feature::FeatureTree* tree = v.tree();
+    if (tree == nullptr) continue;
+    const eval::VolumeResult* result = evaluation.find(v.id);
+    const feature::RebuildResult* rebuild = nullptr;
+    if (result != nullptr && result->contents && result->contents->rebuild) rebuild = &*result->contents->rebuild;
+    if (rebuild == nullptr) {
+      if (const auto* vb = evaluation.build.find_volume(v.id); vb != nullptr && vb->contents_rebuild) {
+        rebuild = &*vb->contents_rebuild;
+      }
+    }
+    if (rebuild != nullptr) add_sketches(*tree, *rebuild, v.id, used_sketches(*tree));
+  }
   return scene;
+}
+
+std::vector<std::vector<fvec3>> sketch_lines(const sketch::Sketch& sketch) {
+  std::vector<std::vector<fvec3>> out;
+  const sketch::SketchPlane& plane = sketch.plane();
+  auto model = [&](core::dvec2 p) { return core::to_fp32(plane.to_model(p)); };
+  auto arc = [&](core::dvec2 c, double r, double a0, double a1) {
+    const double sweep = a1 - a0;
+    const int n = std::max(8, static_cast<int>(std::ceil(std::abs(sweep) / (2.0 * 3.14159265358979 / 96.0))));
+    std::vector<fvec3> line;
+    line.reserve(static_cast<std::size_t>(n) + 1);
+    for (int i = 0; i <= n; ++i) {
+      const double a = a0 + sweep * static_cast<double>(i) / n;
+      line.push_back(model({c.x + r * std::cos(a), c.y + r * std::sin(a)}));
+    }
+    return line;
+  };
+  for (const auto& e : sketch.entities()) {
+    switch (e.kind()) {
+      case sketch::EntityKind::Point: break;
+      case sketch::EntityKind::Line:
+        if (const auto g = sketch::line_geometry(sketch, e.id)) out.push_back({model(g->start), model(g->end)});
+        break;
+      case sketch::EntityKind::Circle:
+        if (const auto g = sketch::circle_geometry(sketch, e.id)) {
+          out.push_back(arc(g->center, g->radius, 0.0, 2.0 * 3.14159265358979));
+        }
+        break;
+      case sketch::EntityKind::Arc:
+        if (const auto g = sketch::arc_geometry(sketch, e.id)) {
+          out.push_back(arc(g->center, g->radius, g->start_angle, g->end_angle));
+        }
+        break;
+    }
+  }
+  return out;
 }
 
 }  // namespace vs::app

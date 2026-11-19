@@ -70,10 +70,17 @@ void Session::set_project(model::Project project, std::filesystem::path path) {
   regenerate();
 }
 
-core::Diagnostics Session::save(const std::filesystem::path& path) {
+void Session::update_project(std::shared_ptr<const model::Project> project) {
+  project_ = std::move(project);
+  has_project_ = true;
+  emit projectEdited();
+  regenerate();
+}
+
+core::Diagnostics Session::save(const std::filesystem::path& path, const model::Project* project) {
   const auto layout =
       std::filesystem::is_directory(path) ? model::ProjectLayout::Folder : model::ProjectLayout::Zip;
-  core::Diagnostics d = model::save_project(*project_, path, layout);
+  core::Diagnostics d = model::save_project(project != nullptr ? *project : *project_, path, layout);
   if (!d.has_errors()) path_ = path;
   return d;
 }
