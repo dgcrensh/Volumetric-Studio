@@ -87,7 +87,8 @@ ActTarget route(const Diagnostic& diagnostic, const model::Document& document) {
   } else if (first->kind == SubjectKind::Variable && owner) {
     t.on = ActOn::Feature;
     t.volume = owner->id;
-  } else if (first->kind == SubjectKind::Volume && diagnostic.code.starts_with("model.contents.")) {
+  } else if (first->kind == SubjectKind::Volume && (diagnostic.code.starts_with("model.contents.") ||
+                                                     diagnostic.code.starts_with("eval."))) {
     t.on = ActOn::Contents;
     t.volume = first->id;
   } else {

@@ -30,7 +30,8 @@
 //   Node                                       Node
 //   Variable                                   Layout, or Feature when a
 //                                              volume's contents own it
-//   Volume, with a model.contents.* code       Contents
+//   Volume, with a model.contents.* code, or   Contents
+//   an eval.* code (the engine, M9)
 //   anything else, or no subject               Layout
 //
 // A diagnostic with no subject routes to the layout as a whole.

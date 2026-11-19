@@ -1,9 +1,10 @@
 # vstudio-cli: the command-line driver over the libraries, used for tests and
 # scripting until the GUI milestones. Later milestones add subcommands
-# (build, info, validate, export, rebuild).
+# (build, info, validate, export, import, rebuild).
 
 vs_add_application(vstudio-cli
   SOURCES
+    src/eval_commands.cpp
     src/feature_commands.cpp
     src/kernel_commands.cpp
     src/main.cpp
@@ -144,3 +145,41 @@ if(VS_BUILD_TESTS)
     FIXTURES_REQUIRED imported_project)
 endif()
 
+
+if(VS_BUILD_TESTS)
+  set(bracket_project "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj")
+  add_test(NAME "vstudio-cli: rebuild evaluates the bracket, then serves it from the cache"
+    COMMAND vstudio-cli rebuild "${bracket_project}" --threads 4 --weld --twice)
+  set_tests_properties("vstudio-cli: rebuild evaluates the bracket, then serves it from the cache"
+    PROPERTIES PASS_REGULAR_EXPRESSION
+    "evaluation  1.*Base +current +regenerated.*mass = 29\\.76.*Upright +current +regenerated.*stats +2 regenerated, 0 from cache.*weld .* 1 shell, watertight yes, manifold yes.*evaluation  2.*Base +current +cache.*stats +0 regenerated, 2 from cache.*result +ok")
+  add_test(NAME "vstudio-cli: rebuild --set regenerates only what changed"
+    COMMAND vstudio-cli rebuild "${bracket_project}" --set Base.thickness=8 --check-determinism)
+  set_tests_properties("vstudio-cli: rebuild --set regenerates only what changed" PROPERTIES
+    PASS_REGULAR_EXPRESSION "checking determinism.*Base +current +regenerated.*mass = 23\\.808.*result +ok")
+  add_test(NAME "vstudio-cli: rebuild fails on contents outside their boundary"
+    COMMAND vstudio-cli rebuild "${PROJECT_SOURCE_DIR}/libs/vs_validate/tests/data/containment.vsproj")
+  set_tests_properties("vstudio-cli: rebuild fails on contents outside their boundary" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Block +failed .*validate\\.containment.*result +errors")
+  add_test(NAME "vstudio-cli: rebuild exits 1 on errors"
+    COMMAND vstudio-cli rebuild "${PROJECT_SOURCE_DIR}/libs/vs_validate/tests/data/containment.vsproj")
+  set_tests_properties("vstudio-cli: rebuild exits 1 on errors" PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME "vstudio-cli: rebuild rejects a bad thread count"
+    COMMAND vstudio-cli rebuild "${bracket_project}" --threads 0)
+  set_tests_properties("vstudio-cli: rebuild rejects a bad thread count" PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME "vstudio-cli: import adds a STEP file as a static volume"
+    COMMAND vstudio-cli import "${PROJECT_SOURCE_DIR}/libs/vs_validate/tests/data/clean.vsproj"
+            "${CMAKE_CURRENT_BINARY_DIR}/kernel-demo.step" --name Demo
+            --out "${CMAKE_CURRENT_BINARY_DIR}/imported-step.vsproj")
+  set_tests_properties("vstudio-cli: import adds a STEP file as a static volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "imported +kernel-demo.step as static volume 'Demo'"
+    DEPENDS "vstudio-cli: kernel-demo writes STEP"
+    FIXTURES_SETUP imported_step)
+  # The demo part lands on the clean fixture's blocks: its contents evaluate,
+  # and the engine's layout check reports the overlap.
+  add_test(NAME "vstudio-cli: rebuild evaluates an imported STEP volume"
+    COMMAND vstudio-cli rebuild "${CMAKE_CURRENT_BINARY_DIR}/imported-step.vsproj")
+  set_tests_properties("vstudio-cli: rebuild evaluates an imported STEP volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Demo +current +regenerated.*validate\\.overlap\\] 'Base' and 'Demo'.*result +errors"
+    FIXTURES_REQUIRED imported_step)
+endif()

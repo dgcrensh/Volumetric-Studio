@@ -12,6 +12,7 @@
 
 #include "vs/core/settings.hpp"
 #include "vs/mesh/combine.hpp"
+#include "vs/eval/import.hpp"
 #include "vs/mesh/import.hpp"
 #include "vs/mesh/io.hpp"
 #include "vs/mesh/seam_library.hpp"
@@ -187,13 +188,14 @@ int run_export(std::span<const std::string_view> args, std::ostream& out, std::o
 
 int run_import(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   constexpr std::string_view kUsage =
-      "usage: vstudio-cli import <project.vsproj> <mesh.stl|.3mf|.obj> [--name <name>] "
-      "[--out <project.vsproj>]\n";
+      "usage: vstudio-cli import <project.vsproj> <file.step|.iges|.stl|.3mf|.obj> "
+      "[--name <name> | --into <volume>] [--out <project.vsproj>]\n";
   std::vector<std::string_view> positional;
-  std::optional<std::string_view> name, out_path;
+  std::optional<std::string_view> name, out_path, into;
   for (std::size_t i = 0; i < args.size(); ++i) {
-    if ((args[i] == "--name" || args[i] == "--out") && i + 1 < args.size()) {
-      (args[i] == "--name" ? name : out_path) = args[i + 1];
+    if ((args[i] == "--name" || args[i] == "--out" || args[i] == "--into") &&
+        i + 1 < args.size()) {
+      (args[i] == "--name" ? name : args[i] == "--out" ? out_path : into) = args[i + 1];
       ++i;
     } else if (args[i].starts_with("-")) {
       return err << kUsage, 2;
@@ -201,7 +203,7 @@ int run_import(std::span<const std::string_view> args, std::ostream& out, std::o
       positional.push_back(args[i]);
     }
   }
-  if (positional.size() != 2) return err << kUsage, 2;
+  if (positional.size() != 2 || (name && into)) return err << kUsage, 2;
   const std::filesystem::path project_path = to_path(positional[0]);
   const std::filesystem::path file_path = to_path(positional[1]);
   auto loaded = model::load_project(project_path);
@@ -219,12 +221,29 @@ int run_import(std::span<const std::string_view> args, std::ostream& out, std::o
   std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
   std::string format = file_path.extension().string();
   if (!format.empty() && format.front() == '.') format.erase(0, 1);
-  const std::string volume_name = name ? std::string(*name) : file_path.stem().string();
   const auto settings = core::ProductSettings::defaults();
-  const auto id = mesh::import_mesh_volume(*loaded, bytes, format, volume_name, settings);
-  if (!id) {
-    out << id.error().to_string() << "\n";
-    return 1;
+  std::string volume_name;
+  core::Id id;
+  if (into) {
+    const model::Volume* v = loaded->document.find_volume(*into);
+    if (v == nullptr) {
+      err << "vstudio-cli: no volume named '" << *into << "'\n";
+      return 1;
+    }
+    volume_name = v->name;
+    id = v->id;
+    const core::Diagnostics problems =
+        eval::import_contents(*loaded, id, bytes, format, settings);
+    for (const auto& d : problems) out << d.to_string() << "\n";
+    if (problems.has_errors()) return 1;
+  } else {
+    volume_name = name ? std::string(*name) : file_path.stem().string();
+    const auto added = eval::import_volume(*loaded, bytes, format, volume_name, settings);
+    if (!added) {
+      out << added.error().to_string() << "\n";
+      return 1;
+    }
+    id = *added;
   }
   const std::filesystem::path target = out_path ? to_path(*out_path) : project_path;
   const auto layout = std::filesystem::is_directory(project_path) ? model::ProjectLayout::Folder
@@ -232,8 +251,9 @@ int run_import(std::span<const std::string_view> args, std::ostream& out, std::o
   const core::Diagnostics saved = model::save_project(*loaded, target, layout);
   for (const auto& d : saved) out << d.to_string() << "\n";
   if (saved.has_errors()) return 1;
-  out << fmt::format("imported    {} as static volume '{}' ({})\nsaved       {}\n",
-                     file_path.filename().string(), volume_name, id->to_string(), target.string());
+  out << fmt::format("imported    {} as {}static volume '{}' ({})\nsaved       {}\n",
+                     file_path.filename().string(), into ? "the contents of " : "", volume_name,
+                     id.to_string(), target.string());
   return 0;
 }
 

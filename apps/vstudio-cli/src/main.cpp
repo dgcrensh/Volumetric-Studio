@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "eval_commands.hpp"
 #include "feature_commands.hpp"
 #include "kernel_commands.hpp"
 #include "model_commands.hpp"
@@ -42,8 +43,15 @@ Commands:
                     Tessellate every volume against its seams, weld them and write
                     the combined mesh (3MF: one object, or one per volume). Writes
                     nothing and exits 1 unless it is watertight and manifold
-  import <project.vsproj> <mesh.stl|.3mf|.obj> [--name <name>] [--out <project>]
-                    Add a mesh file as a static volume boxed by its bounds, and save
+  import <project.vsproj> <file.step|.iges|.stl|.3mf|.obj> [--name <name> | --into <volume>]
+         [--out <project>]
+                    Add a file as a static volume boxed by its bounds (or, with --into,
+                    as an existing volume's contents), and save
+  rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] [--cache]
+          [--set <volume>.<parameter>=<value>]... [--twice]
+                    Evaluate a project with the engine: regenerate what changed, check
+                    containment, publish outputs; print statuses, cache use and the
+                    output hash. Exits 1 on errors
   version           Print the version (same as --version)
   help              Print this message
 
@@ -131,6 +139,9 @@ int main(int argc, char** argv) {
   }
   if (command == "import") {
     return vs::cli::run_import(rest, std::cout, std::cerr);
+  }
+  if (command == "rebuild") {
+    return vs::cli::run_rebuild(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);
