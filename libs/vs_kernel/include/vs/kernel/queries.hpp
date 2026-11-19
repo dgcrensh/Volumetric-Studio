@@ -93,6 +93,37 @@ struct Cylinder {
 };
 // nullopt for a face on any other kind of surface.
 std::optional<Cylinder> face_cylinder(const Face& face);
+// One edge of a face's outline, as the face's boundary runs along it.
+// Lines and circular arcs (all a sketch makes) carry their exact geometry;
+// any other curve is Other, with only its ends and length.
+struct LoopEdge {
+  enum class Kind { Line, Circle, Other };
+  Kind kind = Kind::Other;
+  dvec3 start{};  // where the loop enters the edge
+  dvec3 end{};    // where it leaves; equal to start for a full circle
+  double length = 0.0;  // mm
+  // Circle only: the centre, the radius, and a unit axis about which the
+  // edge turns counter-clockwise from start to end through `sweep`
+  // radians, in (0, 2π] (2π for a full circle).
+  dvec3 centre{};
+  dvec3 axis{};
+  double radius = 0.0;
+  double sweep = 0.0;
+};
+
+// A closed loop of a face's boundary: its edges in order, each starting
+// where the previous one ends. Seam edges of closed surfaces are left out.
+struct FaceLoop {
+  std::vector<LoopEdge> edges;
+};
+
+// The loops bounding a face, outer loop first, then its holes, in the
+// kernel's deterministic order. Each loop's edges are chained (one starts
+// where the previous one ends), but which way a loop runs is not
+// specified: callers that care orient it themselves. Empty for an empty
+// face.
+std::vector<FaceLoop> face_loops(const Face& face);
+
 std::vector<Edge> edges(const Shape& shape);
 // True when `edge` is a seam of `face`: where a closed surface (a full
 // cylinder, say) meets itself. Seams aren't real edges of the shape's

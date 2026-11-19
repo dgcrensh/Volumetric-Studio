@@ -293,6 +293,31 @@ so they are registered. A new library must also be added to
   regenerate them with `vs_validate_tests "[.generate]"`. Decision 0006 has
   the reasoning.
 
+## vs_mesh essentials
+
+- **Meshes** (`mesh.hpp`): FP32 positions, indexed triangles (counter-clockwise
+  from outside), a volume id per triangle and a seam vertex id per vertex
+  (null off seams). `analyse()` (`topology.hpp`) reports boundary,
+  non-manifold and inconsistent edges, non-manifold vertices and shells;
+  `HalfEdges` gives twins. `view()` hands a mesh to `check_containment()`.
+- **Seams** (`seam.hpp`): one per bonded or bolted-flange connection surface
+  (clearance surfaces get none), made once by `build_seams()`
+  (`seam_library.hpp`) from the built patch's exact outline and the
+  surface's spacing (`seam.spacing`, else a sixteenth of the diagonal).
+  Flange bolt holes are hole loops. Outline segments divide into
+  `ceil(length / spacing)` pieces (arcs at least 16 a turn); the interior is
+  a lattice, constrained-Delaunay triangulated (`triangulate.hpp`, our own).
+  Vertex ids derive from a hash of the inputs. Meshers never divide a seam
+  themselves: they call `add_seam_vertices()` and `add_seam_face()`, and
+  join their own faces to `Seam::loops` (with `segment_starts`).
+- **Weld** (`weld.hpp`): merges vertices by seam id only, checks each volume
+  has exactly the seam's triangles (`mesh.weld.nonconforming`, surface
+  first), removes the paired seam faces and checks the result is watertight
+  and manifold. Decision 0007 has the reasoning.
+- **Tests** mesh volumes with small meshers in `libs/vs_mesh/tests/meshers.*`
+  (prisms, pyramids, a box round a patch) and weld random outlines;
+  `vstudio-cli seams <project>` prints a project's seams.
+
 ## Code style
 
 - C++20, warnings as errors. `#pragma once`. Namespaces `vs::<short>`.
