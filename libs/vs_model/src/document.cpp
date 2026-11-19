@@ -26,13 +26,14 @@ std::string_view to_string(OutputQuantity quantity) {
     case OutputQuantity::SurfaceArea: return "surface_area";
     case OutputQuantity::CentreOfGravity: return "centre_of_gravity";
     case OutputQuantity::Envelope: return "envelope";
+    case OutputQuantity::Published: return "published";
   }
   return "volume";
 }
 
 bool is_scalar(OutputQuantity quantity) {
   return quantity == OutputQuantity::Volume || quantity == OutputQuantity::Mass ||
-         quantity == OutputQuantity::SurfaceArea;
+         quantity == OutputQuantity::SurfaceArea || quantity == OutputQuantity::Published;
 }
 
 std::string_view to_string(ConnectionType type) {

@@ -120,7 +120,7 @@ core::Result<core::Id> import_volume(model::Project& project, std::span<const st
     v.id = volume = core::Id::random();
     v.name = n;
     v.boundary = model::BoxBoundary{feature::FeatureRef{a}, feature::FeatureRef{b}};
-    v.contents = model::StaticContents{blob, std::string(format)};
+    v.contents = model::StaticContents{blob, std::string(format), {}};
     doc.volumes.push_back(std::move(v));
   });
   if (problems.has_errors()) return first_error(problems);
@@ -153,7 +153,7 @@ core::Diagnostics import_contents(model::Project& project, const core::Id& volum
   model::Project next = project;
   const std::string blob = next.add_blob(model::Blob(file.begin(), file.end()), format);
   core::Diagnostics problems = model::edit(next.document, [&](model::Document& doc) {
-    doc.find_volume(volume)->contents = model::StaticContents{blob, std::string(format)};
+    doc.find_volume(volume)->contents = model::StaticContents{blob, std::string(format), {}};
   });
   if (problems.has_errors()) return problems;
   project = std::move(next);

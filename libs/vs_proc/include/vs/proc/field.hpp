@@ -20,6 +20,14 @@
 // two separately built but equal fields hash equal. The per-node cache and
 // output hashes rely on that.
 //
+// M12 adds the infill families: strut lattices (cubic, BCC and octet
+// cells), triply periodic minimal surfaces as sheets (gyroid, Schwarz P,
+// diamond), each with a cell size and a thickness that a scalar field may
+// grade point by point; copies of a template field at frames (instances);
+// and clamping. TPMS need sines and cosines: they use sin_det() and
+// cos_det() below, our own arithmetic-only versions, never libm's, so
+// samples stay bit-identical across platforms.
+//
 // Sampling (sample()) evaluates a field at the nodes of a regular grid
 // covering a box, typically the boundary's bounding box: grid point
 // (i, j, k) is origin + (i, j, k) * cell, and values run x fastest, then y,
@@ -64,7 +72,19 @@ enum class FieldOp {
   Add,                 // a + b
   Multiply,            // a * b
   Scale,               // a * factor
+  // M12
+  Lattice,             // cell kind, cell, origin, thickness [, thickness field]
+  Tpms,                // surface kind, cell, origin, thickness [, thickness field]
+  Instances,           // the template at each frame: min over the copies
+  Clamp,               // clamp(a, lo, hi)
 };
+
+// Strut lattices: struts along a unit cell's edges (cubic), its four body
+// diagonals (BCC), or its face diagonals and the octahedron joining its
+// face centres (octet).
+enum class LatticeCell { Cubic, Bcc, Octet };
+// Triply periodic minimal surfaces, as sheets of a thickness.
+enum class TpmsSurface { Gyroid, SchwarzP, Diamond };
 
 class FieldExpr {
  public:
@@ -112,6 +132,35 @@ Field abs_field(Field a);
 Field add_field(Field a, Field b);
 Field multiply_field(Field a, Field b);
 Field scale_field(Field a, double factor);
+Field clamp_field(Field a, double lo, double hi);
+
+// Struts of diameter `thickness` (mm) on cells `cell` mm wide, aligned with
+// the axes, a cell corner at `origin`. With `grade`, the diameter at p is
+// grade(p) instead (clamped at 0). Signed distance to the struts' surface:
+// exact near the struts for a constant thickness (the nearest strut is
+// always in the point's own cell: every cell kind is symmetric under the
+// cube's reflections), a smooth approximation when graded.
+Field lattice_field(LatticeCell kind, double cell, const dvec3& origin, double thickness,
+                    Field grade = nullptr);
+// A sheet `thickness` mm thick (or grade(p)) centred on the surface
+// f(2 pi (p - origin) / cell) = 0. Distance is approximated by |f| / |grad f|
+// (first order: good near the sheet, a smooth bound away from it).
+Field tpms_field(TpmsSurface kind, double cell, const dvec3& origin, double thickness,
+                 Field grade = nullptr);
+// The union (min) of `templ` placed at each frame: at p, templ is
+// evaluated at the frame's inverse applied to p. Frames should be rigid
+// (rotation and translation), as scatter and pattern make them, so
+// distances keep their scale. When `radius` > 0 the template is promised
+// to lie within that distance of its origin and to be a distance bound
+// (templ(q) >= |q| - radius), so copies that can't be the nearest are
+// skipped; 0 evaluates every copy.
+Field instances_field(Field templ, const FrameSet& frames, double radius);
+
+// sin and cos from arithmetic alone (Cody-Waite reduction by pi/2 in three
+// parts, fdlibm's kernel polynomials, no fused multiply-add): within an ulp
+// or two of libm for |x| < 1e6, and the same bits on every platform.
+double sin_det(double x);
+double cos_det(double x);
 
 // The polynomial smooth minimum and maximum the smooth booleans use.
 double smooth_min(double a, double b, double radius);

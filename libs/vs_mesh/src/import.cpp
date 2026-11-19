@@ -46,7 +46,7 @@ core::Result<core::Id> import_mesh_volume(model::Project& project, std::span<con
     v.id = volume = core::Id::random();
     v.name = n;
     v.boundary = model::BoxBoundary{feature::FeatureRef{a}, feature::FeatureRef{b}};
-    v.contents = model::StaticContents{blob, ext};
+    v.contents = model::StaticContents{blob, ext, {}};
     doc.volumes.push_back(std::move(v));
   });
   if (problems.has_errors()) {

@@ -71,9 +71,12 @@ std::string_view to_string(VolumeKind kind);
 
 // Imported or baked geometry, held as a blob of the project (project.hpp).
 // An empty `blob` is a placeholder volume: blocked out, not filled yet.
+// Baked contents (vs_proc bake.hpp, M12) keep the graph they were baked
+// from, opaque here as in ProceduralContents, so they can be unbaked.
 struct StaticContents {
   std::string blob;    // the blob's path in the project, e.g. "blobs/<hash>.step"
   std::string format;  // "step", "iges", "stl", "3mf", "obj"
+  std::string baked_graph;  // the graph's JSON when baked; empty otherwise
   friend bool operator==(const StaticContents&, const StaticContents&) = default;
 };
 
@@ -113,6 +116,8 @@ enum class OutputQuantity {
   SurfaceArea,     // mm² (scalar)
   CentreOfGravity, // mm (vector)
   Envelope,        // the contents' bounding box (box)
+  Published,       // a number the procedure publishes under the output's name
+                   // (counts, say: vs_proc's output.publish node, M12) (scalar)
 };
 std::string_view to_string(OutputQuantity quantity);
 // Whether the quantity is one number, so it can feed a variable or parameter.

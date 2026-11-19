@@ -24,7 +24,8 @@
 //         "id": "...", "name": "Base",
 //         "boundary": {"features": ["<id>", ...]} | {"box": {"min": <point ref>, "max": <point ref>}},
 //         "keep_out": false,
-//         "contents": {"kind": "static", "blob": "blobs/...", "format": "step"} |
+//         "contents": {"kind": "static", "blob": "blobs/...", "format": "step",
+//                      "baked_graph": "<JSON text, when baked (vs_proc bake.hpp)>"} |
 //                     {"kind": "parametric", "tree": { ...vstudio.features... }} |
 //                     {"kind": "procedural", "graph": "<JSON text, kept as it is>"},
 //         "parameters": [{"id": "...", "name": "wall", "value": <param>}],

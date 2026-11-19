@@ -9,7 +9,9 @@
 // work into fixed chunks, so nothing depends on the number of threads.
 //
 // Per-node cache. A node's key is a digest of the engine version, its
-// type, its settings, its derived seed and the hash of every input value
+// type, its settings, its derived seed, the volume's id and bounding box
+// (M12: mesh nodes put the volume on their triangles, and
+// convert.field_to_mesh grids the box) and the hash of every input value
 // (types.hpp). With a NodeCache, a node whose key is cached isn't run:
 // changing one parameter re-runs only the nodes downstream of it. Nodes
 // reading the graph inputs (NodeType::cached false) always run; they are
@@ -19,6 +21,13 @@
 // output node's `cell_size` property is the sampling grid's cell (0: auto,
 // see grid_covering()).
 //
+// Published numbers (M12): each output.publish node's value, by its name,
+// for the volume's published outputs of quantity Published.
+//
+// Inspection (M12): with `only_for`, only that node and the nodes it
+// depends on run, and the graph needn't be finished elsewhere (no output
+// node, other inputs unconnected): what inspect_node() (inspect.hpp) uses.
+//
 // Every diagnostic gets the volume (inputs.volume_subject) appended as its
 // last subject, so routing (vs_validate) can find the volume a node is in.
 
@@ -26,6 +35,8 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <string>
 #include <vector>
 
 #include "vs/core/diagnostic.hpp"
@@ -63,6 +74,8 @@ struct EvaluateGraphOptions {
   // Keep every node's outputs on the result (for inspection and tests);
   // otherwise only the contents are kept.
   bool keep_outputs = false;
+  // Run only this node and those it depends on (inspection).
+  std::optional<Id> only_for;
 };
 
 struct NodeRun {
@@ -76,6 +89,7 @@ struct NodeRun {
 struct GraphEvaluation {
   std::optional<Field> contents;  // set when the graph evaluated
   double cell_size = 0.0;         // the output node's
+  std::map<std::string, double, std::less<>> published;  // output.publish values by name
   std::vector<NodeRun> nodes;     // those reached, in evaluation order
   std::size_t evaluated = 0;      // nodes whose evaluate() ran
   std::size_t cache_hits = 0;

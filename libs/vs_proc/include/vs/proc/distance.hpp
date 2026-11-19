@@ -22,6 +22,7 @@
 // FP32 positions. For planar faces that is the exact surface; for curved
 // faces it is within the tessellation's deflection.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -49,6 +50,13 @@ class TriangleDistance {
   [[nodiscard]] const dbox3& bounds() const { return bounds_; }
   // A digest of the positions and triangles: what identifies the surface.
   [[nodiscard]] const core::Hash256& hash() const { return hash_; }
+
+  // The mesh it was built from (positions in FP64, triangles in input
+  // order): scatter.surface samples a patch's triangles by area.
+  [[nodiscard]] const std::vector<dvec3>& positions() const { return positions_; }
+  [[nodiscard]] std::array<std::uint32_t, 3> triangle(std::size_t t) const {
+    return {triangles_[t].v[0], triangles_[t].v[1], triangles_[t].v[2]};
+  }
 
   // Unsigned distance to the nearest triangle; +infinity when empty.
   [[nodiscard]] double distance(const dvec3& p) const;

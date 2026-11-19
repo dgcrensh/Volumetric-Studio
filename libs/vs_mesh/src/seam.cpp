@@ -1,6 +1,9 @@
 #include "vs/mesh/seam.hpp"
 
 #include <algorithm>
+#include <array>
+#include <bit>
+#include <map>
 #include <cmath>
 #include <numbers>
 #include <string>
@@ -362,6 +365,27 @@ void add_seam_face(Mesh& mesh, const Seam& seam, const std::vector<std::uint32_t
   for (const Triangle& t : seam.triangles_facing(outward)) {
     mesh.add_triangle(vertex_map[t[0]], vertex_map[t[1]], vertex_map[t[2]], volume);
   }
+}
+
+std::size_t attach_seam_vertices(Mesh& mesh, std::span<const Seam* const> seams) {
+  using Key = std::array<std::uint32_t, 3>;
+  const auto key = [](const fvec3& p) {
+    return Key{std::bit_cast<std::uint32_t>(p.x), std::bit_cast<std::uint32_t>(p.y),
+               std::bit_cast<std::uint32_t>(p.z)};
+  };
+  std::map<Key, core::Id> by_position;
+  for (const Seam* seam : seams) {
+    for (const SeamVertex& v : seam->vertices) by_position.emplace(key(v.position32), v.id);
+  }
+  std::size_t named = 0;
+  for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
+    if (!mesh.seam_vertices[i].is_null()) continue;
+    const auto it = by_position.find(key(mesh.positions[i]));
+    if (it == by_position.end()) continue;
+    mesh.seam_vertices[i] = it->second;
+    ++named;
+  }
+  return named;
 }
 
 }  // namespace vs::mesh

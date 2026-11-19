@@ -65,6 +65,34 @@ void hash_setting(Hasher& h, const Setting& s) {
   std::visit([&](const auto& v) { h.add(v); }, s);
 }
 
+// What an optional input left unconnected holds: an empty value of its type.
+Value empty_value(PortType type) {
+  switch (type) {
+    case PortType::Scalar: return 0.0;
+    case PortType::Vector: return dvec3{};
+    case PortType::Field: return Field{};
+    case PortType::Mesh: return MeshValue{};
+    case PortType::Frames: return Frames{};
+    case PortType::Curves: return Curves{};
+    case PortType::List: return List{};
+  }
+  return 0.0;
+}
+
+// `target` and every node it depends on.
+std::set<Id> ancestors(const Graph& graph, const Id& target) {
+  std::set<Id> seen{target};
+  std::vector<Id> todo{target};
+  while (!todo.empty()) {
+    const Id n = todo.back();
+    todo.pop_back();
+    for (const auto& e : graph.edges) {
+      if (e.to.node == n && seen.insert(e.from.node).second) todo.push_back(e.from.node);
+    }
+  }
+  return seen;
+}
+
 Value literal(const Setting& s) {
   if (const auto* d = std::get_if<double>(&s)) return *d;
   return std::get<core::dvec3>(s);
@@ -84,7 +112,23 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
                                const EvaluateGraphOptions& options, const NodeRegistry& registry) {
   GraphEvaluation ev;
   {
-    Diagnostics d = check_graph(graph, registry);
+    Diagnostics d;
+    std::optional<std::set<Id>> wanted;
+    if (options.only_for) wanted = ancestors(graph, *options.only_for);
+    for (const auto& found : check_graph(graph, registry)) {
+      // Inspecting a node needs only its own inputs finished.
+      if (wanted && is_unfinished(found.code) &&
+          (found.code == "proc.graph.output" || found.subjects.empty() ||
+           !wanted->contains(found.subjects.front().id))) {
+        continue;
+      }
+      d.add(found);
+    }
+    if (options.only_for && graph.find_node(*options.only_for) == nullptr) {
+      d.add(Diagnostic::error("proc.graph.unknown_node",
+                              fmt::format("There's no node {} to inspect",
+                                          options.only_for->to_string())));
+    }
     // Surfaces must be this volume's (check_volume_graph() says so at
     // authoring time; this catches a graph run against other inputs).
     for (const auto& node : graph.nodes) {
@@ -109,6 +153,8 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       return ev;
     }
   }
+  const std::optional<std::set<Id>> wanted =
+      options.only_for ? std::optional(ancestors(graph, *options.only_for)) : std::nullopt;
 
   const std::vector<std::size_t> order = topological_order(graph);
   std::map<Id, std::vector<Value>> values;  // each node's outputs, in port order
@@ -119,6 +165,7 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       return ev;
     }
     const Node& node = graph.nodes[index];
+    if (wanted && !wanted->contains(node.id)) continue;
     const NodeType& type = *registry.find(node.type);
 
     // Inputs: an edge's value, else the setting, else the default.
@@ -132,8 +179,10 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
         in.push_back(values.at(e->from.node).at(k));
       } else if (const Setting* s = node.find_setting(port.name)) {
         in.push_back(literal(*s));
-      } else {
+      } else if (port.default_value) {
         in.push_back(literal(*port.default_value));
+      } else {
+        in.push_back(empty_value(port.type));  // an optional input
       }
     }
 
@@ -148,6 +197,10 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       hash_setting(h, v);
     }
     h.add(seed);
+    // Nodes may read the volume's id (mesh triangles carry it) and its box
+    // (the grid of convert.field_to_mesh), so those key them too.
+    h.add(inputs.volume);
+    h.add(inputs.bounds.min).add(inputs.bounds.max);
     h.add(static_cast<std::uint64_t>(in.size()));
     for (const auto& v : in) h.add(v);
 
@@ -188,6 +241,10 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       if (type.cached && options.cache != nullptr) options.cache->insert(run.key, outputs);
     }
 
+    if (node.type == "output.publish") {
+      const Setting* name = node.find_setting("name");
+      if (name != nullptr) ev.published[std::get<std::string>(*name)] = std::get<double>(in.at(0));
+    }
     if (node.type == "output") {
       ev.contents = std::get<Field>(in.at(0));
       const Setting* cell = node.find_setting("cell_size");

@@ -22,12 +22,21 @@
 // enough for that not to matter, and M8's conforming tessellation puts its
 // vertices on the boundary.
 //
+// Large meshes (M12). Samples deep inside are certified in bulk: an octree
+// over the samples classifies each node's centre and measures its distance
+// to the boundary's faces, and a node whose samples all lie within that
+// distance of an inside centre needs nothing more. The rest (near the
+// boundary) are classified one by one, in fixed chunks that `parallel`
+// may run on several threads (each chunk with its own classifier); the
+// results are folded in chunk order, so they never depend on the threads.
+//
 // Codes (registry.hpp):
 //   validate.containment   error  the volume (act on its contents)
 //   validate.undecided     error  the kernel couldn't decide
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 
 #include "vs/core/box.hpp"
@@ -59,8 +68,13 @@ struct ContainmentResult {
 ContainmentResult check_containment(const kernel::Solid& boundary, const kernel::Solid& contents,
                                     const core::SubjectRef& volume,
                                     const core::ProductSettings& settings);
+// Runs task(0) .. task(n - 1), in any order, on any threads (vs_eval's
+// ThreadPool::run, say; vs_validate sits below it).
+using ParallelFor = std::function<void(std::size_t n, const std::function<void(std::size_t)>& task)>;
+
 ContainmentResult check_containment(const kernel::Solid& boundary, const MeshView& mesh,
                                     const core::SubjectRef& volume,
-                                    const core::ProductSettings& settings);
+                                    const core::ProductSettings& settings,
+                                    const ParallelFor& parallel = {});
 
 }  // namespace vs::validate

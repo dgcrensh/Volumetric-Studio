@@ -4,9 +4,12 @@
 #include <atomic>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <utility>
 
 #include <fmt/format.h>
+
+#include "vs/core/transform.hpp"
 
 namespace vs::proc {
 
@@ -29,7 +32,187 @@ double box_sdf(const dvec3& p, const dvec3& centre, const dvec3& half) {
   return length(outside) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0);
 }
 
+// Distance from p to the segment ab.
+double segment_distance(const dvec3& p, const dvec3& a, const dvec3& b) {
+  const dvec3 ab = b - a;
+  const dvec3 ap = p - a;
+  const double t = std::clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+  return length(ap - ab * t);
+}
+
+struct Strut {
+  dvec3 a, b;
+};
+
+std::vector<Strut> unit_struts(LatticeCell kind) {
+  std::vector<Strut> out;
+  const auto add = [&](dvec3 a, dvec3 b) { out.push_back({a, b}); };
+  switch (kind) {
+    case LatticeCell::Cubic:
+      for (int u = 0; u <= 1; ++u) {
+        for (int v = 0; v <= 1; ++v) {
+          const double du = static_cast<double>(u), dv = static_cast<double>(v);
+          add({0, du, dv}, {1, du, dv});
+          add({du, 0, dv}, {du, 1, dv});
+          add({du, dv, 0}, {du, dv, 1});
+        }
+      }
+      break;
+    case LatticeCell::Bcc:
+      add({0, 0, 0}, {1, 1, 1});
+      add({1, 0, 0}, {0, 1, 1});
+      add({0, 1, 0}, {1, 0, 1});
+      add({0, 0, 1}, {1, 1, 0});
+      break;
+    case LatticeCell::Octet: {
+      // Face diagonals: two on each face.
+      for (int axis = 0; axis < 3; ++axis) {
+        for (int side = 0; side <= 1; ++side) {
+          const auto pt = [&](double a, double b) {
+            dvec3 q{};
+            const double c = static_cast<double>(side);
+            if (axis == 0) q = {c, a, b};
+            if (axis == 1) q = {a, c, b};
+            if (axis == 2) q = {a, b, c};
+            return q;
+          };
+          add(pt(0, 0), pt(1, 1));
+          add(pt(1, 0), pt(0, 1));
+        }
+      }
+      // The octahedron: each face centre to the four centres beside it.
+      const dvec3 centres[6] = {{0, 0.5, 0.5}, {1, 0.5, 0.5}, {0.5, 0, 0.5},
+                                {0.5, 1, 0.5}, {0.5, 0.5, 0}, {0.5, 0.5, 1}};
+      for (int i = 0; i < 6; ++i) {
+        for (int j = i + 1; j < 6; ++j) {
+          if (i / 2 == j / 2) continue;  // opposite faces
+          add(centres[i], centres[j]);
+        }
+      }
+      break;
+    }
+  }
+  return out;
+}
+
+const std::vector<Strut>& struts(LatticeCell kind) {
+  static const std::vector<Strut> cubic = unit_struts(LatticeCell::Cubic);
+  static const std::vector<Strut> bcc = unit_struts(LatticeCell::Bcc);
+  static const std::vector<Strut> octet = unit_struts(LatticeCell::Octet);
+  switch (kind) {
+    case LatticeCell::Cubic: return cubic;
+    case LatticeCell::Bcc: return bcc;
+    case LatticeCell::Octet: return octet;
+  }
+  return cubic;
+}
+
+// The point's position in its cell, in cell units ([0, 1) on each axis).
+dvec3 in_cell(const dvec3& p, const dvec3& origin, double cell) {
+  const dvec3 u = (p - origin) * (1.0 / cell);
+  return {u.x - std::floor(u.x), u.y - std::floor(u.y), u.z - std::floor(u.z)};
+}
+
+double lattice_distance(LatticeCell kind, const dvec3& p, const dvec3& origin, double cell) {
+  const dvec3 q = in_cell(p, origin, cell);
+  double best = std::numeric_limits<double>::infinity();
+  for (const Strut& s : struts(kind)) best = std::min(best, segment_distance(q, s.a, s.b));
+  return best * cell;
+}
+
+// |f| / |grad f| for the surface at p, in mm.
+double tpms_distance(TpmsSurface kind, const dvec3& p, const dvec3& origin, double cell) {
+  const double w = 2.0 * std::numbers::pi / cell;
+  const dvec3 x = (p - origin) * w;
+  const double sx = sin_det(x.x), cx = cos_det(x.x);
+  const double sy = sin_det(x.y), cy = cos_det(x.y);
+  const double sz = sin_det(x.z), cz = cos_det(x.z);
+  double f = 0.0;
+  dvec3 g{};
+  switch (kind) {
+    case TpmsSurface::Gyroid:
+      f = sx * cy + sy * cz + sz * cx;
+      g = {cx * cy - sz * sx, cy * cz - sx * sy, cz * cx - sy * sz};
+      break;
+    case TpmsSurface::SchwarzP:
+      f = cx + cy + cz;
+      g = {-sx, -sy, -sz};
+      break;
+    case TpmsSurface::Diamond:
+      f = sx * sy * sz + sx * cy * cz + cx * sy * cz + cx * cy * sz;
+      g = {cx * sy * sz + cx * cy * cz - sx * sy * cz - sx * cy * sz,
+           sx * cy * sz - sx * sy * cz + cx * cy * cz - cx * sy * sz,
+           sx * sy * cz - sx * cy * sz - cx * sy * sz + cx * cy * cz};
+      break;
+  }
+  // Away from the surface the gradient can vanish (at the surface's
+  // critical points); a floor keeps the estimate finite there.
+  const double grad = std::max(length(g), 0.1);
+  return std::abs(f) / (w * grad);
+}
+
 }  // namespace
+
+// --- deterministic trigonometry ------------------------------------------------------
+
+namespace {
+
+// pi/2 in three parts (fdlibm): k * part1 is exact for |k| < 2^20.
+constexpr double kPio2Part1 = 1.57079632673412561417e+00;
+constexpr double kPio2Part2 = 6.07710050630396597660e-11;
+constexpr double kPio2Part3 = 2.02226624871116645580e-21;
+constexpr double kTwoOverPi = 6.36619772367581382433e-01;
+
+double kernel_sin(double x) {
+  constexpr double S1 = -1.66666666666666324348e-01, S2 = 8.33333333332248946124e-03,
+                   S3 = -1.98412698298579493134e-04, S4 = 2.75573137070700676789e-06,
+                   S5 = -2.50507602534068634195e-08, S6 = 1.58969099521155010221e-10;
+  const double z = x * x;
+  return x + x * z * (S1 + z * (S2 + z * (S3 + z * (S4 + z * (S5 + z * S6)))));
+}
+
+double kernel_cos(double x) {
+  constexpr double C1 = 4.16666666666666019037e-02, C2 = -1.38888888888741095749e-03,
+                   C3 = 2.48015872894767294178e-05, C4 = -2.75573143513906633035e-07,
+                   C5 = 2.08757232129817482790e-09, C6 = -1.13596475577881948265e-11;
+  const double z = x * x;
+  return 1.0 - 0.5 * z + z * z * (C1 + z * (C2 + z * (C3 + z * (C4 + z * (C5 + z * C6)))));
+}
+
+// x = k pi/2 + r, |r| <= pi/4; returns r and k mod 4.
+double reduce(double x, int& quadrant) {
+  const double k = std::floor(x * kTwoOverPi + 0.5);
+  const double r = ((x - k * kPio2Part1) - k * kPio2Part2) - k * kPio2Part3;
+  const double m = k - 4.0 * std::floor(k * 0.25);
+  quadrant = static_cast<int>(m);
+  return r;
+}
+
+}  // namespace
+
+double sin_det(double x) {
+  if (!std::isfinite(x)) return std::numeric_limits<double>::quiet_NaN();
+  int q = 0;
+  const double r = reduce(x, q);
+  switch (q) {
+    case 0: return kernel_sin(r);
+    case 1: return kernel_cos(r);
+    case 2: return -kernel_sin(r);
+    default: return -kernel_cos(r);
+  }
+}
+
+double cos_det(double x) {
+  if (!std::isfinite(x)) return std::numeric_limits<double>::quiet_NaN();
+  int q = 0;
+  const double r = reduce(x, q);
+  switch (q) {
+    case 0: return kernel_cos(r);
+    case 1: return -kernel_sin(r);
+    case 2: return -kernel_cos(r);
+    default: return kernel_sin(r);
+  }
+}
 
 FieldExpr::FieldExpr(FieldOp op, std::vector<double> numbers, std::vector<Field> children,
                      std::shared_ptr<const TriangleDistance> mesh)
@@ -110,6 +293,34 @@ double FieldExpr::eval(const dvec3& p) const {
       return children_[0]->eval(p) * children_[1]->eval(p);
     case FieldOp::Scale:
       return children_[0]->eval(p) * n[0];
+    case FieldOp::Clamp:
+      return std::clamp(children_[0]->eval(p), n[0], n[1]);
+    case FieldOp::Lattice:
+    case FieldOp::Tpms: {
+      const dvec3 origin = vec_at(n, 2);
+      const double thickness =
+          children_.empty() ? n[5] : std::max(children_[0]->eval(p), 0.0);
+      const double d = op_ == FieldOp::Lattice
+                           ? lattice_distance(static_cast<LatticeCell>(static_cast<int>(n[0])), p, origin, n[1])
+                           : tpms_distance(static_cast<TpmsSurface>(static_cast<int>(n[0])), p, origin, n[1]);
+      return d - 0.5 * thickness;
+    }
+    case FieldOp::Instances: {
+      // numbers: radius, then per copy the inverse's 3x3 (row major), the
+      // frame's origin and the copy's reach (radius times its largest scale).
+      double best = std::numeric_limits<double>::infinity();
+      const std::size_t copies = (n.size() - 1) / 13;
+      for (std::size_t c = 0; c < copies; ++c) {
+        const double* m = n.data() + 1 + 13 * c;
+        const dvec3 d{p.x - m[9], p.y - m[10], p.z - m[11]};
+        if (m[12] > 0.0 && length(d) - m[12] >= best) continue;
+        const dvec3 local{m[0] * d.x + m[1] * d.y + m[2] * d.z,
+                          m[3] * d.x + m[4] * d.y + m[5] * d.z,
+                          m[6] * d.x + m[7] * d.y + m[8] * d.z};
+        best = std::min(best, children_[0]->eval(local));
+      }
+      return best;
+    }
   }
   return std::numeric_limits<double>::quiet_NaN();
 }
@@ -176,6 +387,45 @@ Field multiply_field(Field a, Field b) {
   return make(FieldOp::Multiply, {}, {std::move(a), std::move(b)});
 }
 Field scale_field(Field a, double factor) { return make(FieldOp::Scale, {factor}, {std::move(a)}); }
+Field clamp_field(Field a, double lo, double hi) {
+  return make(FieldOp::Clamp, {lo, hi}, {std::move(a)});
+}
+
+Field lattice_field(LatticeCell kind, double cell, const dvec3& o, double thickness, Field grade) {
+  std::vector<Field> children;
+  if (grade) children.push_back(std::move(grade));
+  return make(FieldOp::Lattice,
+              {static_cast<double>(kind), cell, o.x, o.y, o.z, grade ? 0.0 : thickness},
+              std::move(children));
+}
+
+Field tpms_field(TpmsSurface kind, double cell, const dvec3& o, double thickness, Field grade) {
+  std::vector<Field> children;
+  if (grade) children.push_back(std::move(grade));
+  return make(FieldOp::Tpms,
+              {static_cast<double>(kind), cell, o.x, o.y, o.z, grade ? 0.0 : thickness},
+              std::move(children));
+}
+
+Field instances_field(Field templ, const FrameSet& frames, double radius) {
+  std::vector<double> n{radius};
+  n.reserve(1 + 13 * frames.frames.size());
+  for (const auto& f : frames.frames) {
+    const core::dtransform t = core::to_fp64(f);
+    const auto inv = core::inverse(t);
+    if (!inv) continue;  // a degenerate frame places nothing
+    for (std::size_t r = 0; r < 3; ++r) {
+      for (std::size_t c = 0; c < 3; ++c) n.push_back(inv->linear(r, c));
+    }
+    n.push_back(t.translation.x);
+    n.push_back(t.translation.y);
+    n.push_back(t.translation.z);
+    double scale = 0.0;
+    for (const auto& col : t.linear.cols) scale = std::max(scale, length(col));
+    n.push_back(radius * scale);
+  }
+  return make(FieldOp::Instances, std::move(n), {std::move(templ)});
+}
 
 // --- sampling ------------------------------------------------------------------------
 

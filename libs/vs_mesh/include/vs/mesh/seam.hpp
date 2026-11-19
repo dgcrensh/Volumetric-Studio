@@ -178,6 +178,14 @@ std::vector<std::uint32_t> add_seam_vertices(Mesh& mesh, const Seam& seam);
 void add_seam_face(Mesh& mesh, const Seam& seam, const std::vector<std::uint32_t>& vertex_map,
                    const dvec3& outward, const core::Id& volume);
 
+// For mesh files made against the seams (a baked procedural volume, M12):
+// files keep positions but not seam ids, so every vertex of `mesh` without
+// a seam id whose position is bit for bit some seam vertex's position32
+// takes that vertex's id (the first seam's, in order, when several share a
+// position). Exact equality only, never a distance: a mesh that wasn't
+// made against the seams gains nothing. Returns how many vertices it named.
+std::size_t attach_seam_vertices(Mesh& mesh, std::span<const Seam* const> seams);
+
 void hash_append(core::Hasher& h, const OutlineSegment& s);
 
 }  // namespace vs::mesh

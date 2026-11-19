@@ -162,7 +162,7 @@ Bracket make_bracket() {
   upright_volume.name = "Upright";
   upright_volume.boundary = FeatureBoundary{{b.upright_block}};
   const std::string blob = b.project.add_blob(step_box(0, 0, 10, 60, 10, 50), "step");
-  upright_volume.contents = StaticContents{blob, "step"};
+  upright_volume.contents = StaticContents{blob, "step", {}};
   b.upright_load = Id::random();
   upright_volume.parameters.push_back({b.upright_load, "load", vs::feature::Param::of(0)});
   b.upright_envelope = Id::random();

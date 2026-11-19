@@ -74,6 +74,7 @@ ojson volume_json(const Volume& v) {
   if (const auto* s = std::get_if<StaticContents>(&v.contents)) {
     if (!s->blob.empty()) c["blob"] = s->blob;
     if (!s->format.empty()) c["format"] = s->format;
+    if (!s->baked_graph.empty()) c["baked_graph"] = s->baked_graph;
   } else if (const auto* p = std::get_if<ParametricContents>(&v.contents)) {
     c["tree"] = tree_json(p->tree);
   } else {
@@ -286,7 +287,8 @@ feature::FeatureTree read_tree(const json& j, std::string_view where) {
 OutputQuantity read_quantity(const json& j, std::string_view where) {
   const auto s = read_string(j, where);
   for (auto q : {OutputQuantity::Volume, OutputQuantity::Mass, OutputQuantity::SurfaceArea,
-                 OutputQuantity::CentreOfGravity, OutputQuantity::Envelope}) {
+                 OutputQuantity::CentreOfGravity, OutputQuantity::Envelope,
+                 OutputQuantity::Published}) {
     if (to_string(q) == s) return q;
   }
   fail(where, fmt::format("unknown quantity \"{}\"", s));
@@ -314,7 +316,8 @@ Volume read_volume(const json& j, const std::string& where) {
   const auto kind = read_string(member(c, "kind", at), at + ".kind");
   if (kind == "static") {
     v.contents = StaticContents{read_optional_string(c, "blob", at),
-                                read_optional_string(c, "format", at)};
+                                read_optional_string(c, "format", at),
+                                read_optional_string(c, "baked_graph", at)};
   } else if (kind == "parametric") {
     v.contents = ParametricContents{read_tree(member(c, "tree", at), at + ".tree")};
   } else if (kind == "procedural") {

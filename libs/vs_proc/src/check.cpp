@@ -68,6 +68,11 @@ void check_settings(const Graph& graph, const Node& node, const NodeType& type, 
         ok = s != nullptr && Id::parse(*s).has_value();
         break;
       }
+      case PropertyKind::Name: {
+        const auto* s = std::get_if<std::string>(&value);
+        ok = s != nullptr && feature::is_valid_name(*s);
+        break;
+      }
       case PropertyKind::Parameter: {
         const auto* s = std::get_if<std::string>(&value);
         ok = s != nullptr;
@@ -212,6 +217,25 @@ Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry) {
     check_settings(graph, node, *type, out);
   }
 
+  // Published names: each once.
+  {
+    std::map<std::string, const Node*, std::less<>> published;
+    for (const auto& node : graph.nodes) {
+      if (node.type != "output.publish") continue;
+      const Setting* s = node.find_setting("name");
+      const auto* name = s != nullptr ? std::get_if<std::string>(s) : nullptr;
+      if (name == nullptr) continue;  // reported as a setting
+      const auto [it, fresh] = published.emplace(*name, &node);
+      if (!fresh) {
+        out.add(Diagnostic::error(
+            "proc.graph.publish",
+            fmt::format("'{}' publishes '{}', which '{}' already publishes",
+                        node_subject(node).label, *name, node_subject(*it->second).label),
+            {node_subject(node), node_subject(*it->second)}));
+      }
+    }
+  }
+
   // Edges.
   std::set<std::pair<Id, std::string>> taken;
   for (const auto& e : graph.edges) {
@@ -268,7 +292,7 @@ Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry) {
     const NodeType* type = registry.find(node.type);
     if (type == nullptr) continue;
     for (const auto& port : type->inputs) {
-      if (taken.contains({node.id, port.name})) continue;
+      if (taken.contains({node.id, port.name}) || port.optional) continue;
       const bool literal = (port.type == PortType::Scalar || port.type == PortType::Vector) &&
                            (port.default_value || node.find_setting(port.name) != nullptr);
       if (!literal) {

@@ -10,6 +10,7 @@
 #include "vs/mesh/topology.hpp"
 #include "vs/proc/field.hpp"
 #include "vs/proc/mesher.hpp"
+#include "node_helpers.hpp"
 
 namespace vs::proc {
 
@@ -83,6 +84,25 @@ const Field& NodeContext::field(std::string_view port) const {
   return std::get<Field>(input(port));
 }
 const List& NodeContext::list(std::string_view port) const { return std::get<List>(input(port)); }
+const MeshValue& NodeContext::mesh(std::string_view port) const {
+  return std::get<MeshValue>(input(port));
+}
+const Frames& NodeContext::frames(std::string_view port) const {
+  return std::get<Frames>(input(port));
+}
+bool NodeContext::has(std::string_view port) const {
+  return std::visit(
+      [](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, double> || std::is_same_v<T, dvec3> ||
+                      std::is_same_v<T, List>) {
+          return true;
+        } else {
+          return v != nullptr;
+        }
+      },
+      input(port));
+}
 
 namespace {
 
@@ -150,58 +170,7 @@ double uniform(std::uint64_t seed, std::uint64_t index) {
 
 namespace {
 
-using P = PortType;
-
-PortSpec in(std::string name, PortType type, std::optional<Setting> def = std::nullopt,
-            std::string doc = {}) {
-  return {std::move(name), type, std::move(def), std::move(doc)};
-}
-PortSpec out(std::string name, PortType type, std::string doc = {}) {
-  return {std::move(name), type, std::nullopt, std::move(doc)};
-}
-Setting num(double v) { return v; }
-Setting vec(double x, double y, double z) { return dvec3{x, y, z}; }
-
-// A length that must be at least the minimum feature size.
-bool check_size(NodeContext& ctx, std::string_view port, double v) {
-  const double min = ctx.settings().min_feature_size_mm();
-  if (!std::isfinite(v) || v < min) {
-    ctx.infeasible({std::string(port)},
-                   fmt::format("{} is {} mm; it must be at least {} mm", port, v, min));
-    return false;
-  }
-  return true;
-}
-
-bool check_direction(NodeContext& ctx, std::string_view port, const dvec3& v) {
-  if (!(length(v) > 0.0) || !std::isfinite(length(v))) {
-    ctx.infeasible({std::string(port)}, fmt::format("{} must be a non-zero direction", port));
-    return false;
-  }
-  return true;
-}
-
-NodeType make(std::string type, std::string category, std::string doc, std::vector<PortSpec> inputs,
-              std::vector<PortSpec> outputs, std::function<void(NodeContext&)> evaluate,
-              std::vector<PropertySpec> properties = {}, bool cached = true) {
-  NodeType t;
-  t.type = std::move(type);
-  t.category = std::move(category);
-  t.doc = std::move(doc);
-  t.inputs = std::move(inputs);
-  t.outputs = std::move(outputs);
-  t.properties = std::move(properties);
-  t.cached = cached;
-  t.evaluate = std::move(evaluate);
-  return t;
-}
-
-const ConnectionInput* surface_of(NodeContext& ctx) {
-  const auto id = Id::parse(ctx.text("surface"));
-  const ConnectionInput* c = id ? ctx.inputs().find_connection(*id) : nullptr;
-  if (c == nullptr) ctx.fail("its connection surface doesn't join this volume");
-  return c;
-}
+using namespace detail;
 
 void add_inputs(NodeRegistry& r) {
   r.add(make(
@@ -640,6 +609,9 @@ NodeRegistry make_library() {
   add_vector(r);
   add_lists(r);
   add_conversions(r);
+  add_infill_nodes(r);
+  add_frame_nodes(r);
+  add_mesh_nodes(r);
   add_output(r);
   return r;
 }

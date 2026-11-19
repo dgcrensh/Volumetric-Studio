@@ -30,6 +30,7 @@
 //   proc.graph.parameter        a parameter node names no graph parameter, or a
 //                               graph parameter's name is illegal or repeated
 //                               (the first node or none)
+//   proc.graph.publish          two output.publish nodes publish the same name
 //   proc.graph.loop             the edges form a loop: every node on it, in order
 //   proc.graph.output           no output node, or more than one
 //   proc.reference.surface      (check_volume_graph) a node reads a connection
