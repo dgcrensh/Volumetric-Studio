@@ -1,8 +1,8 @@
-# Volumetric CAD Studio — Implementation Plan
+# Volumetric CAD Studio â€” Implementation Plan
 
-Nov 18, 2026 · companion to *Volumetric CAD Studio — Product Spec.md*
+Nov 18, 2026 Â· companion to *Volumetric CAD Studio â€” Product Spec.md*
 
-This plan turns the MVP in the spec into 18 milestones (M0 to M17). Each one is sized for a single Opus 5.5 session: one focused subsystem, roughly 2–5k lines of code and tests, ending in a pull request that builds and passes its tests. After the MVP comes a short list of later milestones, kept deliberately rough.
+This plan turns the MVP in the spec into 18 milestones (M0 to M17). Each one is sized for a single Opus 5.5 session: one focused subsystem, roughly 2â€“5k lines of code and tests, ending in a pull request that builds and passes its tests. After the MVP comes a short list of later milestones, kept deliberately rough.
 
 ## Decisions this plan rests on
 
@@ -17,7 +17,7 @@ This plan turns the MVP in the spec into 18 milestones (M0 to M17). Each one is 
 | Procedural evaluation | CPU only for the MVP, multithreaded and deterministic. GPU evaluation is a later milestone |
 | Where work runs | Dallas's Windows desktop for now. Everything except the app (`vs_app`) must also build and test headless on Linux, so cloud sessions stay possible |
 | Repository | A new GitHub repo (set up by Dallas before M0). One branch and one PR per milestone |
-| Working space and tolerance | ±1,000 mm box, 1e-6 mm linear tolerance, held as product settings. M1 tests whether OCCT copes |
+| Working space and tolerance | Â±1,000 mm box, 1e-6 mm linear tolerance, held as product settings. M1 tests whether OCCT copes |
 | Connection surfaces (MVP) | Planar only, with seams derived automatically from the surface outline. Types: bonded, clearance, bolted flange |
 | Field-to-mesh | One algorithm: surface nets on a regular grid, constrained to seams (M11). Dual contouring can replace it later behind the same node |
 | Scripting / user-defined nodes | Not in the MVP (already decided in the spec) |
@@ -31,7 +31,7 @@ Writing a robust 2D geometric constraint solver is a project in its own right, s
 | --- | --- | --- | --- |
 | **PlaneGCS** (FreeCAD) | The C++ solver behind FreeCAD's Sketcher, built on Eigen. LGPL | Mature, purpose-built for CAD sketches. Lines, arcs, circles, ellipses, B-splines. Reports degrees of freedom, conflicting and redundant constraints (needed for the spec's "one place to act" diagnostics). Supports dragging, for interactive editing | Not packaged as a library. It has to be vendored from FreeCAD's source (`src/Mod/Sketcher/App/planegcs`) with a thin CMake wrapper. Light documentation |
 | **SolveSpace `libslvs`** | SolveSpace's solver exposed as a small C library. GPL v3 | Clean C API, easy to build. Can also solve 3D constraints | Fewer sketch-oriented features (B-splines, fine-grained redundancy reports). The API is lower level, so we'd write more glue |
-| Write our own | Newton / Levenberg–Marquardt over our own constraint set | Full control | Months of edge cases (convergence, redundancy, dragging). Poor use of time |
+| Write our own | Newton / Levenbergâ€“Marquardt over our own constraint set | Full control | Months of edge cases (convergence, redundancy, dragging). Poor use of time |
 | Commercial (Siemens D-Cubed 2D DCM) | Industry standard | Best in class | Commercial licence only, same problem as Parasolid |
 
 **Decision: PlaneGCS** (confirmed by Dallas, Nov 18, 2026). It already does what the authoring layer needs, especially DOF and conflict reporting. M2 wraps it behind our own `SketchSolver` interface, so swapping to `libslvs` later is contained to one module.
@@ -50,8 +50,8 @@ Libraries, from the bottom up. A library may depend only on those above it in th
 | `vs_validate` | Layout checks (overlap, undeclared contact, type mismatch, loops), containment, diagnostics routing | M6 |
 | `vs_mesh` | Mesh types, seam library, conforming tessellation, welding, mesh I/O (STL, 3MF, OBJ) | M7, M8 |
 | `vs_eval` | Scheduler, cache, thread pool, cancellation, volume states | M9 |
-| `vs_proc` | Node graph, type system, node library, fields, field-to-mesh, baking | M10–M12 |
-| `vs_app` | Qt application: viewport, trees, inspector, sketcher, node editor | M13–M16 |
+| `vs_proc` | Node graph, type system, node library, fields, field-to-mesh, baking | M10â€“M12 |
+| `vs_app` | Qt application: viewport, trees, inspector, sketcher, node editor | M13â€“M16 |
 | `vstudio-cli` | Command-line driver over the libraries, used for tests and scripting during development | M0 onward |
 
 Two rules from the spec are enforced by structure, not discipline:
@@ -94,19 +94,19 @@ Each session should:
 | M17 | Ship workflow and MVP acceptance | M16 | Import/export UI, STEP export, end-to-end MVP test |
 
 ```
-M0 ─┬─ M1 ─┐
-    └─ M2 ─┴─ M3 ─┬─ M4 ──────────────────────────┐
-                  └─ M5 ─┬─ M6 ─┐                  │
-                         └─ M7 ─┴─ M8 ─ M9 ─┬─ M10 ─ M11 ─ M12 ─┐
-                                            └─ M13 ─ M14 ───────┼─ M16 ─ M17
-                                                     └─ M15 ────┘
+M0 â”€â”¬â”€ M1 â”€â”
+    â””â”€ M2 â”€â”´â”€ M3 â”€â”¬â”€ M4 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                  â””â”€ M5 â”€â”¬â”€ M6 â”€â”                  â”‚
+                         â””â”€ M7 â”€â”´â”€ M8 â”€ M9 â”€â”¬â”€ M10 â”€ M11 â”€ M12 â”€â”
+                                            â””â”€ M13 â”€ M14 â”€â”€â”€â”€â”€â”€â”€â”¼â”€ M16 â”€ M17
+                                                     â””â”€ M15 â”€â”€â”€â”€â”˜
 ```
 
-Milestones on separate branches of this graph can run in parallel sessions: M1 and M2; M4 alongside M5–M8; M13 alongside M10–M12.
+Milestones on separate branches of this graph can run in parallel sessions: M1 and M2; M4 alongside M5â€“M8; M13 alongside M10â€“M12.
 
 ---
 
-## M0 — Foundations and build
+## M0 â€” Foundations and build
 
 **Goal.** A repo any later session can build, test and extend on Windows and Linux without setup surprises.
 
@@ -125,7 +125,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 
 **Out of scope.** Any geometry beyond math types. CI on GitHub Actions (optional; add if cheap).
 
-## M1 — Kernel interface over OCCT
+## M1 â€” Kernel interface over OCCT
 
 **Goal.** A small kernel API the rest of the studio uses for B-rep work, and an answer to the spec's first open question.
 
@@ -133,7 +133,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - `vs_kernel` public API in our own types: `Solid`, `Face`, `Edge`, `Shell` handles; primitives (box, cylinder, sphere, prism from a planar profile, revolve from a profile); booleans (union, cut, common); transforms; mass properties (volume, centre of gravity); bounding boxes; minimum distance between shapes; point-in-solid classification; validity check (`BRepCheck`) and a per-entity tolerance audit against the global tolerance.
 - Error handling: every kernel call returns a result or a `Diagnostic`, never throws OCCT exceptions upward. Fallback messages for boolean and fillet failures.
 - STEP AP242 and IGES import/export through OCCT, exposed as functions that produce or consume kernel solids.
-- **Tolerance spike.** A test suite that builds and booleans parts near the edges of the ±1,000 mm box at 1e-6 mm, measures how OCCT's per-entity tolerances grow, and records the finding in `docs/decisions/0001-working-space-and-tolerance.md`, with a recommendation if the proposed values don't hold.
+- **Tolerance spike.** A test suite that builds and booleans parts near the edges of the Â±1,000 mm box at 1e-6 mm, measures how OCCT's per-entity tolerances grow, and records the finding in `docs/decisions/0001-working-space-and-tolerance.md`, with a recommendation if the proposed values don't hold.
 - `vstudio-cli kernel-demo` builds a sample part and writes STEP.
 
 **Acceptance**
@@ -142,7 +142,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - STEP round trip of a sample part preserves volume to 1e-6 relative.
 - The tolerance decision record exists and states whether the open question is settled.
 
-## M2 — Sketches and constraint solving
+## M2 â€” Sketches and constraint solving
 
 **Goal.** Constrained 2D sketches that solve reliably and explain themselves when they don't.
 
@@ -160,7 +160,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Profiles become valid faces with holes in the right places.
 - No PlaneGCS header appears in `vs_sketch`'s public headers.
 
-## M3 — Feature tree, core features and variables
+## M3 â€” Feature tree, core features and variables
 
 **Goal.** History-based parametric modelling, enough to build simple boundaries.
 
@@ -178,7 +178,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - An equation loop is rejected when authored, with the loop given as a path.
 - Deleting a referenced sketch entity yields a broken-reference diagnostic on the right feature, and features before it still rebuild.
 
-## M4 — Remaining features
+## M4 â€” Remaining features
 
 **Goal.** The rest of the MVP feature set.
 
@@ -191,7 +191,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Each feature has tests on representative parts, including failure cases that produce a named diagnostic rather than a crash or invalid solid.
 - Patterned features rebuild when the pattern count variable changes.
 
-## M5 — Volume model, connection surfaces and project files
+## M5 â€” Volume model, connection surfaces and project files
 
 **Goal.** The volume contract in code: the data model every later milestone builds on.
 
@@ -211,7 +211,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Tests prove that every attempt to reference a volume's contents from outside is rejected with a diagnostic.
 - A published output feeding something upstream of its volume is rejected with the loop path.
 
-## M6 — Layout validation and diagnostics
+## M6 â€” Layout validation and diagnostics
 
 **Goal.** Catch layout errors at the parent before anything generates, and route every diagnostic to one actionable place.
 
@@ -228,7 +228,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Fixture projects for each check (overlap, contact, mismatch, loop, containment) produce exactly the expected diagnostics.
 - Validation of a 50-volume layout completes in well under a second.
 
-## M7 — Seam library and welding
+## M7 â€” Seam library and welding
 
 **Goal.** The shared seam library the spec calls out as the top risk, built and heavily tested before any mesher depends on it.
 
@@ -243,7 +243,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Weld succeeds structurally on every generated test case, and the result passes watertight and manifold checks.
 - A deliberately non-conforming mesh fails welding with a diagnostic naming the connection surface.
 
-## M8 — Conforming B-rep tessellation and mesh export
+## M8 â€” Conforming B-rep tessellation and mesh export
 
 **Goal.** Watertight combined meshes from static and parametric volumes, which answers the spec's open question about the tessellator.
 
@@ -259,7 +259,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Tessellation tests on curved faces adjacent to seams pass the weld.
 - Import of a sample STL gives a static volume with correct triangle count and bounds.
 
-## M9 — Evaluation engine
+## M9 â€” Evaluation engine
 
 **Goal.** One scheduler for every kind of volume, with caching, parallelism, failure isolation and determinism checks.
 
@@ -280,7 +280,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - A volume forced to fail leaves siblings current and its own contents marked stale.
 - A cancelled job leaves the model in a consistent state.
 
-## M10 — Procedural graph core and fields
+## M10 â€” Procedural graph core and fields
 
 **Goal.** The node graph runtime, its type system, and field evaluation, with no meshing yet.
 
@@ -298,14 +298,14 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Type errors and graph loops are rejected at authoring time.
 - Graph evaluation is identical across thread counts and runs.
 
-## M11 — Field-to-mesh against seams
+## M11 â€” Field-to-mesh against seams
 
 **Goal.** Turn fields into meshes that respect the boundary and weld at every seam: the second half of the seam-conformity risk.
 
 **Scope**
 - Surface-nets mesher on the sampled grid, FP32 output, deterministic vertex ordering.
 - Boundary handling: intersect the field with the boundary SDF so output stays inside within tolerance; on faces lying on connection surfaces, replace the grid-derived surface with the shared seam triangulation from M7 and stitch the field mesh to the seam polyline.
-- Mesh-to-field conversion node (distance evaluation with a BVH), and the explicit `Field → Mesh` node with a resolution parameter whose cost is visible.
+- Mesh-to-field conversion node (distance evaluation with a BVH), and the explicit `Field â†’ Mesh` node with a resolution parameter whose cost is visible.
 - Containment check on generated meshes via M6.
 
 **Acceptance**
@@ -313,7 +313,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Containment holds for random fields clipped to random boundaries.
 - Mesh output hashes are identical across runs and thread counts.
 
-## M12 — Procedural node library and baking
+## M12 â€” Procedural node library and baking
 
 **Goal.** The MVP node families that make procedural infill useful for 3D printing.
 
@@ -333,7 +333,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Bake then unbake round-trips the volume's content hash.
 - A large gyroid infill (100 mm cube at 0.5 mm resolution) completes in a time recorded in the PR as the CPU baseline for the GPU milestone.
 
-## M13 — App shell and viewport
+## M13 â€” App shell and viewport
 
 **Goal.** A Qt application that opens, shows, validates and exports projects built by the CLI, which proves the GUI foundation before any editing.
 
@@ -346,10 +346,10 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - File open, save, recent files; export to STL and 3MF from menus.
 
 **Acceptance**
-- The sample projects from M5–M12 open, display correctly and export from the app.
+- The sample projects from M5â€“M12 open, display correctly and export from the app.
 - The UI stays responsive (no frame over 100 ms) while a long procedural volume regenerates.
 
-## M14 — Sketcher and feature editing UI
+## M14 â€” Sketcher and feature editing UI
 
 **Goal.** Author layouts and parametric volumes by hand: the "block out" and "fill by modelling" workflows.
 
@@ -364,7 +364,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - The bracket project can be rebuilt from scratch entirely in the app.
 - Undo/redo restores identical document hashes.
 
-## M15 — Node editor UI
+## M15 â€” Node editor UI
 
 **Goal.** Build and inspect procedural graphs: the "fill by procedure" workflow.
 
@@ -378,21 +378,21 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - The M12 templates can be built from scratch in the editor and produce the same hashes as their saved versions.
 - Previewing any node in a 50-node graph shows within a second when its result is cached.
 
-## M16 — Interactive regeneration and guidance
+## M16 â€” Interactive regeneration and guidance
 
 **Goal.** The "iterate" and "swap" workflows: editing feels live, and CAD habits get redirected rather than blocked.
 
 **Scope**
 - Dimension dragging in the viewport and sketcher with M2 drag solving; affected volumes show boundary-only or low-detail previews during the drag, and full generation starts when the drag ends.
 - Stale results drawn greyed out until replacements arrive; a progress indicator and cancel for long generations.
-- Swap content kind (placeholder → procedural → baked) from the volume's context menu, with nothing outside the volume touched (verified by hash in tests).
+- Swap content kind (placeholder â†’ procedural â†’ baked) from the volume's context menu, with nothing outside the volume touched (verified by hash in tests).
 - Habit guidance: selecting a generated face and choosing fillet, cut or mate shows an inline explanation with the right action (edit procedure parameters, add a keep-out, or use the connection surface).
 
 **Acceptance**
 - Dragging a layout dimension on the bracket project keeps the viewport above 30 fps with previews.
 - Swapping a volume's contents leaves every other volume's cache key unchanged.
 
-## M17 — Ship workflow and MVP acceptance
+## M17 â€” Ship workflow and MVP acceptance
 
 **Goal.** Close out the MVP: import and export from the app, STEP output, and an end-to-end test of the spec's five workflows.
 
@@ -401,7 +401,7 @@ Milestones on separate branches of this graph can run in parallel sessions: M1 a
 - Import STEP/STL into a volume from the app, with containment diagnostics.
 - A "Validate" command that runs every check and shows a summary before export.
 - Native project caches: optional saving, rebuild on load when missing or stale.
-- An end-to-end scripted test that walks block out → fill → iterate → swap → ship through the document API, and a written manual test script for the same workflows in the GUI.
+- An end-to-end scripted test that walks block out â†’ fill â†’ iterate â†’ swap â†’ ship through the document API, and a written manual test script for the same workflows in the GUI.
 - Fix the gaps the end-to-end run uncovers, and update this plan's status table and the spec's open questions.
 
 **Acceptance**
@@ -432,7 +432,7 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 
 | Open question | Answered in |
 | --- | --- |
-| Does OCCT's tolerance model fit ±1,000 mm at 1e-6 mm? | M1 tolerance spike |
+| Does OCCT's tolerance model fit Â±1,000 mm at 1e-6 mm? | M1 tolerance spike |
 | Final working-space size and tolerance | M1 decision record |
 | Connection surface types and parameters for the MVP | Bonded, clearance (gap), bolted flange (hole pattern, thread, minimum wall): M5, decision 0005 |
 | Authored or derived seams on curved connection surfaces | Deferred: MVP is planar with derived seams; revisit in L2 |
@@ -457,5 +457,5 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | M10 | Done | #13 | The engine takes content generators, so `vs_proc` plugs in from above; fields are lazy expression trees sampled to FP32 on the boundary's box; the boundary SDF is its tessellation with pseudonormal signs; authoring rejects type errors and loops but allows unfinished graphs; per-node cache by input hash (decision 0010) |
 | M11 | Done | #15 | Surface nets on the grid's tetrahedra, merged per cube where the link condition allows (always manifold, about two triangles a cell); the field is clipped 0.01 mm inside the boundary's tessellation and vertices move inward until every vertex and centroid is contained; seams replace the patch's grid triangles and are stitched to the rim by an arc-length strip, or a warning says the contents don't cover the patch; the engine checks and welds generated meshes (decision 0011) |
 | M12 | Done | #16 | Lattice and TPMS fields with deterministic sine and cosine, gradable; scatter and pattern frames; parametric templates are field templates (jobs can't use the kernel) and meshes are graph tools that reach contents through mesh-to-field; Manifold booleans in a canonical order; measured and graph-published outputs; node inspection; bake keeps the graph and the seam vertices; 100 mm gyroid at 0.5 mm: 23.9 s on 4 threads, 31.7 s on 1 (decision 0012) |
-| M13 | Done | (PR pending) | Everything drawn as meshes (B-reps tessellated by vs_kernel) with OCCT's visualisation toolkits only; one worker thread delivers a preview then the full evaluation; engine pool leaves two cores to the UI; big meshes uploaded a part per frame; 862k-triangle regeneration keeps UI gaps under 40 ms (decision 0013) |
-| M14–M17 | Not started | | |
+| M13 | Done | #17 | Everything drawn as meshes (B-reps tessellated by vs_kernel) with OCCT's visualisation toolkits only; one worker thread delivers a preview then the full evaluation; engine pool leaves two cores to the UI; big meshes uploaded a part per frame; 862k-triangle regeneration keeps UI gaps under 40 ms (decision 0013) |
+| M14â€“M17 | Not started | | |
