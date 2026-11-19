@@ -6,9 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to a pull request cancels its older run. Runs on main are never
+# cancelled: a merge mid-build would otherwise throw away an hour of Open
+# CASCADE build, and the vcpkg cache would never get it.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -79,10 +82,18 @@ jobs:
       # cache as assets of the "vcpkg-cache-x64-linux" prerelease too, so cloud
       # dev sessions can fetch it with scripts/vcpkg-cache.sh fetch. Only from
       # main and manual runs, never from pull requests.
+      # TEMPORARY (remove before merging): the linux-clang-debug clause lets
+      # this PR publish the cache its own run built (vcpkg builds ports with
+      # the system GCC for both Linux presets, so the archives are the same),
+      # since PR-scoped actions/cache entries can't be read from main or a
+      # manual run.
       - name: Publish vcpkg binary cache for machines outside Actions
         if: >-
-          always() && matrix.preset == 'linux-gcc-release' &&
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+          always() && (
+            (matrix.preset == 'linux-gcc-release' &&
+             (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) ||
+            (matrix.preset == 'linux-clang-debug' &&
+             github.head_ref == 'claude/project-thread-lbf010'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
