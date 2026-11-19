@@ -15,11 +15,14 @@ using vs::core::ProductSettings;
 namespace {
 
 const SpikeCase& case_named(const std::vector<SpikeCase>& cases, const std::string& name) {
+  // No return after a FAIL: MSVC's debug build flags it as unreachable.
+  const SpikeCase* found = nullptr;
   for (const auto& c : cases) {
-    if (c.name == name) return c;
+    if (c.name == name) found = &c;
   }
-  FAIL("no spike case named " << name);
-  return cases.front();
+  INFO("no spike case named " << name);
+  REQUIRE(found != nullptr);
+  return *found;
 }
 
 }  // namespace

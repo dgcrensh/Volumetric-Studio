@@ -9,7 +9,7 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 # The OCCT toolkits vs_kernel uses, bottom up.
 set(VS_KERNEL_OCCT_TOOLKITS
   TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKPrim
-  TKShHealing TKBO TKBool TKFillet TKXSBase TKDE TKDESTEP TKDEIGES)
+  TKShHealing TKBO TKBool TKFillet TKOffset TKFeat TKXSBase TKDE TKDESTEP TKDEIGES)
 
 vs_add_library(vs_kernel
   SOURCES

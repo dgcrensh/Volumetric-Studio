@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "feature_commands.hpp"
 #include "kernel_commands.hpp"
 #include "sketch_commands.hpp"
 #include "selftest.hpp"
@@ -21,6 +22,8 @@ Commands:
   tolerance-spike   Run the M1 kernel tolerance spike and print its measurements
   sketch-solve <in.json> [out.json]
                     Solve a sketch file, report it and its profiles, optionally write it
+  build <in.json> [out.step]
+                    Rebuild a feature tree file, report it, optionally write the body as STEP
   version           Print the version (same as --version)
   help              Print this message
 
@@ -90,6 +93,9 @@ int main(int argc, char** argv) {
   }
   if (command == "sketch-solve") {
     return vs::cli::run_sketch_solve(rest, std::cout, std::cerr);
+  }
+  if (command == "build") {
+    return vs::cli::run_build(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

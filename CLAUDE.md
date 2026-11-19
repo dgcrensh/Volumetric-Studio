@@ -192,6 +192,28 @@ so they are registered. A new library must also be added to
 - **Files.** `to_json()` / `sketch_from_json()` round-trip exactly, ids
   included. `vstudio-cli sketch-solve <file>` solves one from the command line.
 
+## vs_feature essentials
+
+- **Tree.** `FeatureTree` holds a `VariableTable` and ordered `Feature`s
+  (sketch, datum plane/axis/point, extrude, revolve), each with a stable
+  `Id`. Features refer to each other by id through `PlaneRef`, `AxisRef`,
+  `PointRef` and `FaceRef`; numbers users can drive are `Param`s (a value
+  plus an optional expression).
+- **Variables.** `expression.hpp` is the expression language (arithmetic,
+  functions, units that convert into mm and radians). `VariableTable::add()`
+  and `set_expression()` reject loops when authored, with
+  `feature.variable.loop` naming the loop as a path.
+- **Rebuild.** `rebuild()` runs top to bottom on the calling thread. A
+  failed feature leaves the body unchanged and the rest carries on; its
+  diagnostics (`feature.*`, or `kernel.*` passed through) name the feature
+  first. Pass a previous result and a start feature to reuse what's above
+  it. Every feature boolean is fuzzy at the linear tolerance, and the
+  tolerance audit runs after each body change (decision 0002).
+- **Face references** name a face by feature and name (`start`, `end`,
+  `side:<sketch line id>`) and are found again by plane; see `rebuild.hpp`.
+- **Files.** `to_json()` / `feature_tree_from_json()` round-trip exactly.
+  `vstudio-cli build <file> [out.step]` rebuilds one and writes STEP.
+
 ## Code style
 
 - C++20, warnings as errors. `#pragma once`. Namespaces `vs::<short>`.

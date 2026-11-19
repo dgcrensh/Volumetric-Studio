@@ -2,11 +2,13 @@
 
 // Measurements and topology queries on kernel shapes.
 
+#include <optional>
 #include <vector>
 
 #include "vs/core/box.hpp"
 #include "vs/core/settings.hpp"
 #include "vs/core/vec.hpp"
+#include "vs/kernel/primitives.hpp"
 #include "vs/kernel/shape.hpp"
 
 namespace vs::kernel {
@@ -55,6 +57,11 @@ PointClass classify(const Solid& solid, const dvec3& point, const ProductSetting
 
 // Sub-shapes, each listed once, in the kernel's deterministic traversal order.
 std::vector<Face> faces(const Shape& shape);
+
+// The plane a planar face lies on, with the normal facing the way the face
+// does (out of the material, for a face of a solid). nullopt for a face on
+// any other kind of surface. `origin` is the face's centre of area.
+std::optional<Plane> face_plane(const Face& face);
 std::vector<Edge> edges(const Shape& shape);
 std::vector<Solid> solids(const Shape& shape);
 std::size_t vertex_count(const Shape& shape);
