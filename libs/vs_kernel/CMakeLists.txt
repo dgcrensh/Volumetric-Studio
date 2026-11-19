@@ -36,6 +36,7 @@ vs_add_library_tests(vs_kernel
     tests/test_primitives.cpp
     tests/test_queries.cpp
     tests/test_shape.cpp
+    tests/test_sweep_loft_shell.cpp
     tests/test_tolerance_spike.cpp)
 
 if(VS_BUILD_TESTS)

@@ -24,6 +24,13 @@
 //                or cutting it (an "extruded cut"). Ends: blind, through all,
 //                up to a plane, or symmetric about the sketch; optional draft.
 //   Revolve      a sketch's profiles turned about an axis, adding or cutting.
+//   Sweep        a sketch's profiles swept along a path drawn in another sketch.
+//   Loft         a solid through the profiles of two or more sketches.
+//   Shell        the body hollowed to a wall thickness, with faces opened.
+//   Fillet       edges of the body rounded with a radius.
+//   Chamfer      edges of the body bevelled by a distance.
+//   Linear / circular pattern   copies of solid features along a direction
+//                or about an axis.
 //
 // Numbers that a user can drive (depths, angles, offsets) are `Param`s: a
 // value and an optional expression over the variables, which the rebuild
@@ -209,10 +216,113 @@ struct RevolveFeature {
   friend bool operator==(const RevolveFeature&, const RevolveFeature&) = default;
 };
 
-using FeatureDefinition = std::variant<SketchFeature, DatumPlaneFeature, DatumAxisFeature,
-                                       DatumPointFeature, ExtrudeFeature, RevolveFeature>;
+// How a swept profile turns as it travels along the path.
+enum class SweepOrientation {
+  FollowPath,  // keeps its angle to the path (it turns with the bends)
+  Fixed,       // keeps its orientation in space; only its position follows
+};
+std::string_view to_string(SweepOrientation orientation);
 
-enum class FeatureKind { Sketch, DatumPlane, DatumAxis, DatumPoint, Extrude, Revolve };
+// Sweeps every closed profile of `profile` along the path drawn in `path`:
+// that sketch's non-construction lines and arcs must join end to end into
+// one chain, open or closed (a lone circle is a closed path). An open path
+// runs from the end nearer the profile; the profile should sit across the
+// path's start.
+struct SweepFeature {
+  Id profile;  // a sketch feature
+  Id path;     // another sketch feature
+  Operation operation = Operation::Add;
+  SweepOrientation orientation = SweepOrientation::FollowPath;
+  friend bool operator==(const SweepFeature&, const SweepFeature&) = default;
+};
+
+// A solid through the profiles of two or more sketches, in order. Each
+// section sketch must hold exactly one closed profile without holes.
+// `ruled` joins neighbouring sections with straight lines.
+struct LoftFeature {
+  std::vector<Id> sections;
+  Operation operation = Operation::Add;
+  bool ruled = false;
+  friend bool operator==(const LoftFeature&, const LoftFeature&) = default;
+};
+
+// Hollows the body into walls `thickness` thick, removing the `open` faces.
+// Walls grow inwards from the outer surface, or outwards with `outward`.
+struct ShellFeature {
+  std::vector<FaceRef> open;
+  Param thickness = Param::of(2.0);
+  bool outward = false;
+  friend bool operator==(const ShellFeature&, const ShellFeature&) = default;
+};
+
+// Edges of the body, found by the faces they bound (see rebuild.hpp): the
+// edges where `face` meets `other`, or with no `other` every edge of `face`.
+struct EdgeRef {
+  FaceRef face;
+  std::optional<FaceRef> other;
+  friend bool operator==(const EdgeRef&, const EdgeRef&) = default;
+};
+
+struct FilletFeature {
+  std::vector<EdgeRef> edges;
+  Param radius = Param::of(1.0);
+  friend bool operator==(const FilletFeature&, const FilletFeature&) = default;
+};
+
+// An equal-distance chamfer: cuts back `distance` along both faces.
+struct ChamferFeature {
+  std::vector<EdgeRef> edges;
+  Param distance = Param::of(1.0);
+  friend bool operator==(const ChamferFeature&, const ChamferFeature&) = default;
+};
+
+// Copies of features that add or cut material (extrude, revolve, sweep,
+// loft), each applied to the body as the original was. `count` includes the
+// original, so 3 makes two copies; it must evaluate to a whole number.
+//
+// Linear: copy k moves k * spacing along `direction` (`reverse` flips it).
+struct LinearPatternFeature {
+  std::vector<Id> features;
+  AxisRef direction = PrincipalAxis::X;
+  Param count = Param::of(2);
+  Param spacing = Param::of(10.0);
+  bool reverse = false;
+  friend bool operator==(const LinearPatternFeature&, const LinearPatternFeature&) = default;
+};
+
+// Circular: copies turn about `axis` (right-hand rule; `reverse` turns the
+// other way). With `angle` a full turn they are spread evenly around it;
+// with less, the last copy lands at `angle`.
+struct CircularPatternFeature {
+  std::vector<Id> features;
+  AxisRef axis = PrincipalAxis::Z;
+  Param count = Param::of(4);
+  Param angle = Param::of(6.283185307179586);
+  bool reverse = false;
+  friend bool operator==(const CircularPatternFeature&, const CircularPatternFeature&) = default;
+};
+
+using FeatureDefinition =
+    std::variant<SketchFeature, DatumPlaneFeature, DatumAxisFeature, DatumPointFeature,
+                 ExtrudeFeature, RevolveFeature, SweepFeature, LoftFeature, ShellFeature,
+                 FilletFeature, ChamferFeature, LinearPatternFeature, CircularPatternFeature>;
+
+// In FeatureDefinition order.
+enum class FeatureKind {
+  Sketch,
+  DatumPlane,
+  DatumAxis,
+  DatumPoint,
+  Extrude,
+  Revolve,
+  Sweep,
+  Loft,
+  Shell,
+  Fillet,
+  Chamfer,
+  LinearPattern,
+  CircularPattern,
+};
 std::string_view to_string(FeatureKind kind);
 
 struct Feature {

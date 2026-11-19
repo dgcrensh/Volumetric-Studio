@@ -24,7 +24,19 @@
 //        "extent": "blind" | "through_all" | "up_to_plane" | "symmetric",
 //        "depth": <param>, "up_to": <plane ref>, "draft": <param>, "reverse": false},
 //       {"id": "...", "type": "revolve", "sketch": "<id>", "operation": "add",
-//        "axis": <axis ref>, "angle": <param>, "reverse": false}
+//        "axis": <axis ref>, "angle": <param>, "reverse": false},
+//       {"id": "...", "type": "sweep", "profile": "<sketch id>", "path": "<sketch id>",
+//        "operation": "add", "orientation": "follow_path" | "fixed"},
+//       {"id": "...", "type": "loft", "sections": ["<sketch id>", ...],
+//        "operation": "add", "ruled": false},
+//       {"id": "...", "type": "shell", "open": [<face ref>, ...], "thickness": <param>,
+//        "outward": false},
+//       {"id": "...", "type": "fillet", "edges": [<edge ref>, ...], "radius": <param>},
+//       {"id": "...", "type": "chamfer", "edges": [<edge ref>, ...], "distance": <param>},
+//       {"id": "...", "type": "linear_pattern", "features": ["<id>", ...],
+//        "direction": <axis ref>, "count": <param>, "spacing": <param>, "reverse": false},
+//       {"id": "...", "type": "circular_pattern", "features": ["<id>", ...],
+//        "axis": <axis ref>, "count": <param>, "angle": <param>, "reverse": false}
 //     ]
 //   }
 //
@@ -38,6 +50,9 @@
 //   <axis ref>   {"principal": "x" | "y" | "z"} | {"feature": "<id>"} |
 //                {"sketch_entity": {"sketch": "<id>", "entity": "<id>"}}
 //   <point ref>  {"feature": "<id>"} | {"sketch_entity": {"sketch": "<id>", "entity": "<id>"}}
+//   <face ref>   {"feature": "<id>", "name": "end"}
+//   <edge ref>   {"face": <face ref>} (every edge of the face) |
+//                {"face": <face ref>, "and": <face ref>} (where the two meet)
 //
 // Reading checks structure and types ("feature.json.*"); the variables are
 // checked as if authored, so a file whose variables loop is rejected with

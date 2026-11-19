@@ -23,8 +23,26 @@
 //   feature.sketch.no_profile         nothing closed to extrude or revolve
 //   feature.datum.degenerate          coincident points, parallel planes, ...
 //   feature.extrude.*, feature.revolve.*               bad depths, angles, end planes
+//   feature.sweep.no_path / .path_branches / .path_disconnected
+//                                     the path sketch isn't one chain of curves
+//   feature.loft.too_few_sections / .section_not_single
+//                                     fewer than two sections, or a section that
+//                                     isn't one profile without holes
+//   feature.shell.no_faces / .bad_thickness, feature.fillet.no_edges /
+//   .bad_radius, feature.chamfer.no_edges / .bad_distance
+//   feature.pattern.no_features / .not_solid_feature / .bad_count /
+//   .too_many / .bad_spacing / .bad_angle
 //   feature.cut.no_body               a cut with nothing to cut from
 //   kernel.*                          the kernel's own errors, passed through
+//
+// Fallbacks for the kernel's weak spots. When a fillet, chamfer or shell
+// fails in the kernel (kernel.fillet.failed, kernel.chamfer.failed,
+// kernel.shell.failed), the rebuild retries with smaller values to find
+// roughly the largest one that works, and the message names it ("a radius
+// of about 2.4 mm works here"), as does a "feature.fallback.works" info
+// diagnostic that follows the error. The kernel also rejects shells too thick for
+// a curved face before trying (kernel.shell.too_thick). A failure never
+// leaves an invalid solid: the feature fails and the body stays as it was.
 //
 // After every feature that changes the body the rebuild runs the kernel's
 // tolerance audit (decision 0001) and reports entities above the product
@@ -34,24 +52,43 @@
 // tolerance as the fuzzy value, so faces within the tolerance of each other
 // count as touching (decision 0002).
 //
-// Face names. Features name the planar faces they make, so a sketch or datum
-// can sit on them (FaceRef):
+// Face names. Features name the faces they make, so a sketch or datum can
+// sit on them, a shell can open them and a fillet can find edges by them
+// (FaceRef):
 //
 //   Extrude (add)  "start"         the face on the sketch plane (symmetric: the far
 //                                  side behind it), facing back along the extrusion
 //                  "end"           the far face
-//                  "side:<id>"     the side face made by sketch line <id>
+//                  "side:<id>"     the side face made by sketch curve <id>: planar
+//                                  for a line; cylindrical for a circle or arc
+//                                  (only without draft)
 //   Extrude (cut)  "end"           the floor of a blind or up-to-plane cut
-//                  "side:<id>"     the wall made by sketch line <id>
+//                  "side:<id>"     the wall made by sketch curve <id>
 //   Revolve        "start", "end"  the flat ends of a partial revolve
+//   Sweep          "start", "end"  the caps of an open path ("end" only when the
+//                                  path starts on the profile's plane)
+//   Loft           "start", "end"  the first and last sections
+//   Patterns       "<k>:<feature id>:<name>"   face <name> of copy k (1 to
+//                                  count - 1) of the patterned feature <feature id>
+//
+// Shells, fillets and chamfers name no faces of their own: references to
+// faces of earlier features keep working through them as long as the face
+// is still there (a fillet trims a face; it doesn't remove it).
 //
 // A FaceRef is found again by geometry: the referenced feature reports where
-// its named face lies in this rebuild, and the reference resolves when the
-// body (as the referring feature sees it) still has a planar face on that
-// plane, facing the same way. So references follow parameter changes, and
-// survive later features that split or trim the face, but break when the
-// face is cut away entirely or its sketch line is deleted. The spec accepts
-// this fragility inside a volume.
+// its named face lies in this rebuild (a plane and outward normal, or a
+// cylinder's axis, radius and side), and the reference resolves to the
+// faces of the body (as the referring feature sees it) on that surface,
+// facing the same way. So references follow parameter changes, and survive
+// later features that split or trim the face, but break when the face is
+// cut away entirely or its sketch curve is deleted. The spec accepts this
+// fragility inside a volume. A sketch or datum needs a planar face; naming a
+// cylindrical one is "feature.reference.wrong_kind".
+//
+// An EdgeRef resolves to the edges the body's faces for `face` share with
+// its faces for `other`, or to every edge of the faces for `face`. Edges
+// found by several references count once. When the faces no longer meet,
+// the reference is broken.
 //
 // Rebuilding from a changed feature: pass the previous result and the first
 // feature that changed. Results above it are reused when the tree above it
@@ -66,6 +103,7 @@
 #include "vs/core/settings.hpp"
 #include "vs/feature/tree.hpp"
 #include "vs/kernel/primitives.hpp"
+#include "vs/kernel/queries.hpp"
 #include "vs/kernel/shape.hpp"
 #include "vs/sketch/sketch.hpp"
 
@@ -78,7 +116,10 @@ std::string_view to_string(FeatureStatus status);
 
 struct NamedFace {
   std::string name;
-  kernel::Plane plane;  // a point on the face's plane and its outward normal
+  // For a planar face: a point on the face's plane and its outward normal.
+  kernel::Plane plane;
+  // Set for a cylindrical face, whose `plane` is then meaningless.
+  std::optional<kernel::Cylinder> cylinder;
 };
 
 struct FeatureResult {
@@ -99,7 +140,11 @@ struct FeatureResult {
   std::optional<kernel::Axis> axis;              // datum axes (unit direction)
   std::optional<dvec3> point;                    // datum points
   std::shared_ptr<const sketch::Sketch> sketch;  // the placed, solved sketch
-  std::vector<NamedFace> faces;                  // extrudes and revolves
+  std::vector<NamedFace> faces;                  // solid features and patterns
+  // The solid an extrude, revolve, sweep or loft added or cut, and which;
+  // patterns copy it.
+  kernel::Solid tool;
+  std::optional<Operation> operation;
 
   [[nodiscard]] bool ok() const { return status == FeatureStatus::Ok; }
 };

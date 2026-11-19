@@ -165,6 +165,10 @@ so they are registered. A new library must also be added to
   sizes under the minimum feature size and shapes outside the working space.
   `audit_tolerances()` compares OCCT's per-entity tolerances with the
   product tolerance; call it after each feature (M3).
+- **Sweeps, lofts, shells, chamfers** (M4) live beside the primitives and
+  fillets. Booleans also take several tools at once. `shell()` rejects
+  walls thicker than a curved face's radius up front, because OCCT returns
+  a valid-looking inside-out solid for them.
 - **Exchange.** STEP (AP242, mm) and IGES go through `exchange.hpp`; calls
   are serialised because OCCT's exchange layer has global state.
 - **Tolerance findings** are in `docs/decisions/0001-working-space-and-tolerance.md`;
@@ -195,7 +199,8 @@ so they are registered. A new library must also be added to
 ## vs_feature essentials
 
 - **Tree.** `FeatureTree` holds a `VariableTable` and ordered `Feature`s
-  (sketch, datum plane/axis/point, extrude, revolve), each with a stable
+  (sketch, datum plane/axis/point, extrude, revolve, and from M4 sweep,
+  loft, shell, fillet, chamfer, linear and circular pattern), each with a stable
   `Id`. Features refer to each other by id through `PlaneRef`, `AxisRef`,
   `PointRef` and `FaceRef`; numbers users can drive are `Param`s (a value
   plus an optional expression).
@@ -210,7 +215,15 @@ so they are registered. A new library must also be added to
   it. Every feature boolean is fuzzy at the linear tolerance, and the
   tolerance audit runs after each body change (decision 0002).
 - **Face references** name a face by feature and name (`start`, `end`,
-  `side:<sketch line id>`) and are found again by plane; see `rebuild.hpp`.
+  `side:<sketch curve id>`, `<k>:<seed id>:<name>` on pattern copies) and
+  are found again by plane or cylinder; see `rebuild.hpp`. **Edge
+  references** are one or two face references: the edges where they meet,
+  or every edge of one (decision 0003).
+- **M4 features.** Sweep (path = a whole sketch, one chain), loft (one
+  holeless profile per section sketch), shell, fillet, chamfer, linear and
+  circular patterns of extrudes, revolves, sweeps and lofts. A failed
+  fillet, chamfer or shell searches for a value that works and reports it
+  as `feature.fallback.works`; the body is never left invalid.
 - **Files.** `to_json()` / `feature_tree_from_json()` round-trip exactly.
   `vstudio-cli build <file> [out.step]` rebuilds one and writes STEP.
 
