@@ -33,11 +33,15 @@
 #include "authoring.hpp"
 #include "feature_dialog.hpp"
 #include "model_dialogs.hpp"
+#include "node_editor.hpp"
+#include "node_preview.hpp"
 #include "reference_choices.hpp"
 #include "sketch_mode.hpp"
 #include "viewport.hpp"
 #include "vs/core/version.hpp"
 #include "vs/eval/import.hpp"
+#include "vs/proc/bake.hpp"
+#include "vs/proc/generator.hpp"
 #include "vs/validate/validate.hpp"
 #include "widgets.hpp"
 
@@ -207,6 +211,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     if (sketch_mode_ != nullptr) finish_sketch(false);
     history_.reset(session_->project());
     editing_volume_ = {};
+    graph_volume_ = {};
+    node_editor_->clear();
+    clear_node_preview();
     viewport_->set_context({}, {});
     context_bar_->setVisible(false);
     fitted_ = false;
@@ -228,6 +235,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
       select(Selection::none());
     }
   });
+  connect(session_, &Session::nodePreviewed, this,
+          [this](quint64, std::shared_ptr<const NodePreviewResult> result, std::shared_ptr<const PreparedScene> prepared) {
+            // A preview for a graph no longer open, or a node since deleted.
+            if (result->volume != graph_volume_ || node_editor_->graph().find_node(result->node) == nullptr) return;
+            last_preview_ = result;
+            viewport_->set_overlay(result->scene, std::move(prepared), result->volume);
+            node_editor_->show_preview(*result);
+            emit nodePreviewShown();
+          });
   connect(viewport_, &Viewport::frameRendered, this, [this](double ms) {
     frame_label_->setText(tr("frame %1 ms").arg(ms, 0, 'f', 1));
   });
@@ -298,6 +314,23 @@ void MainWindow::build_menus() {
   });
   leave_context_action_ = volume->addAction(tr("&Done editing contents"), this, &MainWindow::leave_context);
   leave_context_action_->setEnabled(false);
+  volume->addSeparator();
+  volume->addAction(tr("Edit &graph"), QKeySequence(Qt::CTRL | Qt::Key_G), this, [this] {
+    if (selection_.kind == Selection::Kind::Volume || selection_.kind == Selection::Kind::Node) {
+      edit_graph(selection_.volume.is_null() ? selection_.id : selection_.volume);
+    }
+  });
+  volume->addAction(tr("Attach &template…"), this, [this] {
+    const Id v = selection_.kind == Selection::Kind::Volume ? selection_.id : graph_volume_;
+    if (!v.is_null()) attach_template(v);
+  });
+  volume->addAction(tr("&Bake"), this, [this] {
+    const Id v = selection_.kind == Selection::Kind::Volume ? selection_.id : graph_volume_;
+    if (!v.is_null()) bake(v);
+  });
+  volume->addAction(tr("&Unbake"), this, [this] {
+    if (selection_.kind == Selection::Kind::Volume) unbake(selection_.id);
+  });
 
   QMenu* model = menuBar()->addMenu(tr("&Model"));
   model->addAction(tr("&Regenerate"), QKeySequence(Qt::Key_F5), session_, &Session::regenerate);
@@ -431,7 +464,23 @@ void MainWindow::build_docks() {
   inspector_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   inspector_->setIndentation(12);
   inspector_->setMinimumWidth(300);
-  dock(tr("Inspector"), "inspector", inspector_, Qt::RightDockWidgetArea);
+  // A selected node of the graph being edited shows its settings form
+  // instead (M15: "parameter editing in the inspector").
+  inspector_stack_ = new QStackedWidget;
+  inspector_stack_->addWidget(inspector_);
+  node_form_ = new NodeForm;
+  inspector_stack_->addWidget(node_form_);
+  dock(tr("Inspector"), "inspector", inspector_stack_, Qt::RightDockWidgetArea);
+  connect(node_form_, &NodeForm::settingEdited, this, [this](core::Id node, const QString& key, const QString& text) {
+    node_editor_->set_setting_text(node, sstr(key), text);
+  });
+  connect(node_form_, &NodeForm::renamed, this, [this](core::Id node, const QString& name) {
+    const proc::Node* n = node_editor_->graph().find_node(node);
+    if (n != nullptr && qstr(n->name) != name) node_editor_->rename_node(node, sstr(name));
+  });
+  connect(node_form_, &NodeForm::exposeRequested, this, [this](core::Id node, const QString& port) {
+    node_editor_->expose_input(node, sstr(port));
+  });
 
   diagnostics_ = make_tree({tr("Severity"), tr("Code"), tr("Message"), tr("Act on")});
   diagnostics_->setRootIsDecorated(false);
@@ -439,10 +488,33 @@ void MainWindow::build_docks() {
   diagnostics_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   diagnostics_->header()->setSectionResizeMode(2, QHeaderView::Stretch);
   diagnostics_->header()->setStretchLastSection(false);
-  dock(tr("Diagnostics"), "diagnostics", diagnostics_, Qt::BottomDockWidgetArea);
+  QDockWidget* diagnostics_dock = dock(tr("Diagnostics"), "diagnostics", diagnostics_, Qt::BottomDockWidgetArea);
   connect(diagnostics_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int) {
     activate_diagnostic(diagnostics_->indexOfTopLevelItem(item));
   });
+
+  // The node editor (M15), tabbed with the diagnostics.
+  node_editor_ = new NodeEditor;
+  node_editor_->set_apply([this](const Command& c) { return apply(c); });
+  graph_dock_ = dock(tr("Graph"), "graph", node_editor_, Qt::BottomDockWidgetArea);
+  tabifyDockWidget(diagnostics_dock, graph_dock_);
+  diagnostics_dock->raise();
+  connect(node_editor_, &NodeEditor::nodeSelected, this, [this](core::Id volume, core::Id node) {
+    if (syncing_) return;
+    select(node.is_null() ? Selection::of_volume(volume) : Selection::of_node(node, volume));
+  });
+  connect(node_editor_, &NodeEditor::previewRequested, this,
+          [this](core::Id node, const QString& port) { preview_node(node, sstr(port)); });
+  connect(node_editor_, &NodeEditor::previewOptionsChanged, this, [this] {
+    if (!node_editor_->previewed_node().is_null()) preview_node(node_editor_->previewed_node(), preview_port_);
+  });
+  connect(node_editor_, &NodeEditor::templatesRequested, this, [this] {
+    if (!graph_volume_.is_null()) attach_template(graph_volume_);
+  });
+  connect(node_editor_, &NodeEditor::bakeRequested, this, [this] {
+    if (!graph_volume_.is_null()) bake(graph_volume_);
+  });
+  connect(node_editor_, &NodeEditor::closeRequested, this, &MainWindow::leave_graph);
 }
 
 // --- projects ---------------------------------------------------------------------------
@@ -469,7 +541,38 @@ void MainWindow::show_project() {
   previewing_ = false;
   refresh_edit_actions();
   update_title();
+  refresh_graph();
   emit historyChanged();
+}
+
+// The node editor follows the History: after every edit, undo and redo it
+// shows the graph as it now stands, and the previewed node is previewed
+// again (cheap: unchanged nodes come from the node cache).
+void MainWindow::refresh_graph() {
+  if (graph_volume_.is_null()) return;
+  const SnapshotPtr s = session_->latest();
+  if (!graph_of(history_.project().document, graph_volume_)) {
+    // Undone back to a placeholder, or baked: nothing to edit any more.
+    leave_graph();
+    return;
+  }
+  node_editor_->show_graph(history_.project(), s ? &s->evaluation : nullptr, graph_volume_);
+  if (selection_.kind == Selection::Kind::Node && selection_.volume == graph_volume_) {
+    if (node_editor_->graph().find_node(selection_.id) == nullptr) {
+      select(Selection::of_volume(graph_volume_));
+    } else {
+      node_editor_->select_node(selection_.id);
+      refresh_inspector();
+    }
+  }
+  const Id previewed = node_editor_->previewed_node();
+  if (!previewed.is_null()) {
+    if (node_editor_->graph().find_node(previewed) != nullptr) {
+      preview_node(previewed, preview_port_);
+    } else {
+      clear_node_preview();
+    }
+  }
 }
 
 core::Diagnostics MainWindow::apply(const Command& command) {
@@ -523,7 +626,9 @@ std::vector<Id> MainWindow::highlight_for(const Selection& s) const {
     case Selection::Kind::Feature:
       if (s.volume.is_null()) return {s.id};
       return {s.volume, s.id};
-    case Selection::Kind::Node: return {s.volume};
+    // A node is selected on the canvas, and previewed in place: the
+    // volume's highlight would hide the preview.
+    case Selection::Kind::Node: return {};
   }
   return {};
 }
@@ -542,6 +647,17 @@ void MainWindow::select(const Selection& selection) {
   refresh_features();
   refresh_variables();
   refresh_inspector();
+  // M15: a node of the graph being edited is selected on the canvas and
+  // previewed in the viewport; anything else ends the preview.
+  if (selection.kind == Selection::Kind::Node && selection.volume == graph_volume_ && !graph_volume_.is_null()) {
+    syncing_ = true;
+    if (node_editor_->selected_node() != selection.id) node_editor_->select_node(selection.id);
+    syncing_ = false;
+    if (node_editor_->previewed_node() != selection.id) preview_port_.clear();
+    preview_node(selection.id, preview_port_);
+  } else if (selection.kind != Selection::Kind::Node) {
+    clear_node_preview();
+  }
 }
 
 void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
@@ -572,6 +688,12 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   refresh_variables();
   refresh_inspector();
   viewport_->set_highlight(highlight_for(selection_));
+  if (!graph_volume_.is_null()) {
+    // New marks on the canvas (failed or infeasible nodes).
+    if (graph_of(history_.project().document, graph_volume_)) {
+      node_editor_->show_graph(history_.project(), &snapshot->evaluation, graph_volume_);
+    }
+  }
   core::Diagnostics all = snapshot->evaluation.diagnostics;
   all.append(snapshot->scene.diagnostics);
   show_diagnostics(all, snapshot->preview ? tr("Preview") : tr("Evaluation"));
@@ -679,7 +801,7 @@ void MainWindow::refresh_features() {
       item->setText(0, qstr(row.name));
       item->setText(1, qstr(row.kind));
       item->setText(2, qstr(row.status));
-      if (row.status == "failed") item->setForeground(2, QColor(208, 48, 48));
+      if (row.status == "failed" || row.status == "infeasible") item->setForeground(2, QColor(208, 48, 48));
       if (row.status == "suppressed") {
         for (int c = 0; c < 3; ++c) item->setForeground(c, QColor(150, 150, 155));
       }
@@ -722,6 +844,15 @@ void MainWindow::refresh_variables() {
 }
 
 void MainWindow::refresh_inspector() {
+  const bool node = selection_.kind == Selection::Kind::Node && !graph_volume_.is_null() &&
+                    selection_.volume == graph_volume_ && node_editor_->graph().find_node(selection_.id) != nullptr;
+  if (node) {
+    node_form_->show_node(node_editor_->graph(), selection_.id, node_editor_->context());
+    inspector_stack_->setCurrentWidget(node_form_);
+  } else {
+    node_form_->show_node({}, {}, {});
+    inspector_stack_->setCurrentWidget(inspector_);
+  }
   inspector_->clear();
   const SnapshotPtr s = session_->latest();
   if (!s) return;
@@ -804,7 +935,14 @@ void MainWindow::update_title() {
 
 void MainWindow::activate_feature_row(QTreeWidgetItem* item) {
   const auto id = row_id(item);
-  if (!id || item->data(0, kRoleKind).toInt() != 3) return;
+  if (!id) return;
+  if (item->data(0, kRoleKind).toInt() == 4) {
+    // A graph node: open the graph with it selected.
+    const Id volume = row_id(item, 1).value_or(Id{});
+    if (edit_graph(volume)) select(Selection::of_node(*id, volume));
+    return;
+  }
+  if (item->data(0, kRoleKind).toInt() != 3) return;
   const Id volume = row_id(item, 1).value_or(Id{});
   const auto* tree = tree_of(history_.project().document, volume);
   const auto* f = tree != nullptr ? tree->find(*id) : nullptr;
@@ -880,6 +1018,13 @@ void MainWindow::volume_context_menu(const QPoint& pos) {
       menu.addAction(v->tree() != nullptr ? tr("Edit contents in context") : tr("Fill by modelling"), this,
                      [this, vid] { edit_in_context(vid); });
     }
+    const bool procedural = v->kind() == model::VolumeKind::Procedural;
+    if (procedural || v->contents_empty()) {
+      menu.addAction(procedural ? tr("Edit graph") : tr("Fill by procedure"), this, [this, vid] { edit_graph(vid); });
+      menu.addAction(tr("Attach template…"), this, [this, vid] { attach_template(vid); });
+    }
+    if (procedural) menu.addAction(tr("Bake"), this, [this, vid] { bake(vid); });
+    if (proc::is_baked(*v)) menu.addAction(tr("Unbake"), this, [this, vid] { unbake(vid); });
     menu.addAction(tr("Import contents…"), this, [this, vid] {
       const QString path = QFileDialog::getOpenFileName(this, tr("Import contents"), QString(),
                                                         tr("Geometry (*.step *.stp *.iges *.igs *.stl *.3mf *.obj)"));
@@ -1146,6 +1291,121 @@ LinkDialog* MainWindow::new_link() {
   auto* d = new LinkDialog(l, s->evaluation, this);
   start_dialog(d, [d] { return add_link(d->value()); });
   return d;
+}
+
+// --- procedural graphs (M15) ---------------------------------------------------------------------
+
+bool MainWindow::edit_graph(const Id& volume) {
+  const model::Volume* v = history_.project().document.find_volume(volume);
+  if (v == nullptr || v->keep_out) return false;
+  if (proc::is_baked(*v)) {
+    status_label_->setText(tr("%1 is baked; unbake it to edit its graph").arg(qstr(v->name)));
+    return false;
+  }
+  if (v->kind() != model::VolumeKind::Procedural) {
+    if (!v->contents_empty()) {
+      status_label_->setText(tr("%1 has %2 contents; clear them to fill it by procedure")
+                                 .arg(qstr(v->name), qstr(model::to_string(v->kind())).toLower()));
+      return false;
+    }
+    if (apply(make_procedural(volume, starter_graph())).has_errors()) return false;
+  }
+  if (!graph_of(history_.project().document, volume)) {
+    status_label_->setText(tr("%1's graph can't be read").arg(qstr(v->name)));
+    return false;
+  }
+  if (!editing_volume_.is_null()) leave_context();
+  if (graph_volume_ != volume) clear_node_preview();
+  graph_volume_ = volume;
+  const SnapshotPtr s = session_->latest();
+  node_editor_->show_graph(history_.project(), s ? &s->evaluation : nullptr, volume);
+  if (!graph_dock_->isVisible()) graph_dock_->show();
+  graph_dock_->raise();
+  resizeDocks({graph_dock_}, {std::max(320, height() / 3)}, Qt::Vertical);
+  if (!(selection_.kind == Selection::Kind::Node && selection_.volume == volume)) select(Selection::of_volume(volume));
+  status_label_->setText(tr("Editing the graph of %1").arg(qstr(history_.project().document.find_volume(volume)->name)));
+  return true;
+}
+
+void MainWindow::leave_graph() {
+  if (graph_volume_.is_null()) return;
+  const Id was = graph_volume_;
+  graph_volume_ = {};
+  clear_node_preview();
+  node_editor_->clear();
+  if (selection_.kind == Selection::Kind::Node && selection_.volume == was) select(Selection::of_volume(was));
+  refresh_inspector();
+}
+
+TemplateDialog* MainWindow::attach_template(const Id& volume) {
+  const model::Volume* v = history_.project().document.find_volume(volume);
+  if (v == nullptr || v->keep_out) return nullptr;
+  if (!v->contents_empty() && v->kind() != model::VolumeKind::Procedural) {
+    status_label_->setText(tr("%1 has %2 contents; clear them to attach a template")
+                               .arg(qstr(v->name), qstr(model::to_string(v->kind())).toLower()));
+    return nullptr;
+  }
+  auto* d = new TemplateDialog(history_.project().document, volume, this);
+  start_dialog(d, [d, volume] {
+    auto g = d->graph();
+    return make_procedural(volume, g ? *g : proc::Graph{}, "Attach template " + d->template_name());
+  });
+  connect(d, &QDialog::accepted, this, [this, volume] {
+    // Show what was attached.
+    if (graph_volume_ == volume || graph_volume_.is_null()) edit_graph(volume);
+  });
+  return d;
+}
+
+core::Diagnostics MainWindow::bake(const Id& volume) {
+  core::Diagnostics d;
+  const SnapshotPtr s = session_->latest();
+  const model::Volume* v = history_.project().document.find_volume(volume);
+  const eval::VolumeResult* r = s ? s->evaluation.find(volume) : nullptr;
+  const mesh::Mesh* m = r != nullptr ? proc::contents_mesh(*r) : nullptr;
+  if (v == nullptr || v->kind() != model::VolumeKind::Procedural) {
+    d.add(core::Diagnostic::error("proc.bake.kind", "Only a procedural volume can be baked."));
+  } else if (!s || s->preview || previewing_ || s->project != history_.current() || r == nullptr ||
+             r->status != model::VolumeStatus::Current || r->stale_contents || m == nullptr) {
+    d.add(core::Diagnostic::error("app.bake.not_generated",
+                                  fmt::format("Wait for '{}' to finish generating before baking it.", v->name)));
+  }
+  if (d.has_errors()) {
+    show_diagnostics(d, tr("Bake"));
+    status_label_->setText(qstr(d.items().front().message));
+    return d;
+  }
+  const bool was_open = graph_volume_ == volume;
+  d = apply(bake_volume(volume, *m));
+  if (!d.has_errors() && was_open) leave_graph();
+  return d;
+}
+
+core::Diagnostics MainWindow::unbake(const Id& volume) {
+  const core::Diagnostics d = apply(unbake_volume(volume));
+  return d;
+}
+
+void MainWindow::preview_node(const Id& node, const std::string& port) {
+  const SnapshotPtr s = session_->latest();
+  if (!s || graph_volume_.is_null() || node_editor_->graph().find_node(node) == nullptr) return;
+  NodePreviewRequest request;
+  request.snapshot = s;
+  request.volume = graph_volume_;
+  request.graph = node_editor_->graph();
+  request.node = node;
+  request.port = port;
+  request.options = node_editor_->preview_options();
+  preview_port_ = port;
+  session_->preview_node(std::move(request));
+}
+
+void MainWindow::clear_node_preview() {
+  session_->cancel_preview();
+  last_preview_.reset();
+  preview_port_.clear();
+  viewport_->clear_overlay();
+  node_editor_->clear_preview();
 }
 
 // --- sketch mode --------------------------------------------------------------------------------

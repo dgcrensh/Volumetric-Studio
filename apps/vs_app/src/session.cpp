@@ -3,11 +3,55 @@
 #include <QMetaObject>
 #include <QPointer>
 
-#include <chrono>
+#include <fmt/format.h>
 
+#include <atomic>
+#include <chrono>
+#include <optional>
+#include <utility>
+
+#include "vs/core/hash.hpp"
 #include "vs/proc/generator.hpp"
+#include "vs/proc/inputs.hpp"
+#include "vs/proc/inspect.hpp"
 
 namespace vs::app {
+
+namespace detail {
+
+// What a volume's graph inputs depend on: everything in the evaluated
+// document but contents (the layout, boundaries, keep-outs, surfaces,
+// parameters with link values applied, seeds), and the volume.
+core::Hash256 inputs_key(const model::Document& document, const Id& volume) {
+  model::Document copy = document;
+  for (auto& v : copy.volumes) v.contents = model::StaticContents{};
+  return core::hash_of(std::string_view(model::to_json(copy)), std::string_view(volume.to_string()));
+}
+
+struct PreviewState {
+  std::mutex mutex;
+  std::condition_variable wake;
+  std::optional<std::pair<std::uint64_t, NodePreviewRequest>> pending;
+  bool stopping = false;
+  // Its own pool: the engine's is busy generating while previews run.
+  eval::ThreadPool pool{std::max<std::size_t>(2, std::thread::hardware_concurrency() / 2)};
+  std::atomic<std::size_t> evaluated{0};
+
+  // Gathered inputs by inputs_key() (the preview thread only).
+  std::vector<std::pair<core::Hash256, std::shared_ptr<const proc::GraphInputs>>> inputs;
+  std::shared_ptr<const proc::GraphInputs> find_inputs(const core::Hash256& key) const {
+    for (const auto& [k, v] : inputs) {
+      if (k == key) return v;
+    }
+    return nullptr;
+  }
+  void keep_inputs(const core::Hash256& key, std::shared_ptr<const proc::GraphInputs> value) {
+    if (inputs.size() >= 8) inputs.erase(inputs.begin());
+    inputs.emplace_back(key, std::move(value));
+  }
+};
+
+}  // namespace detail
 
 namespace {
 
@@ -32,8 +76,10 @@ Session::Session(eval::EngineOptions options, QObject* parent)
     : QObject(parent),
       engine_(settings_, with_ui_headroom(std::move(options))),
       project_(std::make_shared<model::Project>()) {
-  proc::install(engine_);
+  generator_ = proc::install(engine_);
+  preview_ = std::make_unique<detail::PreviewState>();
   worker_ = std::thread([this] { worker_loop(); });
+  preview_worker_ = std::thread([this] { preview_loop(); });
 }
 
 Session::~Session() {
@@ -44,7 +90,142 @@ Session::~Session() {
     jobs_.clear();
   }
   wake_.notify_all();
+  {
+    std::lock_guard lock(preview_->mutex);
+    preview_->stopping = true;
+    preview_->pending.reset();
+  }
+  preview_->wake.notify_all();
   worker_.join();
+  preview_worker_.join();
+}
+
+// --- node previews (M15) -------------------------------------------------------------------
+
+std::uint64_t Session::preview_node(NodePreviewRequest request) {
+  const std::uint64_t id = ++preview_requested_;
+  {
+    std::lock_guard lock(preview_->mutex);
+    preview_->pending = std::make_pair(id, std::move(request));
+  }
+  preview_->wake.notify_one();
+  return id;
+}
+
+void Session::cancel_preview() {
+  ++preview_requested_;
+  std::lock_guard lock(preview_->mutex);
+  preview_->pending.reset();
+}
+
+std::size_t Session::nodes_evaluated() const {
+  return generator_->nodes_evaluated() + preview_->evaluated.load();
+}
+
+void Session::preview_loop() {
+  for (;;) {
+    std::pair<std::uint64_t, NodePreviewRequest> job;
+    {
+      std::unique_lock lock(preview_->mutex);
+      preview_->wake.wait(lock, [this] { return preview_->stopping || preview_->pending.has_value(); });
+      if (preview_->stopping) return;
+      job = std::move(*preview_->pending);
+      preview_->pending.reset();
+    }
+    preview_job(job.first, job.second);
+  }
+}
+
+void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request) {
+  auto result = std::make_shared<NodePreviewResult>();
+  result->volume = request.volume;
+  result->node = request.node;
+  const auto t0 = std::chrono::steady_clock::now();
+  const Snapshot* s = request.snapshot.get();
+  std::shared_ptr<const proc::GraphInputs> inputs;
+  if (s != nullptr) {
+    const auto& doc = s->evaluation.document;
+    std::optional<std::size_t> index;
+    for (std::size_t i = 0; i < doc.volumes.size(); ++i) {
+      if (doc.volumes[i].id == request.volume) index = i;
+    }
+    if (index && *index < s->evaluation.build.volumes.size()) {
+      const core::Hash256 key = detail::inputs_key(doc, request.volume);
+      inputs = preview_->find_inputs(key);
+      if (!inputs) {
+        auto gathered = proc::gather_inputs(doc, s->evaluation.build, *index, settings_);
+        if (gathered) {
+          inputs = std::make_shared<const proc::GraphInputs>(std::move(gathered).value());
+          preview_->keep_inputs(key, inputs);
+        } else {
+          result->diagnostics.add(gathered.error());
+        }
+      }
+    }
+  }
+  if (!inputs) {
+    if (result->diagnostics.empty()) {
+      result->diagnostics.add(core::Diagnostic::error("app.preview.no_inputs",
+                                                      "The volume's inputs aren't built yet, so there's nothing to "
+                                                      "preview against"));
+    }
+    result->text = result->diagnostics.items().front().message;
+  } else {
+    proc::EvaluateGraphOptions options;
+    options.cache = &generator_->cache();
+    options.pool = &preview_->pool;
+    const proc::NodeInspection inspection = proc::inspect_node(request.graph, *inputs, request.node, options);
+    preview_->evaluated += inspection.evaluated;
+    result->diagnostics = inspection.diagnostics;
+    result->from_cache = inspection.from_cache;
+    result->evaluated = inspection.evaluated;
+    result->inspect_ms = ms_since(t0);
+    const auto t1 = std::chrono::steady_clock::now();
+    // The output to draw: the one asked for, else the first drawable one.
+    const std::pair<std::string, proc::Value>* chosen = nullptr;
+    for (const auto& out : inspection.outputs) {
+      if (!request.port.empty() && out.first == request.port) chosen = &out;
+    }
+    if (chosen == nullptr) {
+      for (const auto& out : inspection.outputs) {
+        const auto t = proc::type_of(out.second);
+        if (chosen == nullptr && t != proc::PortType::Scalar && t != proc::PortType::Vector &&
+            t != proc::PortType::List) {
+          chosen = &out;
+        }
+      }
+      if (chosen == nullptr && !inspection.outputs.empty()) chosen = &inspection.outputs.front();
+    }
+    if (chosen != nullptr) {
+      result->port = chosen->first;
+      result->type = proc::type_of(chosen->second);
+      const proc::Preview pv = proc::preview(chosen->second, *inputs, request.cell, &preview_->pool);
+      result->text = pv.text;
+      result->scene = preview_scene(pv, request.volume, request.node, core::to_fp32(inputs->bounds), request.options);
+      // Every output's value, for the editor's status line.
+      for (const auto& out : inspection.outputs) {
+        if (&out == chosen) continue;
+        result->text += fmt::format("\n{}: {}", out.first, proc::describe(out.second));
+      }
+    } else {
+      for (const auto& d : inspection.diagnostics) {
+        if (d.is_error()) {
+          result->text = d.message;
+          break;
+        }
+      }
+    }
+    result->preview_ms = ms_since(t1);
+  }
+  std::shared_ptr<const PreparedScene> prepared;
+  if (preparer_) prepared = preparer_(result->scene);
+  QMetaObject::invokeMethod(
+      this,
+      [this, id, result, prepared] {
+        if (id != preview_requested_) return;  // a newer request is on its way
+        emit nodePreviewed(id, result, prepared);
+      },
+      Qt::QueuedConnection);
 }
 
 core::Diagnostics Session::open(const std::filesystem::path& path) {

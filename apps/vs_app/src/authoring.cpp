@@ -7,6 +7,8 @@
 
 #include "reference_choices.hpp"
 #include "vs/eval/import.hpp"
+#include "vs/proc/bake.hpp"
+#include "vs/proc/check.hpp"
 
 namespace vs::app {
 
@@ -330,6 +332,80 @@ Command import_contents(Id volume, std::vector<std::byte> file, std::string form
                               settings](model::Project& p) -> Diagnostics {
             return eval::import_contents(p, volume, file, format, settings);
           }};
+}
+
+// --- procedural contents (M15) ---------------------------------------------------------------
+
+proc::Graph starter_graph() {
+  proc::Graph g;
+  const Id boundary = g.add("input.boundary", "Boundary");
+  const Id output = g.add("output", "Contents");
+  g.link(boundary, "field", output, "contents");
+  return g;
+}
+
+namespace {
+
+// Errors check_volume_graph() finds in `graph` for `volume`, but the ones
+// that only say the graph is unfinished.
+Diagnostics graph_errors(const proc::Graph& graph, const model::Document& doc, const Id& volume) {
+  Diagnostics out;
+  for (const auto& d : proc::check_volume_graph(graph, doc, volume)) {
+    if (d.is_error() && !proc::is_unfinished(d.code)) out.add(d);
+  }
+  return out;
+}
+
+}  // namespace
+
+Command make_procedural(Id volume, proc::Graph graph, std::string label) {
+  return {std::move(label), [volume, graph = std::move(graph)](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            if (v->keep_out) return error("app.edit.keep_out_contents", "A keep-out has no contents.");
+            if (!v->contents_empty() && v->kind() != model::VolumeKind::Procedural) {
+              return error("app.edit.has_contents",
+                           fmt::format("'{}' has {} contents; clear them to fill it by procedure", v->name,
+                                       model::to_string(v->kind())));
+            }
+            Diagnostics errors = graph_errors(graph, p.document, volume);
+            if (errors.has_errors()) return errors;
+            v->contents = model::ProceduralContents{proc::to_json(graph)};
+            return {};
+          }};
+}
+
+Command set_graph(Id volume, proc::Graph graph, std::string label) {
+  return {std::move(label), [volume, graph = std::move(graph)](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            auto* pc = std::get_if<model::ProceduralContents>(&v->contents);
+            if (pc == nullptr) return error("app.edit.no_graph", "That volume has no graph to edit.");
+            Diagnostics errors = graph_errors(graph, p.document, volume);
+            if (errors.has_errors()) return errors;
+            pc->graph = proc::to_json(graph);
+            return {};
+          }};
+}
+
+std::optional<proc::Graph> graph_of(const model::Document& document, const Id& volume) {
+  const model::Volume* v = document.find_volume(volume);
+  const auto* pc = v != nullptr ? std::get_if<model::ProceduralContents>(&v->contents) : nullptr;
+  if (pc == nullptr) return std::nullopt;
+  if (pc->graph.empty()) return proc::Graph{};
+  auto g = proc::graph_from_json(pc->graph);
+  if (!g) return std::nullopt;
+  return std::move(g).value();
+}
+
+Command bake_volume(Id volume, mesh::Mesh mesh) {
+  return {"Bake", [volume, mesh = std::move(mesh)](model::Project& p) -> Diagnostics {
+            return proc::bake(p, volume, mesh);
+          }};
+}
+
+Command unbake_volume(Id volume) {
+  return {"Unbake", [volume](model::Project& p) -> Diagnostics { return proc::unbake(p, volume); }};
 }
 
 // --- connection surfaces, keep-outs, links --------------------------------------------------

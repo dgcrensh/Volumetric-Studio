@@ -503,9 +503,24 @@ so they are registered. A new library must also be added to
   `History::try_apply()`, OK commits. `MainWindow::edit_in_context()` dims
   every other volume. Tests drive these entry points; the bracket is
   rebuilt from scratch in `test_authoring_ui.cpp`.
+- **Node editor** (M15, decision 0015): `graph_edit.*` is the rules (no
+  Qt): every canvas gesture is a `proc::edit()` returning the new graph,
+  applied as one `set_graph()` Command (which also refuses what
+  `check_volume_graph()` refuses beyond "unfinished"). `node_editor.*` is
+  the Graph dock (palette, QGraphicsView canvas, exposed parameters),
+  `NodeForm` (a selected node's settings, swapped into the inspector dock;
+  its name field is `".name"`) and `TemplateDialog`. Node positions are
+  per session, not in the graph. `Session::preview_node()` inspects on its
+  own thread with the generator's `NodeCache` and cached `GraphInputs`;
+  `node_preview.*` turns `proc::preview()` into overlay items
+  (`ItemRole::NodePreview`, `Viewport::set_overlay()`; the volume's
+  contents hide meanwhile). `MainWindow::edit_graph()`,
+  `attach_template()`, `bake()`, `unbake()`, `preview_node()` are the
+  entry points tests drive.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
-  [--sketch <sketch>] [--edit <feature>] [--size WxH]
+  [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]
+  [--slice]] [--size WxH]
   [--screenshot out.bmp] [--viewport-image out.bmp]`; the capture flags
   wait for the evaluation, save (BMP: this Qt has no PNG) and quit.
 - **From a Claude desktop-app session** `%LOCALAPPDATA%` is virtualised and

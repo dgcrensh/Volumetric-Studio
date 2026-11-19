@@ -61,13 +61,18 @@ struct DisplayMesh {
   std::vector<fvec3> normals;           // one per position, unit length
   std::vector<std::uint32_t> indices;   // three per triangle, counter-clockwise from outside
   std::vector<std::vector<fvec3>> edges;  // polylines drawn over the surface
+  // Optional: one colour per position, drawn unlit (node previews' field
+  // slices, M15). Empty: the item's colour, shaded.
+  std::vector<Rgb> colors;
 
   [[nodiscard]] std::size_t triangle_count() const { return indices.size() / 3; }
   [[nodiscard]] bool empty() const { return indices.empty(); }
   [[nodiscard]] fbox3 bounds() const;
 };
 
-enum class ItemRole { Boundary, Contents, ConnectionSurface, LayoutSolid, Sketch };
+// NodePreview (M15): a graph node's output drawn in place (node_preview.hpp);
+// never part of build_scene(), shown by the viewport as an overlay.
+enum class ItemRole { Boundary, Contents, ConnectionSurface, LayoutSolid, Sketch, NodePreview };
 std::string_view to_string(ItemRole role);
 
 struct SceneItem {

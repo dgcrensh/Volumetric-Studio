@@ -1,7 +1,8 @@
-// vs_app: the Volumetric CAD Studio desktop application (M13, M14).
+// vs_app: the Volumetric CAD Studio desktop application (M13 to M15).
 //
 //   vs_app [project] [--select <volume or surface name>] [--view iso|top|front|right|...]
 //          [--context <volume name>] [--sketch <sketch name>] [--edit <feature name>]
+//          [--graph <volume name> [--node <node name>] [--slice]]
 //          [--size <w>x<h>] [--screenshot <out.bmp>] [--viewport-image <out.bmp>]
 //
 // (vcpkg's Qt here is built without PNG support, so images are BMP.)
@@ -9,6 +10,8 @@
 // --context edits a volume's contents in context; --sketch opens sketch
 // mode on a sketch of the tree being edited; --edit opens a feature's
 // dialog (with --screenshot it is saved too, as <out>-dialog.bmp).
+// --graph opens a procedural volume's graph in the node editor (M15),
+// --node selects and previews one of its nodes (--slice: fields as a slice).
 //
 // With --screenshot or --viewport-image the app opens the project, waits
 // for its evaluation to reach the screen, saves the window (as the screen
@@ -16,6 +19,7 @@
 // and the PR.
 
 #include <QApplication>
+#include <QComboBox>
 #include <QImage>
 #include <QPixmap>
 #include <QScreen>
@@ -27,6 +31,7 @@
 
 #include "feature_dialog.hpp"
 #include "main_window.hpp"
+#include "node_editor.hpp"
 #include "reference_choices.hpp"
 #include "sketch_mode.hpp"
 #include "viewport.hpp"
@@ -39,7 +44,8 @@ int main(int argc, char** argv) {
   const auto version = vs::core::version_string();
   QApplication::setApplicationVersion(QString::fromUtf8(version.data(), static_cast<qsizetype>(version.size())));
 
-  QString project, select, view, screenshot, viewport_image, context, sketch, edit;
+  QString project, select, view, screenshot, viewport_image, context, sketch, edit, graph, node;
+  bool slice = false;
   std::optional<QSize> size;
   const QStringList args = QApplication::arguments();
   for (qsizetype i = 1; i < args.size(); ++i) {
@@ -57,6 +63,12 @@ int main(int argc, char** argv) {
       context = args[++i];
     } else if (a == QLatin1String("--sketch") && has_value) {
       sketch = args[++i];
+    } else if (a == QLatin1String("--graph") && has_value) {
+      graph = args[++i];
+    } else if (a == QLatin1String("--node") && has_value) {
+      node = args[++i];
+    } else if (a == QLatin1String("--slice")) {
+      slice = true;
     } else if (a == QLatin1String("--edit") && has_value) {
       edit = args[++i];
     } else if (a == QLatin1String("--size") && has_value) {
@@ -118,6 +130,17 @@ int main(int argc, char** argv) {
         {"right", vs::app::StandardView::Right}};
     for (const auto& [name, v] : views) {
       if (view == QLatin1String(name)) window.viewport().set_view(v);
+    }
+    if (!graph.isEmpty()) {
+      for (const auto& v : doc.volumes) {
+        if (v.name != graph.toStdString() || !window.edit_graph(v.id)) continue;
+        if (slice) {
+          if (auto* combo = window.node_editor().findChild<QComboBox*>()) combo->setCurrentIndex(1);
+        }
+        for (const auto& n : window.node_editor().graph().nodes) {
+          if (n.name == node.toStdString()) window.select(vs::app::Selection::of_node(n.id, v.id));
+        }
+      }
     }
     if (window.sketch_mode() != nullptr) window.sketch_mode()->view().fit();
     if (!capture) return;

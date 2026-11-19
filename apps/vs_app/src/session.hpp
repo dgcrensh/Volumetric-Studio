@@ -34,16 +34,41 @@
 #include <mutex>
 #include <thread>
 
+#include "node_preview.hpp"
 #include "scene.hpp"
 #include "vs/core/diagnostic.hpp"
+#include "vs/proc/graph.hpp"
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
 #include "vs/model/project.hpp"
+
+namespace vs::proc {
+class ProceduralGenerator;
+}
 
 namespace vs::app {
 
 // Viewport data made on the worker thread from a scene (viewport.cpp).
 struct PreparedScene;
+
+struct Snapshot;
+
+namespace detail {
+struct PreviewState;
+}
+
+// A node to preview (M15): `node` of `graph` (the volume's graph as it
+// stands, which may be newer than the snapshot's: graph edits don't change
+// the layout) in `volume`, against `snapshot`'s layout build.
+struct NodePreviewRequest {
+  std::shared_ptr<const Snapshot> snapshot;
+  Id volume;
+  proc::Graph graph;
+  Id node;
+  std::string port;  // empty: the first output there is something to draw for
+  NodePreviewOptions options;
+  double cell = 0.0;  // the preview grid (0: proc::kPreviewCells along the box)
+};
 
 struct Snapshot {
   std::uint64_t generation = 0;  // which regenerate() request it answers
@@ -103,6 +128,21 @@ class Session : public QObject {
   // the UI thread (unless the session is gone by then).
   void run_in_background(std::function<void()> work, std::function<void()> done);
 
+  // Node previews (M15) run on a thread of their own, so a preview never
+  // waits behind a long evaluation. The node is inspected
+  // (proc::inspect_node()) with the procedural generator's node cache, so
+  // a node the volume just generated through costs nothing to inspect,
+  // and the volume's inputs (its boundary and patches, tessellated) are
+  // kept per layout, so only the first preview after a layout change pays
+  // for them. Only the newest request is answered, through nodePreviewed()
+  // on the UI thread; the result's scene is already prepared for the
+  // viewport. Returns the request's number.
+  std::uint64_t preview_node(NodePreviewRequest request);
+  // Drops any pending preview (its answer won't be delivered).
+  void cancel_preview();
+  // Node evaluations the procedural generator and the previews ran.
+  [[nodiscard]] std::size_t nodes_evaluated() const;
+
  signals:
   void projectChanged();
   // update_project() replaced the project.
@@ -110,6 +150,9 @@ class Session : public QObject {
   void evaluationStarted(quint64 generation);
   void progressed(int done, int total);
   void evaluated(vs::app::SnapshotPtr snapshot);
+  // The answer to the newest preview_node() request.
+  void nodePreviewed(quint64 request, std::shared_ptr<const vs::app::NodePreviewResult> result,
+                     std::shared_ptr<const vs::app::PreparedScene> prepared);
 
  private:
   void post(std::function<void()> job);
@@ -136,6 +179,14 @@ class Session : public QObject {
   std::uint64_t running_ = 0;   // the generation being evaluated (0: none)
   eval::CancellationToken current_cancel_;
   std::thread worker_;
+
+  // Node previews (preview_node()).
+  void preview_loop();
+  void preview_job(std::uint64_t id, const NodePreviewRequest& request);
+  std::shared_ptr<proc::ProceduralGenerator> generator_;
+  std::unique_ptr<detail::PreviewState> preview_;
+  std::uint64_t preview_requested_ = 0;  // UI thread
+  std::thread preview_worker_;
 };
 
 }  // namespace vs::app

@@ -110,6 +110,7 @@ std::string_view to_string(ItemRole role) {
     case ItemRole::ConnectionSurface: return "connection surface";
     case ItemRole::LayoutSolid: return "layout solid";
     case ItemRole::Sketch: return "sketch";
+    case ItemRole::NodePreview: return "node preview";
   }
   return "?";
 }
