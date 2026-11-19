@@ -35,6 +35,21 @@ struct Boxes {
 
 Boxes boxes(const std::vector<vs::proc::Graph>& graphs);
 
+// mixed(graph): a procedural box P (0..40 x 0..30 x 0..20, filled by
+// `graph`, parameter `wall` 2 mm) next to a parametric box Q (40..80, its
+// contents a full-size extrude), joined on x = 40 by a 10 x 10 patch
+// centred at y = 10, z = 10: bonded, or with `flange` a bolted flange with
+// one M4 bolt in the middle. `patch` overrides the patch: its centre (y,
+// z) and size.
+struct Mixed {
+  vs::model::Project project;
+  Id procedural, parametric, surface;
+};
+struct Patch {
+  double u = 10, v = 10, width = 10, height = 10;
+};
+Mixed mixed(const vs::proc::Graph& graph, bool flange = false, Patch patch = {});
+
 struct ShellAndBall {
   vs::proc::Graph graph;
   Id boundary, wall, shell, ball, join, output;

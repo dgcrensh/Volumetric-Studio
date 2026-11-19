@@ -6,7 +6,7 @@
 // Every port has one PortType, and an edge joins ports of the same type
 // only: there are no implicit conversions. Turning one type into another
 // takes an explicit node, so its cost and loss of accuracy are visible in
-// the graph (field-to-mesh and mesh-to-field arrive in M11).
+// the graph (convert.field_to_mesh and convert.mesh_to_field, M11).
 //
 //   Scalar   one number (FP64: parameters and measurements are authored-grade)
 //   Vector   three numbers (FP64), a point or a direction

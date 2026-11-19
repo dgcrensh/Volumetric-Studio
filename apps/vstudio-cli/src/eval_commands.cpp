@@ -3,6 +3,7 @@
 #include <charconv>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <variant>
@@ -12,6 +13,7 @@
 
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
+#include "vs/mesh/io.hpp"
 #include "vs/model/project.hpp"
 #include "vs/proc/generator.hpp"
 
@@ -50,6 +52,11 @@ void print(const eval::Evaluation& ev, double ms, std::ostream& out) {
     if (const proc::FieldContents* fc = proc::field_contents(r)) {
       const auto& g = fc->samples.grid;
       out << fmt::format("    field {} x {} x {} samples, {} mm apart\n", g.nx, g.ny, g.nz, g.cell);
+      if (const mesh::Mesh* m = proc::contents_mesh(r)) {
+        out << fmt::format("    mesh {} triangles, {} vertices, {} seam{} stitched\n",
+                           m->triangle_count(), m->vertex_count(), fc->stitched.size(),
+                           fc->stitched.size() == 1 ? "" : "s");
+      }
     }
     if (r.contents) {
       for (const auto& o : r.contents->outputs) {
@@ -82,11 +89,12 @@ void print(const eval::Evaluation& ev, double ms, std::ostream& out) {
 int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   constexpr std::string_view kUsage =
       "usage: vstudio-cli rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] "
-      "[--cache] [--set <volume>.<parameter>=<value>]... [--twice]\n";
+      "[--stl <out.stl>] [--cache] [--set <volume>.<parameter>=<value>]... [--twice]\n";
   std::optional<std::string_view> project_arg;
   eval::EngineOptions engine_options;
   eval::EvaluateOptions options;
   bool cache = false, twice = false;
+  std::optional<std::string_view> stl;
   std::vector<std::string_view> sets;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const auto a = args[i];
@@ -101,6 +109,9 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
     } else if (a == "--check-determinism") {
       engine_options.check_determinism = true;
     } else if (a == "--weld") {
+      options.weld = true;
+    } else if (a == "--stl" && i + 1 < args.size()) {
+      stl = args[++i];
       options.weld = true;
     } else if (a == "--cache") {
       cache = true;
@@ -168,6 +179,17 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     print(ev, ms, out);
     errors = errors || !ev.ok();
+    if (stl && run + 1 == (twice ? 2 : 1) && !errors && ev.combined && ev.combined->ok()) {
+      const auto bytes = mesh::write_stl(ev.combined->weld.mesh);
+      if (!bytes) return err << bytes.error().to_string() << "\n", 1;
+      std::ofstream f(to_path(*stl), std::ios::binary | std::ios::trunc);
+      if (f) {
+        f.write(reinterpret_cast<const char*>(bytes->data()),
+                static_cast<std::streamsize>(bytes->size()));
+      }
+      if (!f) return err << "vstudio-cli: can't write " << *stl << "\n", 1;
+      out << fmt::format("wrote       {} (STL, {} bytes)\n", *stl, bytes->size());
+    }
   }
   out << "result      " << (errors ? "errors" : "ok") << "\n";
   return errors ? 1 : 0;

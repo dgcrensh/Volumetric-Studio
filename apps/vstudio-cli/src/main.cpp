@@ -48,11 +48,12 @@ Commands:
          [--out <project>]
                     Add a file as a static volume boxed by its bounds (or, with --into,
                     as an existing volume's contents), and save
-  rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] [--cache]
-          [--set <volume>.<parameter>=<value>]... [--twice]
-                    Evaluate a project with the engine: regenerate what changed, check
-                    containment, publish outputs; print statuses, cache use and the
-                    output hash. Exits 1 on errors
+  rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] [--stl <out.stl>]
+          [--cache] [--set <volume>.<parameter>=<value>]... [--twice]
+                    Evaluate a project with the engine: regenerate what changed (meshing
+                    procedural volumes), check containment, publish outputs; print
+                    statuses, cache use and the output hash. --stl writes the welded
+                    mesh when it is clean. Exits 1 on errors
   nodes             List the procedural node library: types, ports and properties
   graph <graph.json>
                     Check a procedural graph (types, loops, settings) and print its

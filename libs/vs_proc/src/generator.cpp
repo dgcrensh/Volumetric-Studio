@@ -4,6 +4,7 @@
 
 #include <fmt/format.h>
 
+#include "vs/mesh/seam_library.hpp"
 #include "vs/proc/check.hpp"
 
 namespace vs::proc {
@@ -18,6 +19,8 @@ Hash256 FieldContents::hash() const {
   h.add(field != nullptr);
   if (field) h.add(field->hash());
   h.add(samples.hash());
+  h.add(static_cast<std::uint64_t>(stitched.size()));
+  for (const auto& id : stitched) h.add(id);
   return h.finalize();
 }
 
@@ -86,8 +89,12 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
   }
   auto inputs = std::make_shared<const GraphInputs>(std::move(gathered).value());
   auto outputs = unmeasured(v);
+  // The seams it must conform to; the library made the same ones, failures
+  // included, so those are reported there, not here.
+  auto seams = std::make_shared<const std::vector<mesh::Seam>>(
+      mesh::build_seams(document, layout, settings, v.id).seams);
 
-  return [this, graph, inputs, outputs, &pool](eval::GeneratedContents& out) {
+  return [this, graph, inputs, outputs, seams, &pool](eval::GeneratedContents& out) {
     EvaluateGraphOptions options;
     options.cache = &cache_;
     options.pool = &pool;
@@ -114,7 +121,17 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
     auto fc = std::make_shared<FieldContents>();
     fc->field = *ev.contents;
     fc->samples = sample(*fc->field, *grid, &pool);
+    ContentsMesh cm =
+        mesh_contents(fc->samples, *inputs->boundary, *seams, inputs->volume_subject, &pool);
+    out.diagnostics.append(cm.diagnostics);
+    fc->stitched = std::move(cm.stitched);
+    fc->moved_vertices = cm.moved_vertices;
     out.extra = std::move(fc);
+    if (!cm.ok()) {
+      out.status = VolumeStatus::Failed;
+      return;
+    }
+    out.mesh = std::move(cm.mesh);
     out.status = VolumeStatus::Current;
   };
 }
@@ -128,6 +145,11 @@ std::shared_ptr<ProceduralGenerator> install(eval::Engine& engine) {
 const FieldContents* field_contents(const eval::VolumeResult& result) {
   if (!result.contents) return nullptr;
   return dynamic_cast<const FieldContents*>(result.contents->extra.get());
+}
+
+const mesh::Mesh* contents_mesh(const eval::VolumeResult& result) {
+  if (!result.contents || !result.contents->mesh) return nullptr;
+  return &*result.contents->mesh;
 }
 
 }  // namespace vs::proc

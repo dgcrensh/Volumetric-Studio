@@ -10,7 +10,7 @@ using core::Diagnostic;
 
 CombinedMesh combine(const model::Document& document, const model::DocumentBuild& build,
                      const model::BlobStore* blobs, const core::ProductSettings& settings,
-                     const CombineOptions& options) {
+                     const CombineOptions& options, const GeneratedMeshes& generated) {
   CombinedMesh out;
   out.seams = build_seams(document, build, settings);
   out.diagnostics.append(out.seams.diagnostics);
@@ -34,7 +34,16 @@ CombinedMesh combine(const model::Document& document, const model::DocumentBuild
     vt.volume = v.id;
     vt.name = subject.label;
     const auto* stat = std::get_if<model::StaticContents>(&v.contents);
-    if (vb != nullptr && !vb->contents.is_empty()) {
+    const auto made = generated.find(v.id);
+    if (made != generated.end() && made->second != nullptr) {
+      vt.mesh = *made->second;
+      for (const Seam* s : seams) {
+        if (std::any_of(vt.mesh.seam_vertices.begin(), vt.mesh.seam_vertices.end(),
+                        [&](const core::Id& id) { return s->find(id).has_value(); })) {
+          vt.seams.push_back(s->surface);
+        }
+      }
+    } else if (vb != nullptr && !vb->contents.is_empty()) {
       VolumeMesh m = tessellate(vb->contents, subject, seams, settings, options.tessellation);
       out.diagnostics.append(m.diagnostics);
       vt.mesh = std::move(m.mesh);
@@ -70,7 +79,7 @@ CombinedMesh combine(const model::Document& document, const model::DocumentBuild
       skip("a placeholder, with no contents yet");
       continue;
     } else if (v.kind() == model::VolumeKind::Procedural) {
-      skip("procedural contents aren't generated yet");
+      skip("its procedural contents have no mesh");
       continue;
     } else {
       skip("its contents weren't built");

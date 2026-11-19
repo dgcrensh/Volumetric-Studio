@@ -76,7 +76,7 @@ struct GeneratedContents {
   // don't regenerate, but are never shown.
   model::VolumeStatus status = model::VolumeStatus::Current;
   kernel::Solid solid;                                    // B-rep contents
-  std::optional<mesh::Mesh> mesh;                         // static mesh contents
+  std::optional<mesh::Mesh> mesh;                         // static or generated mesh contents
   std::optional<feature::RebuildResult> rebuild;          // parametric, memory only
   std::shared_ptr<const ExtraContents> extra;             // a generator's, memory only
   std::vector<model::OutputResult> outputs;
