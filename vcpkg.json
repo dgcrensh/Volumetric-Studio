@@ -44,6 +44,11 @@
             "widgets",
             "opengl"
           ]
+        },
+        {
+          "name": "qtbase",
+          "host": true,
+          "default-features": false
         }
       ]
     }
