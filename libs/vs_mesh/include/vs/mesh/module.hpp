@@ -1,7 +1,8 @@
 #pragma once
 
 // vs_mesh: mesh types, seam library, conforming tessellation, welding and mesh I/O.
-// Placeholder until M7; see Implementation Plan.md.
+// Mesh types, topology checks, seams and welding are in the other headers
+// (M7); see Implementation Plan.md and docs/decisions/0007.
 
 #include <string_view>
 

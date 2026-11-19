@@ -7,6 +7,7 @@ vs_add_application(vstudio-cli
     src/feature_commands.cpp
     src/kernel_commands.cpp
     src/main.cpp
+    src/mesh_commands.cpp
     src/model_commands.cpp
     src/sketch_commands.cpp
     src/selftest.cpp
@@ -99,4 +100,14 @@ if(VS_BUILD_TESTS)
     set_tests_properties("vstudio-cli: validate explains ${fixture}" PROPERTIES
       PASS_REGULAR_EXPRESSION "${expect_${fixture}}.*result +invalid")
   endforeach()
+endif()
+
+if(VS_BUILD_TESTS)
+  add_test(NAME "vstudio-cli: seams prints the sample bracket's flange seam"
+    COMMAND vstudio-cli seams "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj")
+  set_tests_properties("vstudio-cli: seams prints the sample bracket's flange seam" PROPERTIES
+    PASS_REGULAR_EXPRESSION "seams +1 of 1.*Flange +spacing 3\\.802 mm \\(derived\\), 70 outline.*3 loops \\(2 holes\\).*disc ok.*result +ok")
+  add_test(NAME "vstudio-cli: seams fails on a missing project"
+    COMMAND vstudio-cli seams "${CMAKE_CURRENT_BINARY_DIR}/no-such.vsproj")
+  set_tests_properties("vstudio-cli: seams fails on a missing project" PROPERTIES WILL_FAIL TRUE)
 endif()

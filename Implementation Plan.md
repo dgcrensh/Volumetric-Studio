@@ -450,5 +450,6 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | M3 | Done | #5 | Fuzzy feature booleans and geometric face references (decision 0002) |
 | M4 | Done | #6 | Edges found by their faces, cylindrical face names, fallback search for fillets, chamfers and shells (decision 0003) |
 | M5 | Done | #7 | First milestone from a cloud session. Connection surface types fixed, contents see inputs through `ExternalInputs`, stored-only zips (decision 0005; deflated since M6) |
-| M6 | In review | | Overlap depth is the region's thinnest side, edge-only touches warn, a fifth routing target (contents), meshes checked through a view, miniz vendored for deflated zips (decision 0006) |
-| M7–M17 | Not started | | |
+| M6 | Done | #8 | Overlap depth is the region's thinnest side, edge-only touches warn, a fifth routing target (contents), meshes checked through a view, miniz vendored for deflated zips (decision 0006) |
+| M7 | In review | | Spacing set per surface (derived: a sixteenth of the diagonal), own constrained Delaunay triangulator, clearance surfaces get no seam, flange bolt holes are seam holes, weld removes paired seam faces (decision 0007) |
+| M8–M17 | Not started | | |

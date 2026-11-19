@@ -248,8 +248,9 @@ std::optional<ThreadSize> thread_size(std::string_view name);
 std::vector<ThreadSize> thread_sizes();
 
 // How the seam along the surface's outline is divided (spec, "Seam
-// conformity"). A placeholder until M7 derives the division: `spacing` 0
-// means "derive automatically"; a positive value overrides it.
+// conformity"). vs_mesh (seam_library.hpp, M7) derives the division from
+// the patch: `spacing` 0 means "derive automatically" (a sixteenth of the
+// outline's diagonal); a positive value, in mm, overrides it.
 struct SeamDefinition {
   double spacing = 0.0;  // mm
   friend bool operator==(const SeamDefinition&, const SeamDefinition&) = default;

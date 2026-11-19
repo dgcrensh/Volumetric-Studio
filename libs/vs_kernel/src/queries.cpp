@@ -1,10 +1,20 @@
 #include "vs/kernel/queries.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <GeomAbs_CurveType.hxx>
+#include <TopoDS_Wire.hxx>
+#include <TopExp_Explorer.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Lin.hxx>
 #include <BRepBndLib.hxx>
 #include <ElSLib.hxx>
 #include <GeomAbs_SurfaceType.hxx>
@@ -209,6 +219,89 @@ std::optional<Cylinder> face_cylinder(const Face& face) {
   } catch (...) {
     return std::nullopt;
   }
+}
+
+namespace {
+
+// The edge in its curve's parameter direction; face_loops() turns it to
+// follow the loop.
+LoopEdge loop_edge(const TopoDS_Edge& edge) {
+  LoopEdge out;
+  BRepAdaptor_Curve curve(edge);
+  const double first = curve.FirstParameter();
+  const double last = curve.LastParameter();
+  out.start = detail::from_occ(curve.Value(first));
+  out.end = detail::from_occ(curve.Value(last));
+  out.length = GCPnts_AbscissaPoint::Length(curve);
+  switch (curve.GetType()) {
+    case GeomAbs_Line:
+      out.kind = LoopEdge::Kind::Line;
+      break;
+    case GeomAbs_Circle: {
+      const gp_Circ circ = curve.Circle();
+      out.kind = LoopEdge::Kind::Circle;
+      out.centre = detail::from_occ(circ.Location());
+      out.radius = circ.Radius();
+      out.axis = detail::from_occ(circ.Axis().Direction());
+      out.sweep = last - first;
+      break;
+    }
+    default:
+      out.kind = LoopEdge::Kind::Other;
+      break;
+  }
+  return out;
+}
+
+void reverse_edge(LoopEdge& e) {
+  std::swap(e.start, e.end);
+  e.axis = -e.axis;
+}
+
+// Turns edges so each starts where the previous one ends.
+void chain(std::vector<LoopEdge>& edges) {
+  if (edges.size() < 2) return;
+  const auto d = [](const dvec3& a, const dvec3& b) { return core::length(a - b); };
+  // The first edge's end must meet the second edge.
+  const LoopEdge& second = edges[1];
+  if (std::min(d(edges[0].start, second.start), d(edges[0].start, second.end)) <
+      std::min(d(edges[0].end, second.start), d(edges[0].end, second.end))) {
+    reverse_edge(edges[0]);
+  }
+  for (std::size_t i = 1; i < edges.size(); ++i) {
+    const dvec3& at = edges[i - 1].end;
+    if (d(edges[i].end, at) < d(edges[i].start, at)) reverse_edge(edges[i]);
+  }
+}
+
+}  // namespace
+
+std::vector<FaceLoop> face_loops(const Face& face) {
+  std::vector<FaceLoop> loops;
+  if (face.is_empty()) return loops;
+  try {
+    const TopoDS_Face& f = TopoDS::Face(topo(face));
+    const TopoDS_Wire outer = BRepTools::OuterWire(f);
+    std::vector<TopoDS_Wire> wires;
+    if (!outer.IsNull()) wires.push_back(outer);
+    for (TopExp_Explorer it(f, TopAbs_WIRE); it.More(); it.Next()) {
+      const TopoDS_Wire& w = TopoDS::Wire(it.Current());
+      if (!w.IsSame(outer)) wires.push_back(w);
+    }
+    for (const TopoDS_Wire& w : wires) {
+      FaceLoop loop;
+      for (BRepTools_WireExplorer ex(w, f); ex.More(); ex.Next()) {
+        const TopoDS_Edge& e = ex.Current();
+        if (BRep_Tool::Degenerated(e) || BRep_Tool::IsClosed(e, f)) continue;
+        loop.edges.push_back(loop_edge(e));
+      }
+      chain(loop.edges);
+      if (!loop.edges.empty()) loops.push_back(std::move(loop));
+    }
+  } catch (...) {
+    loops.clear();
+  }
+  return loops;
 }
 
 std::vector<Edge> edges(const Shape& shape) { return sub_shapes<Edge>(shape, TopAbs_EDGE); }

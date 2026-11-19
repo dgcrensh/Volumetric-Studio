@@ -9,6 +9,7 @@
 #include "kernel_commands.hpp"
 #include "model_commands.hpp"
 #include "sketch_commands.hpp"
+#include "mesh_commands.hpp"
 #include "validate_commands.hpp"
 #include "selftest.hpp"
 #include "vs/core/log.hpp"
@@ -33,6 +34,9 @@ Commands:
                     Validate a project (overlap, contact, connection rules, loops,
                     containment); print each problem and where to fix it.
                     Exits 1 when there are errors
+  seams <project.vsproj>
+                    Build a project and print each connection surface's seam
+                    (spacing, vertices, triangles); exits 1 if one fails
   version           Print the version (same as --version)
   help              Print this message
 
@@ -111,6 +115,9 @@ int main(int argc, char** argv) {
   }
   if (command == "validate") {
     return vs::cli::run_validate(rest, std::cout, std::cerr);
+  }
+  if (command == "seams") {
+    return vs::cli::run_seams(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);
