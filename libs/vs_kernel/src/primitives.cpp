@@ -9,6 +9,8 @@
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepClass_FaceClassifier.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
+#include <TopExp_Explorer.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -327,6 +329,69 @@ Result<Solid> make_prism(const Face& profile, const dvec3& direction,
       return Diagnostic::error("kernel.primitive.failed", "The extrusion could not be built");
     }
     return finish_primitive(mk.Shape(), "extrusion", settings);
+  });
+}
+
+Result<Solid> make_drafted_prism(const Face& profile, const dvec3& direction, double draft_angle,
+                                 const ProductSettings& settings) {
+  if (!std::isfinite(draft_angle) || std::abs(draft_angle) >= 89.0 * std::numbers::pi / 180.0) {
+    return Diagnostic::error("kernel.draft.bad_angle",
+                             "The draft angle must be a number between -89° and 89°");
+  }
+  if (draft_angle == 0.0) return make_prism(profile, direction, settings);
+  return detail::guarded<Result<Solid>>("kernel.draft.failed", "Extruding with draft",
+                                        [&]() -> Result<Solid> {
+    if (profile.is_empty()) {
+      return Diagnostic::error("kernel.primitive.empty_profile", "The profile is empty");
+    }
+    if (!is_finite(direction)) {
+      return Diagnostic::error("kernel.primitive.invalid_size",
+                               "The extrusion direction is not finite");
+    }
+    const double depth = core::length(direction);
+    if (auto d = check_length("kernel.primitive.invalid_size", "extrusion depth", depth,
+                              settings)) {
+      return *d;
+    }
+    const TopoDS_Face& face = TopoDS::Face(topo(profile));
+    const auto plane = occ::down_cast<Geom_Plane>(BRep_Tool::Surface(face));
+    if (plane.IsNull()) {
+      return Diagnostic::error("kernel.profile.not_planar", "The profile is not planar");
+    }
+    BRepPrimAPI_MakePrism prism(face, detail::to_occ_vec(direction));
+    if (!prism.IsDone()) {
+      return Diagnostic::error("kernel.primitive.failed", "The extrusion could not be built");
+    }
+    const TopoDS_Shape& first = prism.FirstShape();
+    const TopoDS_Shape& last = prism.LastShape();
+    const dvec3 d = direction / depth;
+    const gp_Dir pull(d.x, d.y, d.z);
+    const gp_Pln neutral = plane->Pln();
+
+    BRepOffsetAPI_DraftAngle draft(prism.Shape());
+    for (TopExp_Explorer ex(prism.Shape(), TopAbs_FACE); ex.More(); ex.Next()) {
+      const TopoDS_Face& side = TopoDS::Face(ex.Current());
+      if (side.IsSame(first) || side.IsSame(last)) continue;
+      // OCCT's sign matches ours: a positive angle tilts a face's outward
+      // normal towards the pull direction, so the section shrinks along it.
+      draft.Add(side, pull, draft_angle, neutral);
+      if (!draft.AddDone()) {
+        return Diagnostic::error(
+            "kernel.draft.failed",
+            "A side face can't take the draft angle; try a smaller angle or a shorter extrusion");
+      }
+    }
+    draft.Build();
+    if (!draft.IsDone()) {
+      return Diagnostic::error(
+          "kernel.draft.failed",
+          "The drafted extrusion could not be built; the section probably shrinks to nothing. "
+          "Try a smaller angle or a shorter extrusion");
+    }
+    auto solid = detail::finish_solid(draft.Shape(), "kernel.draft.failed", "drafted extrusion");
+    if (!solid) return solid;
+    if (auto w = check_in_working_space(*solid, settings)) return *w;
+    return solid;
   });
 }
 

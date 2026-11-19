@@ -28,6 +28,13 @@ struct Axis {
   dvec3 direction{0, 0, 1};
 };
 
+// An infinite plane: a point on it and its unit normal. For a face of a
+// solid, the normal points out of the material.
+struct Plane {
+  dvec3 origin{};
+  dvec3 normal{0, 0, 1};
+};
+
 // --- profiles ---------------------------------------------------------------
 
 struct LineSegment {
@@ -79,6 +86,15 @@ Result<Solid> make_sphere(const dvec3& center, double radius, const ProductSetti
 // Sweeps a planar face along `direction` (its length is the extrusion depth).
 Result<Solid> make_prism(const Face& profile, const dvec3& direction,
                          const ProductSettings& settings);
+
+// A prism whose side faces are drafted: they tilt by `draft_angle` radians
+// about the profile's plane, so the section shrinks along `direction` for a
+// positive angle and grows for a negative one (holes do the opposite, so the
+// material always tapers the same way). |draft_angle| must be below 89°;
+// zero gives make_prism(). Fails with "kernel.draft.failed" when the side
+// faces can't be tilted that far (a section that shrinks to nothing).
+Result<Solid> make_drafted_prism(const Face& profile, const dvec3& direction, double draft_angle,
+                                 const ProductSettings& settings);
 
 // Revolves a planar face by `angle` radians (0 < angle <= 2π) about `axis`.
 // The axis must not cross the profile's interior.

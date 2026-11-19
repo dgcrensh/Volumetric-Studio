@@ -2,7 +2,13 @@
 
 #include <cmath>
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
+#include <ElSLib.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <gp_Pln.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
@@ -120,6 +126,29 @@ PointClass classify(const Solid& solid, const dvec3& point, const ProductSetting
 }
 
 std::vector<Face> faces(const Shape& shape) { return sub_shapes<Face>(shape, TopAbs_FACE); }
+
+std::optional<Plane> face_plane(const Face& face) {
+  if (face.is_empty()) return std::nullopt;
+  try {
+    const TopoDS_Face& f = TopoDS::Face(topo(face));
+    BRepAdaptor_Surface surface(f, /*theRestriction=*/false);
+    if (surface.GetType() != GeomAbs_Plane) return std::nullopt;
+    const gp_Pln pln = surface.Plane();
+    dvec3 normal = detail::from_occ(pln.Axis().Direction());
+    if (f.Orientation() == TopAbs_REVERSED) normal = -normal;
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(f, props);
+    // Project the centre of area onto the plane, in case integration leaves
+    // it a hair off.
+    gp_Pnt c = props.CentreOfMass();
+    const gp_Pnt on = ElSLib::Value(0, 0, pln);
+    const double off = gp_Vec(on, c).Dot(gp_Vec(pln.Axis().Direction()));
+    c.Translate(gp_Vec(pln.Axis().Direction()) * -off);
+    return Plane{detail::from_occ(c), normal};
+  } catch (...) {
+    return std::nullopt;
+  }
+}
 std::vector<Edge> edges(const Shape& shape) { return sub_shapes<Edge>(shape, TopAbs_EDGE); }
 std::vector<Solid> solids(const Shape& shape) { return sub_shapes<Solid>(shape, TopAbs_SOLID); }
 
