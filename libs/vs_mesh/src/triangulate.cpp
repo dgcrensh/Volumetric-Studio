@@ -68,9 +68,10 @@ class Cdt {
   // Builds the Delaunay triangulation of every point inside a super
   // triangle. False on numerical trouble.
   bool insert_all(std::size_t real_count);
-  // Makes (a, b) an edge and marks it constrained. False when a vertex lies
-  // on the segment or recovery doesn't converge.
-  bool recover(std::uint32_t a, std::uint32_t b);
+  // Makes (a, b) an edge and marks it constrained (and a wall of the domain
+  // when `wall`). False when a vertex lies on the segment or recovery
+  // doesn't converge.
+  bool recover(std::uint32_t a, std::uint32_t b, bool wall);
   // Restores the Delaunay property away from constrained edges.
   bool legalise_all();
   // Triangles inside the constraint loops (even-odd from the outside).
@@ -115,6 +116,7 @@ class Cdt {
   std::vector<Tri> t_;
   std::vector<std::uint32_t> vt_;  // a triangle at each vertex
   std::unordered_set<std::uint64_t> constrained_;
+  std::unordered_set<std::uint64_t> walls_;  // loop segments: the domain's boundary
   std::uint32_t last_ = 0;
 };
 
@@ -302,7 +304,8 @@ std::pair<std::uint32_t, std::uint32_t> Cdt::find_edge(std::uint32_t x, std::uin
   return {kNone, kNone};
 }
 
-bool Cdt::recover(std::uint32_t a, std::uint32_t b) {
+bool Cdt::recover(std::uint32_t a, std::uint32_t b, bool wall) {
+  if (wall) walls_.insert(edge_key(a, b));
   if (find_edge(a, b).first != kNone) {
     constrained_.insert(edge_key(a, b));
     return true;
@@ -429,7 +432,7 @@ std::vector<Triangle> Cdt::inside(std::size_t real_count) const {
     for (std::uint32_t k = 0; k < 3; ++k) {
       const std::uint32_t u = t_[t].n[k];
       if (u == kNone) continue;
-      const bool wall = constrained(t_[t].v[inc(k)], t_[t].v[dec(k)]);
+      const bool wall = walls_.contains(edge_key(t_[t].v[inc(k)], t_[t].v[dec(k)]));
       const int d = depth[t] + (wall ? 1 : 0);
       if (depth[u] < 0 || d < depth[u]) {
         depth[u] = d;
@@ -461,8 +464,10 @@ bool segments_touch(const dvec2& p0, const dvec2& p1, const dvec2& q0, const dve
   return on(p0, p1, q0, d1) || on(p0, p1, q1, d2) || on(q0, q1, p0, d3) || on(q0, q1, p1, d4);
 }
 
-// True when two loop segments meet anywhere they shouldn't.
-bool check_segments(std::span<const dvec2> pts, const std::vector<Loop>& loops) {
+// True when two segments (of loops, or extra ones) meet anywhere they
+// shouldn't.
+bool check_segments(std::span<const dvec2> pts, const std::vector<Loop>& loops,
+                    std::span<const Segment> extra) {
   struct Seg {
     std::uint32_t a, b;
   };
@@ -474,6 +479,10 @@ bool check_segments(std::span<const dvec2> pts, const std::vector<Loop>& loops) 
       segs.push_back({a, b});
       total += core::length(pts[b] - pts[a]);
     }
+  }
+  for (const Segment& e : extra) {
+    segs.push_back({e[0], e[1]});
+    total += core::length(pts[e[1]] - pts[e[0]]);
   }
   const double cell = std::max(2.0 * total / static_cast<double>(segs.size()), 1e-12);
   std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> grid;
@@ -547,7 +556,18 @@ double signed_double_area(std::span<const core::dvec2> points, const Loop& loop)
 
 core::Result<std::vector<Triangle>> triangulate(std::span<const core::dvec2> points,
                                                 const std::vector<Loop>& loops) {
+  return triangulate(points, loops, {});
+}
+
+core::Result<std::vector<Triangle>> triangulate(std::span<const core::dvec2> points,
+                                                const std::vector<Loop>& loops,
+                                                std::span<const Segment> segments) {
   if (loops.empty()) return error("mesh.triangulate.input", "No outer loop");
+  for (const Segment& e : segments) {
+    if (e[0] >= points.size() || e[1] >= points.size() || e[0] == e[1]) {
+      return error("mesh.triangulate.input", "A segment's index is out of range or repeated");
+    }
+  }
   std::vector<int> on_loop(points.size(), 0);
   for (const Loop& loop : loops) {
     if (loop.size() < 3) return error("mesh.triangulate.input", "A loop has fewer than three points");
@@ -580,7 +600,7 @@ core::Result<std::vector<Triangle>> triangulate(std::span<const core::dvec2> poi
       }
     }
   }
-  if (check_segments(points, loops)) {
+  if (check_segments(points, loops, segments)) {
     return error("mesh.triangulate.self_intersecting", "Loop segments cross or touch");
   }
   for (std::size_t h = 1; h < loops.size(); ++h) {
@@ -655,10 +675,13 @@ core::Result<std::vector<Triangle>> triangulate(std::span<const core::dvec2> poi
   if (!cdt.insert_all(points.size())) return failed("point insertion");
   for (const Loop& loop : loops) {
     for (std::size_t i = 0; i < loop.size(); ++i) {
-      if (!cdt.recover(rank[loop[i]], rank[loop[(i + 1) % loop.size()]])) {
+      if (!cdt.recover(rank[loop[i]], rank[loop[(i + 1) % loop.size()]], true)) {
         return failed("edge recovery");
       }
     }
+  }
+  for (const Segment& e : segments) {
+    if (!cdt.recover(rank[e[0]], rank[e[1]], false)) return failed("edge recovery");
   }
   if (!cdt.legalise_all()) return failed("Delaunay flips did not converge");
   std::vector<Triangle> tris = cdt.inside(points.size());

@@ -178,6 +178,10 @@ so they are registered. A new library must also be added to
   a valid-looking inside-out solid for them.
 - **Exchange.** STEP (AP242, mm) and IGES go through `exchange.hpp`; calls
   are serialised because OCCT's exchange layer has global state.
+- **Tessellation** (`tessellate.hpp`, M8) runs BRepMesh on a copy and
+  returns plain data: vertices, each edge's division, each face's wires
+  and triangulation with where every point sits (inside, vertex, k-th edge
+  point). It knows nothing of seams; `vs_mesh::tessellate()` builds on it.
 - **Tolerance findings** are in `docs/decisions/0001-working-space-and-tolerance.md`;
   `vstudio-cli tolerance-spike` reruns the measurements.
 
@@ -312,11 +316,29 @@ so they are registered. A new library must also be added to
   join their own faces to `Seam::loops` (with `segment_starts`).
 - **Weld** (`weld.hpp`): merges vertices by seam id only, checks each volume
   has exactly the seam's triangles (`mesh.weld.nonconforming`, surface
-  first), removes the paired seam faces and checks the result is watertight
+  first), removes the paired seam faces (and paired `Seam::hole_fills`,
+  where neither side has a bolt hole) and checks the result is watertight
   and manifold. Decision 0007 has the reasoning.
+- **B-rep tessellation** (`tessellate.hpp`, M8): BRepMesh's mesh, except
+  that vertices on a seam's outline become seam vertices (snapping to the
+  nearest when between two), edges along it take the seam's division,
+  planar faces on it carry the seam's triangles (constrained Delaunay
+  round the patch, `triangulate()` with extra segments) and faces whose
+  edges changed are re-triangulated in (u, v) with BRepMesh's interior
+  points. A face covering only part of a patch is
+  `mesh.tessellate.seam_uncovered`. Decision 0008.
+- **Combined mesh** (`combine.hpp`): tessellate every non-keep-out volume
+  (B-rep contents; mesh blobs read as they are; placeholders only with
+  `placeholders`), weld. **Files** (`io.hpp`): STL out (binary) and in,
+  3MF out (one object, or one per volume with its id) and in (our own
+  writer and XML reader, zipped with miniz), OBJ in. `import.hpp` adds a
+  mesh file as a static volume boxed by its bounds.
 - **Tests** mesh volumes with small meshers in `libs/vs_mesh/tests/meshers.*`
   (prisms, pyramids, a box round a patch) and weld random outlines;
-  `vstudio-cli seams <project>` prints a project's seams.
+  `test_tessellate.cpp` welds B-rep pairs (cylinders, cones, domes, fillets,
+  bolt holes) in random poses. `vstudio-cli seams <project>` prints a
+  project's seams; `export <project> --stl|--3mf [--per-volume]` and
+  `import <project> <mesh>` write and read mesh files.
 
 ## Code style
 

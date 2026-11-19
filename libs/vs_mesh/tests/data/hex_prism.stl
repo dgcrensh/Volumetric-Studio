@@ -1,0 +1,142 @@
+solid hex_prism
+  facet normal 0.866025 0.5 0
+    outer loop
+      vertex 15 -3 2
+      vertex 10 5.66025404 2
+      vertex 10 5.66025404 14.5
+    endloop
+  endfacet
+  facet normal 0.866025 0.5 -0
+    outer loop
+      vertex 15 -3 2
+      vertex 10 5.66025404 14.5
+      vertex 15 -3 14.5
+    endloop
+  endfacet
+  facet normal 1.77636e-16 1 0
+    outer loop
+      vertex 10 5.66025404 2
+      vertex 1.77635684e-15 5.66025404 2
+      vertex 1.77635684e-15 5.66025404 14.5
+    endloop
+  endfacet
+  facet normal 1.77636e-16 1 -0
+    outer loop
+      vertex 10 5.66025404 2
+      vertex 1.77635684e-15 5.66025404 14.5
+      vertex 10 5.66025404 14.5
+    endloop
+  endfacet
+  facet normal -0.866025 0.5 0
+    outer loop
+      vertex 1.77635684e-15 5.66025404 2
+      vertex -5 -3 2
+      vertex -5 -3 14.5
+    endloop
+  endfacet
+  facet normal -0.866025 0.5 0
+    outer loop
+      vertex 1.77635684e-15 5.66025404 2
+      vertex -5 -3 14.5
+      vertex 1.77635684e-15 5.66025404 14.5
+    endloop
+  endfacet
+  facet normal -0.866025 -0.5 0
+    outer loop
+      vertex -5 -3 2
+      vertex -4.4408921e-15 -11.660254 2
+      vertex -4.4408921e-15 -11.660254 14.5
+    endloop
+  endfacet
+  facet normal -0.866025 -0.5 0
+    outer loop
+      vertex -5 -3 2
+      vertex -4.4408921e-15 -11.660254 14.5
+      vertex -5 -3 14.5
+    endloop
+  endfacet
+  facet normal -7.10543e-16 -1 0
+    outer loop
+      vertex -4.4408921e-15 -11.660254 2
+      vertex 10 -11.660254 2
+      vertex 10 -11.660254 14.5
+    endloop
+  endfacet
+  facet normal -7.10543e-16 -1 0
+    outer loop
+      vertex -4.4408921e-15 -11.660254 2
+      vertex 10 -11.660254 14.5
+      vertex -4.4408921e-15 -11.660254 14.5
+    endloop
+  endfacet
+  facet normal 0.866025 -0.5 0
+    outer loop
+      vertex 10 -11.660254 2
+      vertex 15 -3 2
+      vertex 15 -3 14.5
+    endloop
+  endfacet
+  facet normal 0.866025 -0.5 0
+    outer loop
+      vertex 10 -11.660254 2
+      vertex 15 -3 14.5
+      vertex 10 -11.660254 14.5
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 -3 14.5
+      vertex 10 5.66025404 14.5
+      vertex 1.77635684e-15 5.66025404 14.5
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex 15 -3 2
+      vertex 1.77635684e-15 5.66025404 2
+      vertex 10 5.66025404 2
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 -3 14.5
+      vertex 1.77635684e-15 5.66025404 14.5
+      vertex -5 -3 14.5
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex 15 -3 2
+      vertex -5 -3 2
+      vertex 1.77635684e-15 5.66025404 2
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 -3 14.5
+      vertex -5 -3 14.5
+      vertex -4.4408921e-15 -11.660254 14.5
+    endloop
+  endfacet
+  facet normal -0 0 -1
+    outer loop
+      vertex 15 -3 2
+      vertex -4.4408921e-15 -11.660254 2
+      vertex -5 -3 2
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 15 -3 14.5
+      vertex -4.4408921e-15 -11.660254 14.5
+      vertex 10 -11.660254 14.5
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex 15 -3 2
+      vertex 10 -11.660254 2
+      vertex -4.4408921e-15 -11.660254 2
+    endloop
+  endfacet
+endsolid hex_prism

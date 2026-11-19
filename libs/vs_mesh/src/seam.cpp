@@ -311,6 +311,21 @@ Result<Seam> make_seam(const core::SubjectRef& surface, const SeamOutline& outli
   Result<std::vector<Triangle>> tris = triangulate(pts, index_loops);
   if (!tris) return with_subject(tris.error(), surface);
   seam.triangles = std::move(*tris);
+  // Each hole on its own, for volumes whose face has no hole there.
+  for (std::size_t h = 1; h < index_loops.size(); ++h) {
+    std::vector<dvec2> hp;
+    Loop hl;
+    for (const std::uint32_t i : index_loops[h]) {
+      hl.push_back(static_cast<std::uint32_t>(hp.size()));
+      hp.push_back(pts[i]);
+    }
+    Result<std::vector<Triangle>> fill = triangulate(hp, {hl});
+    if (!fill) return with_subject(fill.error(), surface);
+    for (Triangle& t : *fill) {
+      for (std::uint32_t& v : t) v = index_loops[h][v];
+    }
+    seam.hole_fills.push_back(std::move(*fill));
+  }
 
   core::Hasher h;
   h.add(std::string_view("vs.mesh.seam/1")).add(surface.id);

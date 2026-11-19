@@ -37,6 +37,13 @@ Commands:
   seams <project.vsproj>
                     Build a project and print each connection surface's seam
                     (spacing, vertices, triangles); exits 1 if one fails
+  export <project.vsproj> --stl <file> | --3mf <file> [--per-volume] [--placeholders]
+         [--deflection <mm>]
+                    Tessellate every volume against its seams, weld them and write
+                    the combined mesh (3MF: one object, or one per volume). Writes
+                    nothing and exits 1 unless it is watertight and manifold
+  import <project.vsproj> <mesh.stl|.3mf|.obj> [--name <name>] [--out <project>]
+                    Add a mesh file as a static volume boxed by its bounds, and save
   version           Print the version (same as --version)
   help              Print this message
 
@@ -118,6 +125,12 @@ int main(int argc, char** argv) {
   }
   if (command == "seams") {
     return vs::cli::run_seams(rest, std::cout, std::cerr);
+  }
+  if (command == "export") {
+    return vs::cli::run_export(rest, std::cout, std::cerr);
+  }
+  if (command == "import") {
+    return vs::cli::run_import(rest, std::cout, std::cerr);
   }
   if (command == "tolerance-spike") {
     return vs::cli::run_tolerance_spike(rest, std::cout, std::cerr);

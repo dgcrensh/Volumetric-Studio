@@ -43,7 +43,8 @@
 //   each parameter is a value its expressions can use by name.
 //
 // Static contents read their blob when the build is given the project's
-// blobs (STEP and IGES; meshes wait for M8 and stay Stale). Procedural
+// blobs (STEP and IGES; mesh files are read by vs_mesh's combine(), M8, and
+// stay Stale here until M9's engine owns them). Procedural
 // contents wait for M10 and stay Stale.
 //   model.contents.failed           the contents' rebuild has errors
 //   model.contents.missing_blob     the blob isn't in the project

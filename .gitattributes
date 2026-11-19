@@ -7,3 +7,8 @@
 # Project folders are checked byte for byte (their manifests list each blob's
 # BLAKE3 hash), so line endings must never be converted.
 **/*.vsproj/** -text
+
+# Mesh files: STL may be binary or ASCII; either way keep the bytes.
+*.stl -text
+*.3mf binary
+*.obj -text

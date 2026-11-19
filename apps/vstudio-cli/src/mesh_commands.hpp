@@ -12,4 +12,18 @@ namespace vs::cli {
 // surface that needs a seam has one, 1 otherwise, 2 for bad arguments.
 int run_seams(std::span<const std::string_view> args, std::ostream& out, std::ostream& err);
 
+// `export <project> --stl <file> | --3mf <file> [--per-volume] [--placeholders]
+// [--deflection <mm>]`: builds the project, tessellates every volume against
+// its seams, welds them (vs_mesh, M8) and writes the combined mesh: STL, or
+// 3MF as one object (or one per volume with --per-volume). Prints each
+// volume and the weld's checks. Writes nothing and returns 1 when the
+// combined mesh has errors; 2 for bad arguments.
+int run_export(std::span<const std::string_view> args, std::ostream& out, std::ostream& err);
+
+// `import <project> <mesh file> [--name <name>] [--out <project>]`: adds an
+// STL, 3MF or OBJ file to the project as a static volume whose boundary is
+// the mesh's bounding box, and saves the project (in place, or to --out,
+// as a folder or zip like the original).
+int run_import(std::span<const std::string_view> args, std::ostream& out, std::ostream& err);
+
 }  // namespace vs::cli

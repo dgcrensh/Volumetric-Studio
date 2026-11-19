@@ -189,7 +189,10 @@ std::optional<Plane> face_plane(const Face& face) {
     BRepAdaptor_Surface surface(f, /*theRestriction=*/false);
     if (surface.GetType() != GeomAbs_Plane) return std::nullopt;
     const gp_Pln pln = surface.Plane();
+    // The surface's natural normal is X x Y, against the axis for a
+    // left-handed plane (revolutions make those).
     dvec3 normal = detail::from_occ(pln.Axis().Direction());
+    if (!pln.Direct()) normal = -normal;
     if (f.Orientation() == TopAbs_REVERSED) normal = -normal;
     GProp_GProps props;
     BRepGProp::SurfaceProperties(f, props);

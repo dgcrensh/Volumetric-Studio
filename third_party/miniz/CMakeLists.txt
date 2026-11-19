@@ -1,8 +1,8 @@
 # miniz: zlib-compatible deflate and zip archives, vendored from the
 # miniz 3.0.2 release (the amalgamated miniz.c and miniz.h). See README.md.
 #
-# Only vs_model links this target, privately, for .vsproj zip files; no
-# public header includes it.
+# vs_model (.vsproj zip files) and vs_mesh (3MF packages) link this
+# target, privately; no public header includes it.
 
 add_library(miniz STATIC src/miniz.c)
 add_library(vs::miniz ALIAS miniz)

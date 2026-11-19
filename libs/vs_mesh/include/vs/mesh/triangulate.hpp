@@ -30,6 +30,7 @@
 //   mesh.triangulate.failed           numerical trouble (shouldn't happen
 //                                     for valid input; please report it)
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -41,9 +42,20 @@
 namespace vs::mesh {
 
 using Loop = std::vector<std::uint32_t>;
+using Segment = std::array<std::uint32_t, 2>;
 
 core::Result<std::vector<Triangle>> triangulate(std::span<const core::dvec2> points,
                                                 const std::vector<Loop>& loops);
+
+// The same with extra constrained segments inside the domain (M8: a seam's
+// outline drawn across a larger face). Each becomes an edge of the
+// triangulation without bounding the domain. A segment may end on loop
+// points or other segments' ends but must not cross or touch anything
+// else, nor repeat a loop segment; an end that isn't on a loop is a
+// Steiner point.
+core::Result<std::vector<Triangle>> triangulate(std::span<const core::dvec2> points,
+                                                const std::vector<Loop>& loops,
+                                                std::span<const Segment> segments);
 
 // Twice the signed area of a closed polygon (positive counter-clockwise).
 double signed_double_area(std::span<const core::dvec2> points, const Loop& loop);
