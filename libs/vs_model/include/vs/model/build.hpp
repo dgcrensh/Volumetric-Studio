@@ -47,7 +47,8 @@
 // Static contents read their blob when the build is given the project's
 // blobs (STEP and IGES; mesh files are read by vs_eval's engine, M9, and
 // vs_mesh's combine(), M8, and stay Stale here). Procedural
-// contents wait for M10 and stay Stale.
+// contents stay Stale here too: vs_proc generates them through vs_eval's
+// engine (M10).
 //   model.contents.failed           the contents' rebuild has errors
 //   model.contents.missing_blob     the blob isn't in the project
 //   model.contents.import_failed    the file doesn't read as a solid

@@ -84,11 +84,20 @@ ActTarget route(const Diagnostic& diagnostic, const model::Document& document) {
     t.on = ActOn::ConnectionSurface;
   } else if (first->kind == SubjectKind::Node) {
     t.on = ActOn::Node;
+    // Graph nodes live in a volume's graph JSON, which the document can't
+    // see into; vs_proc names the volume as a later subject (M10).
+    for (const auto& s : diagnostic.subjects) {
+      if (s.kind == SubjectKind::Volume) {
+        t.volume = s.id;
+        break;
+      }
+    }
   } else if (first->kind == SubjectKind::Variable && owner) {
     t.on = ActOn::Feature;
     t.volume = owner->id;
   } else if (first->kind == SubjectKind::Volume && (diagnostic.code.starts_with("model.contents.") ||
-                                                     diagnostic.code.starts_with("eval."))) {
+                                                     diagnostic.code.starts_with("eval.") ||
+                                                     diagnostic.code.starts_with("proc."))) {
     t.on = ActOn::Contents;
     t.volume = first->id;
   } else {

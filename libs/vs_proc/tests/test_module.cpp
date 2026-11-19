@@ -2,6 +2,6 @@
 
 #include "vs/proc/module.hpp"
 
-TEST_CASE("vs_proc skeleton links", "[proc]") {
+TEST_CASE("vs_proc links", "[proc]") {
   CHECK(vs::proc::module_name() == "vs_proc");
 }

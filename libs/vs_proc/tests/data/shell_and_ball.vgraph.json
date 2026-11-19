@@ -1,0 +1,111 @@
+{
+  "format": "vstudio.graph",
+  "version": 1,
+  "parameters": [
+    {
+      "name": "wall",
+      "value": 2.0
+    }
+  ],
+  "nodes": [
+    {
+      "id": "3f671706c0bc558900ac1bd50742f348",
+      "type": "input.boundary",
+      "name": "Boundary",
+      "settings": {}
+    },
+    {
+      "id": "f5eb40f57e3f67c9621109331b63e8be",
+      "type": "input.parameter",
+      "name": "Wall",
+      "settings": {
+        "name": "wall"
+      }
+    },
+    {
+      "id": "5c250095128749bd0e4494184f1e2500",
+      "type": "field.shell",
+      "name": "Shell",
+      "settings": {}
+    },
+    {
+      "id": "4432b151f9788aadf14f1d5f3f45020a",
+      "type": "field.sphere",
+      "name": "Ball",
+      "settings": {
+        "centre": [
+          20.0,
+          15.0,
+          10.0
+        ],
+        "radius": 6.0
+      }
+    },
+    {
+      "id": "5c81cd7be30b7107629bdd8482db9088",
+      "type": "field.union",
+      "name": "Join",
+      "settings": {}
+    },
+    {
+      "id": "31fe1c032a02d9bbfa470c6fa0896a5e",
+      "type": "output",
+      "name": "Output",
+      "settings": {
+        "cell_size": 1.0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "node": "3f671706c0bc558900ac1bd50742f348",
+        "port": "field"
+      },
+      "to": {
+        "node": "5c250095128749bd0e4494184f1e2500",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "f5eb40f57e3f67c9621109331b63e8be",
+        "port": "value"
+      },
+      "to": {
+        "node": "5c250095128749bd0e4494184f1e2500",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "5c250095128749bd0e4494184f1e2500",
+        "port": "field"
+      },
+      "to": {
+        "node": "5c81cd7be30b7107629bdd8482db9088",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "4432b151f9788aadf14f1d5f3f45020a",
+        "port": "field"
+      },
+      "to": {
+        "node": "5c81cd7be30b7107629bdd8482db9088",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "5c81cd7be30b7107629bdd8482db9088",
+        "port": "field"
+      },
+      "to": {
+        "node": "31fe1c032a02d9bbfa470c6fa0896a5e",
+        "port": "contents"
+      }
+    }
+  ]
+}

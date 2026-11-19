@@ -96,6 +96,20 @@ void Engine::reset() {
   cache_.clear_memory();
 }
 
+void Engine::set_generator(model::VolumeKind kind, std::shared_ptr<ContentsGenerator> generator) {
+  const std::lock_guard eval_lock(evaluate_mutex_);
+  if (generator) {
+    generators_[kind] = std::move(generator);
+  } else {
+    generators_.erase(kind);
+  }
+}
+
+std::shared_ptr<ContentsGenerator> Engine::generator(model::VolumeKind kind) const {
+  const auto it = generators_.find(kind);
+  return it == generators_.end() ? nullptr : it->second;
+}
+
 Evaluation Engine::preview(const model::Project& project) {
   EvaluateOptions options;
   options.generate = false;
@@ -240,8 +254,9 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         r.status = VolumeStatus::Failed;  // its boundary or a parameter failed
         continue;
       }
-      if (v.kind() == model::VolumeKind::Procedural && !v.contents_empty()) {
-        r.status = VolumeStatus::Stale;  // node graphs arrive in M10
+      if (v.kind() == model::VolumeKind::Procedural && !v.contents_empty() &&
+          generator(v.kind()) == nullptr) {
+        r.status = VolumeStatus::Stale;  // no generator for node graphs installed
         continue;
       }
       bool disk = false;
@@ -267,10 +282,28 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     for (const std::size_t i : to_run) set_state(ev.volumes[i].volume, VolumeStatus::Regenerating);
 
     const model::Document& wave_doc = ev.document;
+
+    // Generators prepare their jobs here, on the calling thread.
+    std::vector<ContentsGenerator::Job> jobs(n);
+    for (const std::size_t i : to_run) {
+      const model::Volume& v = wave_doc.volumes[i];
+      if (v.contents_empty()) continue;
+      if (const auto gen = generator(v.kind())) {
+        jobs[i] = gen->prepare(wave_doc, layout, i, settings_, pool_, options.cancel);
+      }
+    }
+
     const auto generate = [&](std::size_t i) {
       const model::Volume& v = wave_doc.volumes[i];
       auto g = std::make_shared<GeneratedContents>();
       g->key = *ev.volumes[i].key;
+      if (jobs[i]) {
+        g->status = VolumeStatus::Current;
+        jobs[i](*g);
+        g->output_hash = output_hash(g->status, g->solid, g->mesh ? &*g->mesh : nullptr,
+                                     g->outputs, g->extra.get());
+        return g;
+      }
       const auto* sc = std::get_if<model::StaticContents>(&v.contents);
       if (sc != nullptr && !v.keep_out && !sc->blob.empty() && mesh::is_mesh_format(sc->format)) {
         // vs_model leaves mesh files to vs_mesh: read them here.
@@ -352,7 +385,8 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
           c.diagnostics.append(contained->diagnostics);
           if (contained->diagnostics.has_errors()) c.status = VolumeStatus::Failed;
         }
-        c.output_hash = output_hash(c.status, c.solid, c.mesh ? &*c.mesh : nullptr, c.outputs);
+        c.output_hash = output_hash(c.status, c.solid, c.mesh ? &*c.mesh : nullptr, c.outputs,
+                                    c.extra.get());
       }
       ev.stats.regenerated += options_.check_determinism ? 2 : 1;
       r.regenerated = true;

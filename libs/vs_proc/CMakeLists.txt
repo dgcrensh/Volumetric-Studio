@@ -1,13 +1,48 @@
-# vs_proc: procedural node graph, type system, node library, fields and baking.
-# Empty until M10 fills it in. Add dependencies on lower modules here; the
-# configure-time check rejects any link to a module above this one.
+# vs_proc: procedural node graphs (M10: graph model, type system, node
+# library, fields and sampling, the engine's procedural generator; M11
+# meshes fields, M12 adds the rest of the node library and baking). See
+# include/vs/proc/*.hpp and docs/decisions/0010.
+
+find_package(nlohmann_json CONFIG REQUIRED)
 
 vs_add_library(vs_proc
   SOURCES
+    src/check.cpp
+    src/distance.cpp
+    src/evaluate.cpp
+    src/field.cpp
+    src/generator.cpp
+    src/graph.cpp
+    src/inputs.cpp
     src/module.cpp
+    src/nodes.cpp
+    src/types.cpp
   PUBLIC_LINKS
-    vs::vs_core)
+    vs::vs_core
+    vs::vs_kernel
+    vs::vs_sketch
+    vs::vs_feature
+    vs::vs_model
+    vs::vs_validate
+    vs::vs_mesh
+    vs::vs_eval
+  PRIVATE_LINKS
+    nlohmann_json::nlohmann_json)
 
 vs_add_library_tests(vs_proc
   SOURCES
-    tests/test_module.cpp)
+    tests/scenes.cpp
+    tests/test_acceptance.cpp
+    tests/test_check.cpp
+    tests/test_data.cpp
+    tests/test_distance.cpp
+    tests/test_engine.cpp
+    tests/test_field.cpp
+    tests/test_graph.cpp
+    tests/test_module.cpp
+    tests/test_nodes.cpp)
+
+if(VS_BUILD_TESTS)
+  target_compile_definitions(vs_proc_tests PRIVATE
+    VS_PROC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+endif()

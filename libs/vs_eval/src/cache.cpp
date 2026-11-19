@@ -97,7 +97,7 @@ std::optional<Hash256> cache_key(const model::Document& document,
 }
 
 Hash256 output_hash(VolumeStatus status, const kernel::Solid& solid, const mesh::Mesh* mesh,
-                    const std::vector<model::OutputResult>& outputs) {
+                    const std::vector<model::OutputResult>& outputs, const ExtraContents* extra) {
   Hasher h;
   h.add(std::string_view("vstudio.eval.output"));
   h.add(status);
@@ -117,6 +117,8 @@ Hash256 output_hash(VolumeStatus status, const kernel::Solid& solid, const mesh:
     h.add(o.value->index());
     std::visit([&](const auto& value) { h.add(value); }, *o.value);
   }
+  // Only when present, so B-rep and mesh hashes are what M9 made them.
+  if (extra != nullptr) h.add(std::string_view("extra")).add(extra->hash());
   return h.finalize();
 }
 

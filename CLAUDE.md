@@ -358,7 +358,7 @@ so they are registered. A new library must also be added to
 - **States.** Current; Failed (generation or containment failed, or the
   boundary or a parameter: shows its last valid contents as
   `stale_contents`, blocks only its dependants, which get `eval.blocked`);
-  Stale (blocked, cancelled, preview, procedural until M10); Regenerating
+  Stale (blocked, cancelled, preview, procedural with no generator); Regenerating
   while running (`states()`). Failed results are cached too.
 - **Cache** (`cache.hpp`): `cache_key()` hashes engine version, kind,
   content definition, the boundary's exact shape and named faces, joining
@@ -371,6 +371,11 @@ so they are registered. A new library must also be added to
   calls run inline. Catch2 assertions aren't thread-safe: tasks record,
   tests check afterwards. `output_hashes_by_threads()` and
   `check_determinism` compare output hashes (BRep text, mesh, outputs).
+- **Generators** (`generator.hpp`): a library above vs_eval plugs a
+  content kind in with `Engine::set_generator(kind, g)`: `prepare()` on
+  the calling thread, then a job on the pool that fills
+  `GeneratedContents` (`extra` holds opaque contents, hashed into the
+  output hash). vs_proc's is installed by `proc::install()` (M10).
 - **Imports** (`import.hpp`): STEP, IGES, STL, 3MF, OBJ as a new static
   volume boxed by its bounds, or `import_contents()` into an existing one
   (then containment matters). `eval.*` codes on a volume route to its
@@ -379,6 +384,45 @@ so they are registered. A new library must also be added to
   boxes; a chain A → B by a link, plus C) and reuse the bracket.
   `vstudio-cli rebuild <project> [--threads N] [--check-determinism]
   [--weld] [--cache] [--set vol.param=value] [--twice]`.
+
+## vs_proc essentials
+
+- **Types** (`types.hpp`): ports are Scalar, Vector (FP64), Field, Mesh,
+  Frames, Curves (FP32) or List; a `Value` holds one, immutable and cheap
+  to copy, with a content hash (`hash_value()`). Edges join equal types
+  only; conversions are nodes.
+- **Fields** (`field.hpp`): lazy `FieldExpr` trees (primitives, booleans,
+  smooth booleans, offset, shell, maths), evaluated in FP64 with no libm
+  transcendentals, each carrying a digest of its tree. `grid_covering()`
+  and `sample()` give FP32 samples on a grid over a box (x fastest),
+  z slices on the pool. `TriangleDistance` (`distance.hpp`) is a BVH over
+  a tessellation: signed by angle-weighted pseudonormals for closed
+  meshes, unsigned for patches.
+- **Graphs** (`graph.hpp`): parameters with defaults, nodes (id, type,
+  name, `settings` for unconnected Scalar/Vector inputs and properties),
+  edges output → input, exactly one `output` node. JSON round-trips
+  exactly. **Checks** (`check.hpp`): `check_graph()` (`proc.graph.*`);
+  `edit()` / `connect()` keep a change unless it is wrong (type mismatch,
+  loop, ...), allowing unfinished graphs; `check_volume_graph()` adds
+  `proc.reference.surface` (only surfaces joining the volume).
+- **Nodes** (`nodes.hpp`): a `NodeType` declares ports and properties and
+  evaluates from a `NodeContext` (inputs, properties, graph inputs,
+  derived seed); `infeasible(ports, msg)` / `fail(msg)` report
+  `proc.node.*` naming the node, its inputs and the volume. `library()`
+  has input, query, field, math, logic, vector and list nodes; `vstudio-cli
+  nodes` lists them.
+- **Inputs and evaluation** (`inputs.hpp`, `evaluate.hpp`):
+  `gather_inputs()` tessellates the boundary and joining patches on the
+  calling thread; `evaluate_graph()` runs nodes in topological order with
+  a `NodeCache` keyed by type, settings, seed and input hashes (input and
+  query nodes always run).
+- **Engine** (`generator.hpp`): `proc::install(engine)` registers the
+  procedural `eval::ContentsGenerator`; contents are `FieldContents`
+  (field and samples, `field_contents()`), with no containment check or
+  output values until M11/M12. Decision 0010.
+- **Tests** build box rows in code (`tests/scenes.*`); sample files in
+  `tests/data` (regenerate with `vs_proc_tests "[.generate]"`);
+  `vstudio-cli graph <file>` checks one.
 
 ## Code style
 

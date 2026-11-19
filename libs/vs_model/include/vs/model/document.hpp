@@ -86,8 +86,9 @@ struct ParametricContents {
   friend bool operator==(const ParametricContents&, const ParametricContents&) = default;
 };
 
-// A node graph (M10). Until then the graph is kept as opaque JSON text,
-// stored and hashed as it is.
+// A node graph: vs_proc's JSON (proc/graph.hpp, M10). vs_model sits below
+// vs_proc, so here it is opaque text, stored and hashed as it is; vs_proc
+// checks it against the document when the engine generates the volume.
 struct ProceduralContents {
   std::string graph;  // JSON; empty: no graph yet
   friend bool operator==(const ProceduralContents&, const ProceduralContents&) = default;

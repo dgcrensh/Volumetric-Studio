@@ -8,7 +8,7 @@ namespace vs::cli {
 
 // `rebuild <project> [--threads N] [--check-determinism] [--weld] [--cache]
 // [--set <volume>.<parameter>=<value>]... [--twice]`: evaluates the project with
-// the M9 engine and prints each volume's status, cache key, whether it
+// the M9 engine (procedural graphs through vs_proc's generator, M10) and prints each volume's status, cache key, whether it
 // regenerated or came from the cache, its outputs, the run's statistics and
 // its output hash. --cache keeps a disk cache in a folder project's cache/;
 // --set changes parameters before evaluating; --twice evaluates a second
