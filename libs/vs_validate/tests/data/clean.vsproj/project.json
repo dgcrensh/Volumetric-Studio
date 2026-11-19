@@ -1,0 +1,151 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "9713f62fc8962c1ba06871aec58223cf",
+    "name": "Clean",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [],
+      "features": [
+        {
+          "id": "46e61914724def51289b0c9c1e2ebde3",
+          "name": "Base min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "20a55e1459f7cb520f83e50451589cd2",
+          "name": "Base max",
+          "type": "datum_point",
+          "at": {
+            "x": 60.0,
+            "y": 40.0,
+            "z": 10.0
+          }
+        },
+        {
+          "id": "a351356d846d8544e03e4d8b5177433e",
+          "name": "Top min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 10.0
+          }
+        },
+        {
+          "id": "986aeffb60a2d46490807c3d8daa5fe1",
+          "name": "Top max",
+          "type": "datum_point",
+          "at": {
+            "x": 60.0,
+            "y": 40.0,
+            "z": 30.0
+          }
+        },
+        {
+          "id": "789ebe0121bc1a81a202970b2356b64b",
+          "name": "Flange plane",
+          "type": "datum_plane",
+          "offset": {
+            "base": {
+              "principal": "xy"
+            },
+            "distance": 10.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "c869fa4036910c9cbdfa413723edf22d",
+        "name": "Base",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "46e61914724def51289b0c9c1e2ebde3"
+            },
+            "max": {
+              "feature": "20a55e1459f7cb520f83e50451589cd2"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static"
+        }
+      },
+      {
+        "id": "112432e2cbf6c9fa626f25513a895f2c",
+        "name": "Top",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "a351356d846d8544e03e4d8b5177433e"
+            },
+            "max": {
+              "feature": "986aeffb60a2d46490807c3d8daa5fe1"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static",
+          "blob": "blobs/57a427661147249f0c27c8d7d23f000b.step",
+          "format": "step"
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "8d4c3e0ce8c361215e0dca96720b3f02",
+        "name": "Flange",
+        "volumes": [
+          "c869fa4036910c9cbdfa413723edf22d",
+          "112432e2cbf6c9fa626f25513a895f2c"
+        ],
+        "geometry": {
+          "datum": {
+            "plane": {
+              "feature": "789ebe0121bc1a81a202970b2356b64b"
+            },
+            "u": 30.0,
+            "v": 20.0,
+            "width": 60.0,
+            "height": 40.0
+          }
+        },
+        "type": "bolted_flange",
+        "holes": {
+          "grid": {
+            "columns": 2.0,
+            "rows": 1.0,
+            "pitch_x": 40.0,
+            "pitch_y": 20.0
+          },
+          "u": 30.0,
+          "v": 20.0
+        },
+        "thread": "M4",
+        "min_wall": 2.0,
+        "seam": {
+          "spacing": 0.0
+        }
+      }
+    ],
+    "keep_outs": [],
+    "links": []
+  },
+  "blobs": [
+    {
+      "path": "blobs/57a427661147249f0c27c8d7d23f000b.step",
+      "size": 15415,
+      "blake3": "57a427661147249f0c27c8d7d23f000b5ea54b4e05e196d8d0ab4d5e2cceff67"
+    }
+  ]
+}

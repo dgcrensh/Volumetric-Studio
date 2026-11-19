@@ -77,10 +77,12 @@ scripts/vcpkg-cache.sh fetch        # only refresh the cache (uses GH_TOKEN or G
 The cache only hits with the same compiler as CI (Ubuntu 24.04, GCC 13.3);
 anywhere else vcpkg falls back to building OCCT from source.
 
-A cloud session can't download port sources (its network reaches only this
-repository on GitHub), so a **new vcpkg dependency can't be added from a
-cloud session**: land it from a desktop or let CI on `main` build and
-publish it first (decision 0005).
+A cloud session can't download vcpkg port sources (GitHub's archive
+downloads of other repositories are refused), so a **new vcpkg dependency
+can't be added from a cloud session**: land it from a desktop or let CI on
+`main` build and publish it first (decision 0005). Release assets do
+download, so a small library can be vendored under `third_party/` instead,
+as miniz was (decision 0006).
 
 ## Layout
 
@@ -90,7 +92,7 @@ libs/<module>/          one directory per library
   include/vs/<short>/   public headers (namespace vs::<short>)
   src/                  sources and private headers
   tests/                Catch2 tests, built as <module>_tests
-third_party/<name>/     vendored code with its own CMake target (PlaneGCS); see its README
+third_party/<name>/     vendored code with its own CMake target (PlaneGCS, miniz); see its README
 apps/vstudio-cli/       command-line driver (subcommands grow with each milestone)
 apps/vs_app/            Qt application (VS_BUILD_APP=ON only)
 tests/cmake/            tests of the build system itself
@@ -255,12 +257,41 @@ so they are registered. A new library must also be added to
 - **Build.** `build(doc, settings, &blobs)` rebuilds the layout, boundaries
   (keep-outs cut), patches (with bolt hole centres) and contents, and
   measures outputs. Status (`VolumeStatus`) is on the result, never saved.
-- **Files.** `.vsproj` is a folder or a stored-only zip of `project.json`
-  plus `blobs/<hash>.<ext>` (`project.hpp`, decision 0005). Loading checks
-  blob hashes and runs `check()`. `content_hash()` hashes the document's
+- **Files.** `.vsproj` is a folder or a zip of `project.json` plus
+  `blobs/<hash>.<ext>` (`project.hpp`, decision 0005). Zips go through the
+  vendored miniz (deflated, zero timestamps, decision 0006). Loading checks
+  blob hashes and runs `check()` (`load_project(path, false)` skips it, for
+  validation). `content_hash()` hashes the document's
   JSON plus the blobs. `vstudio-cli info <project> [--build]` prints one.
   `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the sample
   with `vs_model_tests "[.generate]"`.
+
+## vs_validate essentials
+
+- **Layout checks** (`layout.hpp`): `validate_layout(doc, build, settings)`
+  takes a `model::build()` result. Overlap (`validate.overlap`: kernel
+  `common`, depth = the region box's thinnest side, deeper than the
+  tolerance), undeclared contact (`validate.contact` per pair of faces
+  lying against each other, named from `VolumeBuild::boundary_faces`;
+  `validate.contact.edge` for an edge or point touch), skipped for pairs
+  sharing a connection surface or involving a keep-out. Connection rules
+  (`validate.connection.*`): patch on each joined boundary, clearance gap
+  and flange wall at least the minimum feature size, ISO 273 holes clear of
+  the patch edge and each other by the minimum wall.
+- **Containment** (`containment.hpp`): `check_containment(boundary, solid
+  or MeshView, volume subject, settings)`, for M9 to call after generation.
+  Meshes get their FP32 rounding as extra slack.
+- **Routing** (`registry.hpp`): every `validate.*` code is registered with
+  its severity and target; `route()` sends any diagnostic to exactly one of
+  layout, connection surface, feature (with the volume, inside contents),
+  node or contents. Tests check every emitted `validate.*` code is
+  registered.
+- **Whole documents** (`validate.hpp`): `validate()` runs `check()`, then
+  `build()`, the layout checks and containment, and routes everything.
+  `vstudio-cli validate <project>` prints it and exits 1 on errors.
+- **Fixtures** for each check live in `libs/vs_validate/tests/data`;
+  regenerate them with `vs_validate_tests "[.generate]"`. Decision 0006 has
+  the reasoning.
 
 ## Code style
 

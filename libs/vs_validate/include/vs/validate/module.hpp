@@ -1,7 +1,7 @@
 #pragma once
 
 // vs_validate: layout checks, containment and diagnostics routing.
-// Placeholder until M6; see Implementation Plan.md.
+// The checks are in layout.hpp, containment.hpp, registry.hpp and validate.hpp.
 
 #include <string_view>
 

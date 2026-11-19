@@ -120,7 +120,10 @@ enum class ProjectLayout { Folder, Zip };
 Diagnostics save_project(const Project& project, const std::filesystem::path& path,
                          ProjectLayout layout);
 
-// Reads a folder or zip project, whichever `path` is.
-Result<Project> load_project(const std::filesystem::path& path);
+// Reads a folder or zip project, whichever `path` is. With `check_document`
+// false the document isn't checked (check.hpp) and comes back even when it
+// breaks the authoring rules, so a validator can report every problem in it
+// (vs_validate); the file's structure and blobs are still checked.
+Result<Project> load_project(const std::filesystem::path& path, bool check_document = true);
 
 }  // namespace vs::model

@@ -1,0 +1,67 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "dfd03e51296e98dcbebae44743032991",
+    "name": "Containment",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [],
+      "features": [
+        {
+          "id": "e9b1fcec5fcdacfe9e4ecc2e9151715c",
+          "name": "Block min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "9fbf863c3b9b27f59f78bae9004ae7ba",
+          "name": "Block max",
+          "type": "datum_point",
+          "at": {
+            "x": 20.0,
+            "y": 20.0,
+            "z": 20.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "3cd2821ab4be05da4c491821161d16a1",
+        "name": "Block",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "e9b1fcec5fcdacfe9e4ecc2e9151715c"
+            },
+            "max": {
+              "feature": "9fbf863c3b9b27f59f78bae9004ae7ba"
+            }
+          }
+        },
+        "contents": {
+          "kind": "static",
+          "blob": "blobs/291edd0472b5002ade4b8b3134189620.step",
+          "format": "step"
+        }
+      }
+    ],
+    "connections": [],
+    "keep_outs": [],
+    "links": []
+  },
+  "blobs": [
+    {
+      "path": "blobs/291edd0472b5002ade4b8b3134189620.step",
+      "size": 15398,
+      "blake3": "291edd0472b5002ade4b8b31341896208bab78df1ac261bfef42e13415bb3c65"
+    }
+  ]
+}

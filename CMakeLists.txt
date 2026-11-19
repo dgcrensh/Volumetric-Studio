@@ -17,7 +17,7 @@ endif()
 project(VolumetricStudio
   VERSION 0.1.0
   DESCRIPTION "Volumetric CAD Studio"
-  LANGUAGES CXX)
+  LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,6 +38,7 @@ endif()
 # Vendored third-party code. These are not modules, so the dependency rule
 # doesn't judge them; each is linked privately by its one wrapper module.
 add_subdirectory(third_party/planegcs)
+add_subdirectory(third_party/miniz)
 
 # Libraries, bottom up. The order here mirrors VS_MODULE_ORDER in
 # cmake/VsModuleRules.cmake; a module may link only modules listed before it.

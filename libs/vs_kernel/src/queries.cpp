@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepBndLib.hxx>
 #include <ElSLib.hxx>
@@ -127,6 +128,48 @@ PointClass classify(const Solid& solid, const dvec3& point, const ProductSetting
   return on ? PointClass::OnBoundary : PointClass::Outside;
 }
 
+struct SolidClassifier::Impl {
+  std::vector<std::unique_ptr<BRepClass3d_SolidClassifier>> lumps;
+  double tolerance = 0.0;
+};
+
+SolidClassifier::SolidClassifier(const Solid& solid, const ProductSettings& settings)
+    : impl_(std::make_shared<Impl>()) {
+  impl_->tolerance = settings.linear_tolerance_mm;
+  for (const Solid& s : solids(solid)) {
+    impl_->lumps.push_back(std::make_unique<BRepClass3d_SolidClassifier>(topo(s)));
+  }
+}
+
+PointClass SolidClassifier::classify(const dvec3& point) const {
+  bool on = false;
+  for (auto& lump : impl_->lumps) {
+    lump->Perform(detail::to_occ(point), impl_->tolerance);
+    switch (lump->State()) {
+      case TopAbs_IN: return PointClass::Inside;
+      case TopAbs_ON: on = true; break;
+      default: break;
+    }
+  }
+  return on ? PointClass::OnBoundary : PointClass::Outside;
+}
+
+Result<double> distance_to(const Shape& shape, const dvec3& point) {
+  if (shape.is_empty()) {
+    return Diagnostic::error("kernel.distance.empty_input", "Distance needs a non-empty shape");
+  }
+  return detail::guarded<Result<double>>(
+      "kernel.distance.failed", "Measuring distance", [&]() -> Result<double> {
+        const TopoDS_Shape vertex = BRepBuilderAPI_MakeVertex(detail::to_occ(point)).Vertex();
+        BRepExtrema_DistShapeShape dist(topo(shape), vertex);
+        if (!dist.IsDone() || dist.NbSolution() < 1) {
+          return Diagnostic::error("kernel.distance.failed",
+                                   "The kernel could not measure the distance");
+        }
+        return dist.InnerSolution() ? 0.0 : dist.Value();
+      });
+}
+
 std::vector<Face> faces(const Shape& shape) { return sub_shapes<Face>(shape, TopAbs_FACE); }
 
 std::optional<Plane> face_plane(const Face& face) {
@@ -185,6 +228,18 @@ std::size_t vertex_count(const Shape& shape) {
   ShapeMap map;
   TopExp::MapShapes(topo(shape), TopAbs_VERTEX, map);
   return static_cast<std::size_t>(map.Extent());
+}
+
+std::vector<dvec3> vertex_points(const Shape& shape) {
+  std::vector<dvec3> out;
+  if (shape.is_empty()) return out;
+  ShapeMap map;
+  TopExp::MapShapes(topo(shape), TopAbs_VERTEX, map);
+  out.reserve(static_cast<std::size_t>(map.Extent()));
+  for (int i = 1; i <= map.Extent(); ++i) {
+    out.push_back(from_occ(BRep_Tool::Pnt(TopoDS::Vertex(map(i)))));
+  }
+  return out;
 }
 
 }  // namespace vs::kernel

@@ -2,6 +2,7 @@
 
 // Measurements and topology queries on kernel shapes.
 
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -55,6 +56,24 @@ enum class PointClass {
 // Classifies a point against a solid, using the product's linear tolerance.
 PointClass classify(const Solid& solid, const dvec3& point, const ProductSettings& settings);
 
+// The same for many points against one solid: prepares the solid once, which
+// is much faster than classify() per point. Copies share the prepared
+// solid; one classifier must not be used from two threads at once.
+class SolidClassifier {
+ public:
+  SolidClassifier(const Solid& solid, const ProductSettings& settings);
+  [[nodiscard]] PointClass classify(const dvec3& point) const;
+
+ private:
+  struct Impl;
+  std::shared_ptr<Impl> impl_;
+};
+
+// Distance from a point to a shape: for a solid, 0 inside or on it and
+// otherwise the distance to its surface; for a face or edge, to its nearest
+// point.
+Result<double> distance_to(const Shape& shape, const dvec3& point);
+
 // Sub-shapes, each listed once, in the kernel's deterministic traversal order.
 std::vector<Face> faces(const Shape& shape);
 
@@ -81,5 +100,7 @@ std::vector<Edge> edges(const Shape& shape);
 bool is_seam(const Edge& edge, const Face& face);
 std::vector<Solid> solids(const Shape& shape);
 std::size_t vertex_count(const Shape& shape);
+// The positions of the shape's vertices, each once, in traversal order.
+std::vector<dvec3> vertex_points(const Shape& shape);
 
 }  // namespace vs::kernel
