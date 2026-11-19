@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <random>

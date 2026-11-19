@@ -1,5 +1,6 @@
 #include "mesh_commands.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
