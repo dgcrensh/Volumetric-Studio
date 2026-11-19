@@ -21,7 +21,8 @@
 # correctness.
 #
 # publish needs gh and GH_TOKEN with contents: write. fetch uses curl and
-# authenticates with GH_TOKEN or GITHUB_TOKEN when set (the repo is private).
+# authenticates with GH_TOKEN or GITHUB_TOKEN when set (optional while the repo is
+# public; needed if it goes private again).
 # Environment overrides: VS_CACHE_REPO (owner/name, default: from GITHUB_REPOSITORY
 # or the origin remote), VS_CACHE_TAG (default vcpkg-cache-x64-linux).
 

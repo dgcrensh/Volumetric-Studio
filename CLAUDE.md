@@ -71,7 +71,7 @@ machine, such as a hosted cloud session, run this before building:
 ```bash
 scripts/cloud-setup.sh              # apt packages, fetch the cache, build linux-gcc-release
 scripts/cloud-setup.sh --no-build   # everything but the build
-scripts/vcpkg-cache.sh fetch        # only refresh the cache (needs GH_TOKEN or GITHUB_TOKEN)
+scripts/vcpkg-cache.sh fetch        # only refresh the cache (uses GH_TOKEN or GITHUB_TOKEN if set)
 ```
 
 The cache only hits with the same compiler as CI (Ubuntu 24.04, GCC 13.3);
