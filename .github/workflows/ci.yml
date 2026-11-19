@@ -6,14 +6,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to a pull request cancels its older run. Runs on main are never
+# cancelled: a merge mid-build would otherwise throw away an hour of Open
+# CASCADE build, and the vcpkg cache would never get it.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: ${{ matrix.preset }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      # contents: write lets linux-gcc-release publish the vcpkg cache as
+      # release assets (see the last step).
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -70,3 +77,17 @@ jobs:
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+
+      # actions/cache is readable only from inside Actions. Publish the Linux
+      # cache as assets of the "vcpkg-cache-x64-linux" prerelease too, so cloud
+      # dev sessions can fetch it with scripts/vcpkg-cache.sh fetch. Only from
+      # main and manual runs, never from pull requests.
+      - name: Publish vcpkg binary cache for machines outside Actions
+        if: >-
+          always() && matrix.preset == 'linux-gcc-release' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./scripts/vcpkg-cache.sh publish "$VCPKG_DEFAULT_BINARY_CACHE"
+          "build/${{ matrix.preset }}/vcpkg_installed"

@@ -52,8 +52,10 @@ TEST_CASE("tolerance spike at the edge of the working space", "[kernel][spike]")
          {"box", "drilled", "drilled-25", "sphere-union", "crossed-cylinders-union",
           "crossed-cylinders-common", "min-feature-boss", "fillet-12", "near-coincident",
           "near-coincident-fuzzy"}) {
-      const auto& at_origin = case_named(cases, scenario + "@origin");
-      const auto& at_corner = case_named(cases, scenario + "@corner");
+      const std::string origin_name = scenario + "@origin";
+      const std::string corner_name = scenario + "@corner";
+      const auto& at_origin = case_named(cases, origin_name);
+      const auto& at_corner = case_named(cases, corner_name);
       INFO(scenario);
       CHECK(at_origin.solids == at_corner.solids);
       CHECK(at_origin.audit.faces.count == at_corner.audit.faces.count);

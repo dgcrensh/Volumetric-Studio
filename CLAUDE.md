@@ -60,6 +60,23 @@ M12) and `app` (Qt). A milestone that starts using one appends it to
 `VCPKG_MANIFEST_FEATURES` in the top-level `CMakeLists.txt`, before `project()`.
 `kernel` is on in every build since M1, and `sketch` since M2.
 
+### Prebuilt dependencies outside CI (cloud sessions)
+
+CI's vcpkg cache lives in `actions/cache`, which only Actions jobs can read.
+So the `linux-gcc-release` job on `main` (and manual runs) also publishes its
+x64-linux binary cache as assets of the `vcpkg-cache-x64-linux` prerelease
+(see `docs/decisions/0004-shared-vcpkg-binary-cache.md`). On a fresh Linux
+machine, such as a hosted cloud session, run this before building:
+
+```bash
+scripts/cloud-setup.sh              # apt packages, fetch the cache, build linux-gcc-release
+scripts/cloud-setup.sh --no-build   # everything but the build
+scripts/vcpkg-cache.sh fetch        # only refresh the cache (uses GH_TOKEN or GITHUB_TOKEN if set)
+```
+
+The cache only hits with the same compiler as CI (Ubuntu 24.04, GCC 13.3);
+anywhere else vcpkg falls back to building OCCT from source.
+
 ## Layout
 
 ```
