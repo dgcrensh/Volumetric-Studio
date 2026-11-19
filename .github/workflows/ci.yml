@@ -77,10 +77,12 @@ jobs:
         run: ./scripts/build.sh ${{ matrix.preset }}
 
       # Saved even when the build or tests fail, so a long dependency build
-      # (OCCT) is never paid twice.
+      # (OCCT) is never paid twice. Never from a cancelled run, though: a
+      # newer push cancels a pull request's run mid-build, and saving then
+      # would store a half-built cache under a new key.
       - name: Hash vcpkg binary cache contents
         id: vcpkg-cache-key
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           cd "$VCPKG_DEFAULT_BINARY_CACHE"
@@ -92,7 +94,7 @@ jobs:
 
       - name: Save vcpkg binary cache
         if: >-
-          always() && steps.vcpkg-cache-key.outputs.count != '0' &&
+          !cancelled() && steps.vcpkg-cache-key.outputs.count != '0' &&
           steps.vcpkg-cache-key.outputs.key != steps.vcpkg-cache.outputs.cache-matched-key
         uses: actions/cache/save@v4
         with:
@@ -105,7 +107,7 @@ jobs:
       # main and manual runs, never from pull requests.
       - name: Publish vcpkg binary cache for machines outside Actions
         if: >-
-          always() && matrix.preset == 'linux-gcc-release' &&
+          !cancelled() && matrix.preset == 'linux-gcc-release' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
