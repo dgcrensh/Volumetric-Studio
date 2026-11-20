@@ -53,6 +53,7 @@ add_subdirectory(libs/vs_validate)
 add_subdirectory(libs/vs_mesh)
 add_subdirectory(libs/vs_eval)
 add_subdirectory(libs/vs_proc)
+add_subdirectory(libs/vs_gpu)
 
 if(VS_BUILD_APP)
   add_subdirectory(apps/vs_app)
