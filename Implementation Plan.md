@@ -15,7 +15,7 @@ This plan turns the MVP in the spec into 18 milestones (M0 to M17). Each one is 
 | Sketch solver | **Decided (Nov 18, 2026):** PlaneGCS, extracted from FreeCAD (see "Choosing a sketch solver" below) |
 | Tests | Catch2 v3; every library builds and tests headless |
 | Procedural evaluation | CPU only for the MVP, multithreaded and deterministic. GPU evaluation is a later milestone |
-| Where work runs | Dallas's Windows desktop for now. Everything except the app (`vs_app`) must also build and test headless on Linux, so cloud sessions stay possible |
+| Where work runs | Dallas's Windows desktop for now. Everything except the app (`vs_app`) must also build and test headless on Linux, so cloud sessions stay possible. A Windows GPU VM on Compute Engine is scripted, with the desktop's prebuilt dependencies (decision 0019, `docs/dev-vm.md`) |
 | Repository | A new GitHub repo (set up by Dallas before M0). One branch and one PR per milestone |
 | Working space and tolerance | ±1,000 mm box, 1e-6 mm linear tolerance, held as product settings. M1 tests whether OCCT copes |
 | Connection surfaces (MVP) | Planar only, with seams derived automatically from the surface outline. Types: bonded, clearance, bolted flange |

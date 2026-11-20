@@ -67,6 +67,15 @@ function Enter-VsDevEnvironment {
   Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation `
     -DevCmdArguments $devArgs | Out-Null
   Write-Host "Using Visual Studio at $vsPath (MSVC $(if ($toolsets) { $toolsets[0].Name } else { 'default' }))"
+
+  # vcpkg's archives are keyed by the exact compiler, so a toolset other than
+  # the pinned one rebuilds Open CASCADE and Qt from source (hours) instead of
+  # restoring them from the shared cache (decision 0019).
+  $pin = (Get-Content (Join-Path $PSScriptRoot "windows-toolchain.json") -Raw | ConvertFrom-Json).msvc
+  if ($toolsets -and $toolsets[0].Name -ne $pin) {
+    Write-Warning ("MSVC $($toolsets[0].Name) differs from $pin in scripts\windows-toolchain.json: " +
+      "vcpkg's shared binary cache (scripts\vcpkg-cache.ps1) won't hit, so dependencies build from source.")
+  }
 }
 
 # --- vcpkg --------------------------------------------------------------------
