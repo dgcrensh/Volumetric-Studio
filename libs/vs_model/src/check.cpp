@@ -40,7 +40,9 @@ class Checker {
   Diagnostics run() {
     structure();
     references();
-    out_.append(DependencyGraph::build(doc_).check());
+    const DependencyGraph graph = DependencyGraph::build(doc_);
+    out_.append(graph.check());
+    generated_links(graph);
     return std::move(out_);
   }
 
@@ -94,6 +96,15 @@ class Checker {
       }
       for (const auto& o : v.outputs) note(o.id, doc_.output_subject({v.id, o.id}));
       if (const auto* t = v.tree()) note_tree(*t);
+      if (const auto* comp = std::get_if<CompositeContents>(&v.contents)) {
+        for (const auto& t : comp->templates) {
+          const SubjectRef ts{SubjectKind::Volume, t.id, fmt::format("template '{}'", t.name)};
+          note(t.id, ts);
+          for (const auto& p : t.parameters) note(p.id, ts);
+          for (const auto& o : t.outputs) note(o.id, ts);
+          if (const auto* pc = std::get_if<ParametricContents>(&t.contents)) note_tree(pc->tree);
+        }
+      }
     }
     for (const auto& c : doc_.connections) note(c.id, doc_.connection_subject(c.id));
     for (const auto& k : doc_.keep_outs) note(k.id, doc_.keep_out_subject(k.id));
@@ -128,8 +139,11 @@ class Checker {
               {doc_.volume_subject(child->id)});
       }
     }
+    templates(v, comp);
     // Seam-bearing surfaces joining it that no child meets: the weld will
     // refuse them, but a composite is often blocked out before its children.
+    // A generator (L4) passes them down when it runs.
+    if (comp.generates()) return;
     for (const auto& s : doc_.connections) {
       if (!joins(doc_, s, v.id) || comp.delegation(s.id) != nullptr ||
           std::holds_alternative<ClearanceParams>(s.params)) {
@@ -141,6 +155,50 @@ class Checker {
                       "the child lying against it",
                       self.label, doc_.connection_subject(s.id).label),
           {self, doc_.connection_subject(s.id)}));
+    }
+  }
+
+  // A composite's templates (L4): named, once each, with legal parameter
+  // names; never a composite (the type can't hold one).
+  void templates(const Volume& v, const CompositeContents& comp) {
+    const SubjectRef self = doc_.volume_subject(v.id);
+    std::set<std::string> names;
+    for (const auto& t : comp.templates) {
+      if (t.name.empty()) {
+        error("model.composite.template", self, "one of its templates has no name");
+      } else if (!names.insert(t.name).second) {
+        error("model.composite.template", self,
+              fmt::format("two of its templates are named '{}'", t.name));
+      }
+      std::set<std::string> params;
+      for (const auto& p : t.parameters) {
+        if (!feature::is_valid_name(p.name) || !params.insert(p.name).second) {
+          error("model.composite.template", self,
+                fmt::format("template '{}': '{}' isn't a legal, distinct parameter name", t.name,
+                            p.name));
+        }
+      }
+    }
+  }
+
+  // Links into a generating composite's inputs (L4): its generator runs
+  // before links carry values, so it would never see them.
+  void generated_links(const DependencyGraph& graph) {
+    for (const auto& v : doc_.volumes) {
+      const auto* comp = std::get_if<CompositeContents>(&v.contents);
+      if (comp == nullptr || !comp->generates()) continue;
+      const auto node = graph.find(NodeKind::VolumeContents, v.id);
+      if (!node) continue;
+      for (const auto& l : doc_.links) {
+        if (is_within(doc_, l.source.volume, v.id)) continue;  // inside it: its children's
+        const auto source = graph.find(NodeKind::VolumeContents, l.source.volume);
+        if (!source || !graph.depends_on(*node, *source)) continue;
+        error("model.composite.generated_link", doc_.link_subject(l.id),
+              fmt::format("it feeds the inputs of '{}', whose children a procedure generates "
+                          "before links carry values; drive it with a parameter instead",
+                          v.name),
+              {doc_.volume_subject(v.id)});
+      }
     }
   }
 
@@ -164,7 +222,8 @@ class Checker {
     const SubjectRef self = doc_.volume_subject(v.id);
     for (const auto& w : doc_.volumes) {
       if (&w == &v) break;
-      if (!v.name.empty() && w.name == v.name) {
+      // Generated volumes (L4) are named by their generator and found by id.
+      if (!v.name.empty() && w.name == v.name && !v.generated && !w.generated) {
         error("model.volume.duplicate_name", self,
               "another volume has the same name; volumes need distinct names");
         break;
@@ -250,9 +309,15 @@ class Checker {
 
   void connection_structure(const ConnectionSurface& c) {
     const SubjectRef self = doc_.connection_subject(c.id);
+    const auto generated = [&](const ConnectionSurface& s) {
+      return std::any_of(s.volumes.begin(), s.volumes.end(), [&](const Id& id) {
+        const Volume* v = doc_.find_volume(id);
+        return v != nullptr && v->generated;
+      });
+    };
     for (const auto& w : doc_.connections) {
       if (&w == &c) break;
-      if (!c.name.empty() && w.name == c.name) {
+      if (!c.name.empty() && w.name == c.name && !generated(c) && !generated(w)) {
         error("model.connection.duplicate_name", self,
               "another connection surface has the same name");
         break;

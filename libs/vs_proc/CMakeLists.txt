@@ -23,6 +23,7 @@ vs_add_library(vs_proc
     src/surface_nets_reference.cpp
     src/module.cpp
     src/nodes.cpp
+    src/nodes_children.cpp
     src/nodes_frames.cpp
     src/nodes_infill.cpp
     src/nodes_mesh.cpp
@@ -48,6 +49,8 @@ vs_add_library_tests(vs_proc
     tests/test_check.cpp
     tests/test_curved.cpp
     tests/test_nested.cpp
+    tests/test_children.cpp
+    ../vs_model/tests/rack.cpp
     ../vs_model/tests/curved.cpp
     ../vs_model/tests/nested.cpp
     tests/test_data.cpp

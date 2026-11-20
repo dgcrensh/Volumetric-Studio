@@ -2,6 +2,7 @@
 #include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
+#include <set>
 #include <unordered_set>
 #include <utility>
 
@@ -130,6 +131,19 @@ model::ContentsMeasure measure_contents(const model::Volume& v, const GeneratedC
   return m;
 }
 
+// The composite whose generator made `id` (a volume, or a surface joining
+// generated volumes); null for anything authored (L4).
+Id generated_owner(const model::Document& document, const Id& id) {
+  if (const model::Volume* v = document.find_volume(id)) return v->generated ? v->parent : Id{};
+  if (const model::ConnectionSurface* c = document.find_connection(id)) {
+    for (const Id& vid : c->volumes) {
+      const model::Volume* v = document.find_volume(vid);
+      if (v != nullptr && v->generated) return v->parent;
+    }
+  }
+  return {};
+}
+
 // One generation, before containment.
 struct Generated {
   bool ran = false;
@@ -157,6 +171,7 @@ void Engine::reset() {
   const std::lock_guard lock(state_mutex_);
   states_.clear();
   last_valid_.clear();
+  layouts_.clear();
   cache_.clear_memory();
 }
 
@@ -174,6 +189,87 @@ std::shared_ptr<ContentsGenerator> Engine::generator(model::VolumeKind kind) con
   return it == generators_.end() ? nullptr : it->second;
 }
 
+void Engine::set_layout_generator(std::shared_ptr<LayoutGenerator> generator) {
+  const std::lock_guard eval_lock(evaluate_mutex_);
+  layout_generator_ = std::move(generator);
+  layouts_.clear();
+}
+
+std::shared_ptr<LayoutGenerator> Engine::layout_generator() const { return layout_generator_; }
+
+// The document with every generating composite's children written in (L4),
+// and what happened to the composites that got none.
+struct Engine::Expansion {
+  model::Document document;
+  std::map<Id, Diagnostics> failed;  // generator or expansion failed: Failed
+  std::set<Id> stale;                // no layout generator: Stale
+};
+
+Engine::Expansion Engine::expand_generated(const model::Document& document,
+                                           const CancellationToken& cancel,
+                                           EvaluationStats& stats) {
+  Expansion out;
+  out.document = document;
+  const model::DocumentBuild layout = model::build_layout(document, settings_);
+  ++stats.layout_builds;
+  for (const std::size_t i : model::level_order(document)) {
+    const model::Volume& v = document.volumes[i];
+    const auto* comp = std::get_if<model::CompositeContents>(&v.contents);
+    if (comp == nullptr || !comp->generates()) continue;
+    const SubjectRef self = document.volume_subject(v.id);
+    if (!layout_generator_) {
+      out.stale.insert(v.id);
+      out.failed[v.id].add(Diagnostic::warning(
+          "eval.generated.no_generator",
+          fmt::format("'{}': its children come from a procedure, and none is installed to run it",
+                      self.label),
+          {self}));
+      continue;
+    }
+    // A boundary that failed fails the composite already (finish_composite).
+    const std::optional<Hash256> key = cache_key(document, layout, i);
+    if (!key) continue;
+    std::shared_ptr<const LayoutOutcome> outcome;
+    if (const auto it = layouts_.find(*key); it != layouts_.end()) {
+      outcome = it->second;
+    } else {
+      outcome = std::make_shared<const LayoutOutcome>(
+          layout_generator_->generate(document, layout, i, settings_, pool_, cancel));
+      ++stats.layouts_generated;
+      if (layouts_.size() >= 256) layouts_.clear();
+      layouts_.emplace(*key, outcome);
+    }
+    if (!outcome->layout) {
+      out.failed[v.id] = outcome->diagnostics;
+      if (!out.failed[v.id].has_errors()) {
+        out.failed[v.id].add(Diagnostic::error(
+            "eval.generated.layout",
+            fmt::format("'{}': its procedure made no children", self.label), {self}));
+      }
+      continue;
+    }
+    auto expanded = model::expand(out.document, v.id, *outcome->layout);
+    Diagnostics problems;
+    if (!expanded) {
+      problems.add(expanded.error());
+    } else {
+      for (auto d : model::check(*expanded)) {
+        if (!d.is_error()) continue;
+        if (d.subjects.empty() || !(d.subjects.front().id == v.id)) {
+          d.subjects.insert(d.subjects.begin(), self);
+        }
+        problems.add(std::move(d));
+      }
+    }
+    if (problems.has_errors()) {
+      out.failed[v.id] = std::move(problems);
+      continue;
+    }
+    out.document = std::move(expanded).value();
+  }
+  return out;
+}
+
 Evaluation Engine::preview(const model::Project& project) {
   EvaluateOptions options;
   options.generate = false;
@@ -182,7 +278,22 @@ Evaluation Engine::preview(const model::Project& project) {
 
 Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions& options) {
   const std::lock_guard eval_lock(evaluate_mutex_);
-  const model::Document& doc = project.document;
+
+  // 1. check (below), and generated children (L4) written into the document.
+  Diagnostics checked = model::check(project.document);
+  EvaluationStats early_stats;
+  Expansion expansion;
+  const bool generates = std::any_of(
+      project.document.volumes.begin(), project.document.volumes.end(),
+      [](const model::Volume& v) {
+        const auto* c = std::get_if<model::CompositeContents>(&v.contents);
+        return c != nullptr && c->generates();
+      });
+  if (generates && !checked.has_errors()) {
+    expansion = expand_generated(project.document, options.cancel, early_stats);
+  }
+  const model::Document& doc = generates && !checked.has_errors() ? expansion.document
+                                                                  : project.document;
   const std::size_t n = doc.volumes.size();
 
   std::mutex progress_mutex;
@@ -206,6 +317,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   };
 
   Evaluation ev;
+  ev.stats = early_stats;
   ev.document = doc;
   ev.volumes.resize(n);
   for (std::size_t i = 0; i < n; ++i) {
@@ -237,6 +349,8 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   // their measures up and its key hashes theirs. `layout` is the current
   // wave's layout build.
   model::DocumentBuild layout;
+  // Composites whose generated children fail the current layout's checks.
+  std::set<Id> generated_layout_failed;
   std::vector<model::ContentsMeasure> measures(n);
   const bool composite_outputs = std::any_of(
       doc.volumes.begin(), doc.volumes.end(),
@@ -273,6 +387,24 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       if (child.contents) out.add(child.contents->output_hash);
       if (composite_outputs) total.add(measure_of(j));
     }
+    // L4: a generator that failed or isn't installed, or generated children
+    // failing the layout checks.
+    const SubjectRef self = ev.document.volume_subject(v.id);
+    if (const auto it = expansion.failed.find(v.id); it != expansion.failed.end()) {
+      c->diagnostics.append(it->second);
+      c->status = model::worse(c->status, expansion.stale.contains(v.id) ? VolumeStatus::Stale
+                                                                         : VolumeStatus::Failed);
+    }
+    if (generated_layout_failed.contains(v.id)) {
+      c->status = VolumeStatus::Failed;
+      c->diagnostics.add(Diagnostic::error(
+          "eval.generated.layout",
+          fmt::format("'{}': the children its procedure generated fail the layout checks (see "
+                      "the layout's diagnostics); change the procedure or its parameters",
+                      self.label),
+          {self}));
+    }
+    r.diagnostics.append(c->diagnostics);
     measures[i] = total;
     c->outputs = model::composite_outputs(v, total);
     c->key = key.finalize();
@@ -288,7 +420,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   };
 
   // 1. check
-  ev.diagnostics.append(model::check(doc));
+  ev.diagnostics.append(checked);
   if (ev.diagnostics.has_errors()) {
     for (const auto& r : ev.volumes) set_state(r.volume, r.status);
     notify(ProgressEvent::Kind::Finished, {}, VolumeStatus::Stale);
@@ -336,6 +468,14 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       ev.layout = validate::validate_layout(ev.document, layout, settings_);
       layout_diagnostics = layout.diagnostics;
       layout_diagnostics.append(ev.layout.diagnostics);
+      generated_layout_failed.clear();
+      for (const auto& d : layout_diagnostics) {
+        if (!d.is_error()) continue;
+        for (const auto& s : d.subjects) {
+          const Id owner = generated_owner(ev.document, s.id);
+          if (!owner.is_null()) generated_layout_failed.insert(owner);
+        }
+      }
       ++ev.stats.layout_builds;
       values_changed = false;
       notify(ProgressEvent::Kind::LayoutBuilt, {}, VolumeStatus::Stale);

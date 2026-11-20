@@ -1,5 +1,6 @@
 #include "vs/proc/generator.hpp"
 
+#include <algorithm>
 #include <utility>
 
 #include <fmt/format.h>
@@ -177,9 +178,64 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
   };
 }
 
+eval::LayoutOutcome ProceduralGenerator::generate(const model::Document& document,
+                                                  const model::DocumentBuild& layout,
+                                                  std::size_t index,
+                                                  const core::ProductSettings& settings,
+                                                  eval::ThreadPool& pool,
+                                                  const eval::CancellationToken& cancel) {
+  eval::LayoutOutcome out;
+  const model::Volume& v = document.volumes.at(index);
+  const core::SubjectRef self = document.volume_subject(v.id);
+  // As prepare() does: the node first where there is one, the volume last.
+  const auto with_self = [&](Diagnostic d) {
+    const bool named = std::any_of(d.subjects.begin(), d.subjects.end(),
+                                   [&](const core::SubjectRef& s) { return s.id == v.id; });
+    if (!named) d.subjects.push_back(self);
+    return d;
+  };
+  const auto* contents = std::get_if<model::CompositeContents>(&v.contents);
+  if (contents == nullptr || !contents->generates()) {
+    out.diagnostics.add(Diagnostic::error(
+        "proc.json.parse", fmt::format("'{}' isn't a composite with a generator", self.label),
+        {self}));
+    return out;
+  }
+  auto parsed = graph_from_json(contents->generator);
+  if (!parsed) {
+    Diagnostic d = parsed.error();
+    d.message = fmt::format("'{}': {}", self.label, d.message);
+    out.diagnostics.add(with_self(std::move(d)));
+    return out;
+  }
+  const Graph& graph = parsed.value();
+  if (Diagnostics checked = check_volume_graph(graph, document, v.id, registry_);
+      checked.has_errors()) {
+    for (auto d : checked) out.diagnostics.add(with_self(std::move(d)));
+    return out;
+  }
+  auto inputs = gather_inputs(document, layout, index, settings);
+  if (!inputs) {
+    out.diagnostics.add(with_self(inputs.error()));
+    return out;
+  }
+  EvaluateGraphOptions options;
+  options.cache = &cache_;
+  options.pool = &pool;
+  options.cancel = &cancel;
+  GraphEvaluation ev = evaluate_graph(graph, *inputs, options, registry_);
+  evaluated_ += ev.evaluated;
+  hits_ += ev.cache_hits;
+  for (auto d : ev.diagnostics) out.diagnostics.add(with_self(std::move(d)));
+  if (!ev.ok() || !ev.children || !*ev.children) return out;
+  out.layout = **ev.children;
+  return out;
+}
+
 std::shared_ptr<ProceduralGenerator> install(eval::Engine& engine) {
   auto g = std::make_shared<ProceduralGenerator>();
   engine.set_generator(model::VolumeKind::Procedural, g);
+  engine.set_layout_generator(g);
   return g;
 }
 

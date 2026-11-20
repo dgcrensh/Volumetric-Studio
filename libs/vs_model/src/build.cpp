@@ -781,11 +781,39 @@ class DocumentBuilder {
                   ContentsBuild& vb) const {
     const SubjectRef self = doc_.volume_subject(v.id);
     feature::ExternalInputs inputs = inputs_for(v, layout);
+    // A template's copy (L4): rebuilt where the template was authored, then
+    // moved into place.
+    const core::dvec3 offset = v.contents_offset;
+    const bool moved = !(offset == core::dvec3{});
+    if (moved) {
+      for (auto& in : inputs.references) {
+        feature::FeatureResult& r = in.result;
+        if (r.plane) r.plane->origin = r.plane->origin - offset;
+        if (r.axis) r.axis->origin = r.axis->origin - offset;
+        if (r.point) *r.point = *r.point - offset;
+        for (auto& f : r.faces) {
+          f.plane.origin = f.plane.origin - offset;
+          if (f.cylinder) f.cylinder->axis.origin = f.cylinder->axis.origin - offset;
+        }
+      }
+    }
 
     feature::RebuildOptions options;
     options.inputs = &inputs;
     vb.contents_rebuild = feature::rebuild(tree, settings_, options);
     const auto& r = *vb.contents_rebuild;
+    if (moved && r.ok() && !r.body.is_empty()) {
+      auto placed = kernel::transformed(r.body, core::dtransform::translate(offset));
+      if (!placed) {
+        vb.diagnostics.add(placed.error());
+        vb.status = VolumeStatus::Failed;
+        return;
+      }
+      vb.contents = *placed;
+      vb.diagnostics.append(r.diagnostics);  // warnings
+      vb.status = VolumeStatus::Current;
+      return;
+    }
     if (!r.ok()) {
       vb.diagnostics.add(error(self, "model.contents.failed",
                                "its contents' feature tree didn't rebuild cleanly"));

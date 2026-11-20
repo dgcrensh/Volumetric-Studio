@@ -100,6 +100,24 @@ const Delegation* CompositeContents::delegation(const Id& surface) const {
   return nullptr;
 }
 
+Contents as_contents(const TemplateContents& contents) {
+  return std::visit([](const auto& c) -> Contents { return c; }, contents);
+}
+
+std::optional<TemplateContents> as_template_contents(const Contents& contents) {
+  if (const auto* s = std::get_if<StaticContents>(&contents)) return TemplateContents{*s};
+  if (const auto* p = std::get_if<ParametricContents>(&contents)) return TemplateContents{*p};
+  if (const auto* g = std::get_if<ProceduralContents>(&contents)) return TemplateContents{*g};
+  return std::nullopt;
+}
+
+const ChildTemplate* CompositeContents::find_template(std::string_view name) const {
+  for (const auto& t : templates) {
+    if (t.name == name) return &t;
+  }
+  return nullptr;
+}
+
 const VolumeParameter* Volume::find_parameter(const Id& pid) const {
   for (const auto& p : parameters) {
     if (p.id == pid) return &p;
