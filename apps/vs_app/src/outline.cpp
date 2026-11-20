@@ -2,8 +2,10 @@
 
 #include <fmt/format.h>
 
+#include <functional>
 #include <variant>
 
+#include "vs/model/hierarchy.hpp"
 #include "vs/proc/graph.hpp"
 
 namespace vs::app {
@@ -126,9 +128,27 @@ std::vector<VolumeRow> volume_rows(const eval::Evaluation& evaluation,
                                    const std::map<Id, model::VolumeStatus>& states) {
   std::vector<VolumeRow> rows;
   const model::Document& doc = evaluation.document;
+  // Depth first, children after their composite (L3); a flat document stays
+  // in document order. Volumes no walk reaches (a broken parent) come last.
+  std::vector<std::pair<std::size_t, std::size_t>> order;  // index, depth
+  std::vector<bool> listed(doc.volumes.size(), false);
+  const std::function<void(const Id&, std::size_t)> walk = [&](const Id& level, std::size_t depth) {
+    for (const std::size_t i : model::children(doc, level)) {
+      if (listed[i]) continue;
+      listed[i] = true;
+      order.emplace_back(i, depth);
+      if (doc.volumes[i].composite()) walk(doc.volumes[i].id, depth + 1);
+    }
+  };
+  walk({}, 0);
   for (std::size_t i = 0; i < doc.volumes.size(); ++i) {
+    if (!listed[i]) order.emplace_back(i, 0);
+  }
+  for (const auto& [i, depth] : order) {
     const model::Volume& v = doc.volumes[i];
     VolumeRow row;
+    row.parent = listed[i] ? v.parent : Id{};
+    row.depth = depth;
     row.id = v.id;
     row.name = v.name.empty() ? fmt::format("Volume {}", i + 1) : v.name;
     row.kind = v.kind();
@@ -178,6 +198,7 @@ std::string kind_label(const VolumeRow& row) {
     case model::VolumeKind::Static: return "Static";
     case model::VolumeKind::Parametric: return "Parametric";
     case model::VolumeKind::Procedural: return "Procedural";
+    case model::VolumeKind::Composite: return "Composite";
   }
   return "?";
 }

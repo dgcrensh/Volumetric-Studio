@@ -60,6 +60,10 @@ struct VolumeRow {
   model::VolumeStatus status = model::VolumeStatus::Stale;
   bool stale_contents = false;
   std::size_t errors = 0, warnings = 0;  // this volume's own diagnostics
+  // L3: its composite parent (null at the root) and how deep it sits. Rows
+  // come parents first, each followed by its children (a depth-first walk).
+  Id parent;
+  std::size_t depth = 0;
 };
 
 struct SurfaceRow {

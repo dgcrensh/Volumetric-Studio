@@ -32,6 +32,14 @@
 // which reports them as feature.variable.loop.)
 //   Link      -> the output it carries
 //
+// Composite volumes (L3): a composite's layout variables and features are
+// Variable and Feature nodes too (owned by the composite), with the same
+// edges as the root layout's, plus edges to the composite's boundary and
+// joining surfaces where its features refer to them; its children's
+// boundaries, parameters and surfaces use them as top-level ones use the
+// root layout; and a composite's contents use each child's contents.
+// Contents use every surface joining them, delegated ones included.
+//
 // Contents depend only on what reaches them through the boundary,
 // connection surfaces and parameters, which is the encapsulation rule seen
 // as data flow. A published output may therefore feed only things that

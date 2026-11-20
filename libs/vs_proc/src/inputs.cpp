@@ -1,4 +1,5 @@
 #include "vs/proc/inputs.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <fmt/format.h>
 
@@ -61,7 +62,7 @@ core::Result<GraphInputs> gather_inputs(const model::Document& document,
   in.bounds = kernel::bounding_box(vb.boundary);
 
   for (const auto& s : document.connections) {
-    if (!s.joins(v.id)) continue;
+    if (!model::joins(document, s, v.id)) continue;
     const core::SubjectRef surface = document.connection_subject(s.id);
     const model::ConnectionBuild* cb = layout.find_connection(s.id);
     if (cb == nullptr || !cb->ok || cb->patch.is_empty()) {

@@ -16,7 +16,7 @@ CombinedMesh combine(const model::Document& document, const model::DocumentBuild
   out.diagnostics.append(out.seams.diagnostics);
 
   for (const model::Volume& v : document.volumes) {
-    if (v.keep_out) continue;
+    if (v.keep_out || v.composite()) continue;  // a composite's children mesh it (L3)
     const core::SubjectRef subject = document.volume_subject(v.id);
     const model::VolumeBuild* vb = build.find_volume(v.id);
     const auto skip = [&](const std::string& why) {

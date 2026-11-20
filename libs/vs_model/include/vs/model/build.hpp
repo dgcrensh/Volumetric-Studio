@@ -184,6 +184,39 @@ ContentsBuild build_contents(const Document& document, const DocumentBuild& layo
 // isn't updated.)
 void apply_contents(VolumeBuild& volume, ContentsBuild contents);
 
+// --- composite volumes (L3) -------------------------------------------------------
+//
+// A composite's contents are its children. build_layout() rebuilds its
+// layout (with its inputs, as a parametric tree is: `contents_rebuild`,
+// its diagnostics on the composite, Failed when it has errors) and builds
+// its children from it, level by level. build_contents() makes no solid
+// for it; its status and outputs come from its children: the worst of
+// their statuses (Failed, then Stale, then Current; Current with no
+// children), and outputs that add their measures up.
+
+// What a composite's outputs add up: siblings never overlap, so volumes
+// add, centres average by volume and envelopes unite.
+struct ContentsMeasure {
+  double volume = 0.0;  // mm³
+  dvec3 moment{};       // Σ volume · centre, mm⁴
+  dbox3 envelope = dbox3::empty();
+  bool any = false;     // false: nothing measured yet
+
+  void add(const ContentsMeasure& other);
+};
+
+// A solid's measure (nothing for an empty solid).
+ContentsMeasure measure_solid(const kernel::Solid& solid);
+
+// A composite's outputs from its children's measures added up (no values
+// when nothing was measured). Volume, Mass, Centre of gravity and Envelope;
+// check() refuses the others on a composite.
+std::vector<OutputResult> composite_outputs(const Volume& composite,
+                                            const ContentsMeasure& total);
+
+// The worst of two statuses, for a composite's status from its children's.
+VolumeStatus worse(VolumeStatus a, VolumeStatus b);
+
 // `blobs` holds static contents' files; without it static contents aren't
 // read and stay Stale.
 DocumentBuild build(const Document& document, const ProductSettings& settings,

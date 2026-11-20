@@ -1,4 +1,5 @@
 #include "vs/eval/engine.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
 #include <unordered_set>
@@ -59,7 +60,7 @@ std::vector<float> curved_seam_slack(const model::Document& document,
                                      const mesh::Mesh& m, const core::ProductSettings& settings) {
   bool curved = false;
   for (std::size_t k = 0; k < document.connections.size(); ++k) {
-    if (document.connections[k].joins(volume) && k < layout.connections.size() &&
+    if (model::joins(document, document.connections[k], volume) && k < layout.connections.size() &&
         layout.connections[k].ok && layout.connections[k].cylinder) {
       curved = true;
     }
@@ -86,8 +87,8 @@ std::vector<float> curved_seam_slack(const model::Document& document,
 model::Document apply_links(const model::Document& document, const std::map<Id, double>& values) {
   model::Document out = document;
   for (const auto& [target, value] : values) {
+    // The shortest text that reads back as the same double.
     if (out.layout.variables().find(target) != nullptr) {
-      // The shortest text that reads back as the same double.
       (void)out.layout.variables().set_expression(target, fmt::format("{}", value));
       continue;
     }
@@ -95,9 +96,38 @@ model::Document apply_links(const model::Document& document, const std::map<Id, 
       for (auto& p : v.parameters) {
         if (p.id == target) p.value = feature::Param::of(value);
       }
+      // A variable of a composite's layout (L3).
+      if (auto* c = std::get_if<model::CompositeContents>(&v.contents);
+          c != nullptr && c->layout.variables().find(target) != nullptr) {
+        (void)c->layout.variables().set_expression(target, fmt::format("{}", value));
+      }
     }
   }
   return out;
+}
+
+// A volume's contents measured for its composite parent's outputs (L3).
+model::ContentsMeasure measure_contents(const model::Volume& v, const GeneratedContents& c,
+                                        ThreadPool& pool) {
+  if (!c.solid.is_empty()) return model::measure_solid(c.solid);
+  model::ContentsMeasure m;
+  if (!c.mesh || c.mesh->triangle_count() == 0) return m;
+  model::Volume probe;
+  probe.id = v.id;
+  probe.outputs = {{Id::derive(v.id, "volume"), "volume", model::OutputQuantity::Volume, 1.0},
+                   {Id::derive(v.id, "centre"), "centre", model::OutputQuantity::CentreOfGravity,
+                    1.0},
+                   {Id::derive(v.id, "envelope"), "envelope", model::OutputQuantity::Envelope,
+                    1.0}};
+  const auto measured = measure_mesh(probe, *c.mesh, pool);
+  if (measured.size() != 3 || !measured[0].value || !measured[1].value || !measured[2].value) {
+    return m;
+  }
+  m.volume = std::get<double>(*measured[0].value);
+  m.moment = std::get<core::dvec3>(*measured[1].value) * m.volume;
+  m.envelope = std::get<core::dbox3>(*measured[2].value);
+  m.any = true;
+  return m;
 }
 
 // One generation, before containment.
@@ -202,6 +232,61 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     }
   };
 
+  // A composite (L3) never generates: once its children are done (they are
+  // upstream of it), its status is the worst of theirs, its outputs add
+  // their measures up and its key hashes theirs. `layout` is the current
+  // wave's layout build.
+  model::DocumentBuild layout;
+  std::vector<model::ContentsMeasure> measures(n);
+  const bool composite_outputs = std::any_of(
+      doc.volumes.begin(), doc.volumes.end(),
+      [](const model::Volume& v) { return v.composite() && !v.outputs.empty(); });
+  const auto measure_of = [&](std::size_t j) {
+    const VolumeResult& r = ev.volumes[j];
+    if (ev.document.volumes[j].composite()) return measures[j];
+    if (!r.contents || r.status != VolumeStatus::Current) return model::ContentsMeasure{};
+    return measure_contents(ev.document.volumes[j], *r.contents, pool_);
+  };
+  const auto finish_composite = [&](std::size_t i) {
+    const model::Volume& v = ev.document.volumes[i];
+    const model::VolumeBuild& vb = layout.volumes[i];
+    VolumeResult& r = ev.volumes[i];
+    auto c = std::make_shared<GeneratedContents>();
+    c->status = vb.status == VolumeStatus::Failed || vb.boundary.is_empty()
+                    ? VolumeStatus::Failed
+                    : VolumeStatus::Current;
+    c->rebuild = vb.contents_rebuild;
+    Hasher key;
+    key.add(std::string_view("vstudio.eval.composite"));
+    const std::optional<Hash256> own = cache_key(ev.document, layout, i);
+    key.add(own.has_value());
+    if (own) key.add(*own);
+    Hasher out;
+    out.add(std::string_view("vstudio.eval.composite.output"));
+    model::ContentsMeasure total;
+    for (const std::size_t j : model::children(ev.document, v.id)) {
+      const VolumeResult& child = ev.volumes[j];
+      c->status = model::worse(c->status, child.status);
+      key.add(child.volume).add(child.key.has_value());
+      if (child.key) key.add(*child.key);
+      out.add(child.volume).add(child.status).add(child.contents != nullptr);
+      if (child.contents) out.add(child.contents->output_hash);
+      if (composite_outputs) total.add(measure_of(j));
+    }
+    measures[i] = total;
+    c->outputs = model::composite_outputs(v, total);
+    c->key = key.finalize();
+    const Hash256 measured =
+        output_hash(c->status, kernel::Solid{}, nullptr, c->outputs, nullptr);
+    out.add(measured);
+    c->output_hash = out.finalize();
+    r.key = c->key;
+    r.status = c->status;
+    r.contents = std::move(c);
+    r.stale_contents = false;
+    set_state(r.volume, r.status);
+  };
+
   // 1. check
   ev.diagnostics.append(model::check(doc));
   if (ev.diagnostics.has_errors()) {
@@ -232,7 +317,6 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   std::map<Id, double> link_values;
   bool values_changed = true;
   std::vector<bool> done(n, false);
-  model::DocumentBuild layout;
   Diagnostics layout_diagnostics;  // of the last layout build and its checks
 
   for (;;) {
@@ -269,6 +353,10 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       const model::Volume& v = ev.document.volumes[i];
       VolumeResult& r = ev.volumes[i];
       const SubjectRef self = ev.document.volume_subject(v.id);
+      if (v.composite()) {
+        finish_composite(i);
+        continue;
+      }
       const auto blocker = std::find_if(upstream[i].begin(), upstream[i].end(), [&](std::size_t j) {
         return ev.volumes[j].status != VolumeStatus::Current;
       });

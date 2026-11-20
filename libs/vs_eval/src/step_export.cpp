@@ -1,4 +1,5 @@
 #include "vs/eval/step_export.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <fmt/format.h>
 
@@ -21,7 +22,9 @@ StepExport step_parts(const Evaluation& evaluation, const StepExportOptions& opt
 
   for (std::size_t i = 0; i < doc.volumes.size() && i < evaluation.volumes.size(); ++i) {
     const model::Volume& v = doc.volumes[i];
-    if (v.keep_out) continue;
+    if (v.keep_out || v.composite()) continue;  // a composite's children are its parts (L3)
+    // Children are named by their path: "Housing / Carrier" (L3).
+    const std::string name = v.parent.is_null() ? v.name : model::volume_path(doc, v.id);
     const VolumeResult& r = evaluation.volumes[i];
     const model::VolumeBuild* vb = evaluation.build.find_volume(v.id);
     const kernel::Solid boundary = vb != nullptr ? vb->boundary : kernel::Solid{};
@@ -42,7 +45,7 @@ StepExport step_parts(const Evaluation& evaluation, const StepExportOptions& opt
             fmt::format("Volume '{}' has no boundary to export", v.name), {doc.boundary_subject(v.id)}));
         return;
       }
-      parts.push_back({v.name, boundary});
+      parts.push_back({name, boundary});
       ++out.boundaries;
     };
 
@@ -67,11 +70,11 @@ StepExport step_parts(const Evaluation& evaluation, const StepExportOptions& opt
         out.diagnostics.add(std::move(d));
         continue;
       }
-      parts.push_back({v.name, *shape});
+      parts.push_back({name, *shape});
       ++out.meshes;
       continue;
     }
-    parts.push_back({v.name, c->solid});
+    parts.push_back({name, c->solid});
     ++out.breps;
   }
 

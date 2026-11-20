@@ -455,6 +455,7 @@ struct Viewport::Impl : public AIS_ViewController {
   // Outside the volume being edited in context (see set_context()).
   [[nodiscard]] bool dimmed(const PreparedItem& item) const {
     if (context_volume.is_null() || item.volume == context_volume) return false;
+    if (std::find(context_inside.begin(), context_inside.end(), item.volume) != context_inside.end()) return false;
     return !(item.role == ItemRole::ConnectionSurface &&
              std::find(context_inputs.begin(), context_inputs.end(), item.subject) != context_inputs.end());
   }
@@ -535,6 +536,7 @@ struct Viewport::Impl : public AIS_ViewController {
   std::vector<core::Id> highlight;
   core::Id context_volume;
   std::vector<core::Id> context_inputs;
+  std::vector<core::Id> context_inside;
   PickMode pick_mode = PickMode::None;
   std::vector<std::pair<core::Id, ItemRole>> pickable;
   // Pick cycling: where the last pick was, and which of the parts under
@@ -641,8 +643,10 @@ void Viewport::set_highlight(const std::vector<core::Id>& subjects) {
   update();
 }
 
-void Viewport::set_context(const core::Id& volume, const std::vector<core::Id>& inputs) {
-  if (impl_->context_volume == volume && impl_->context_inputs == inputs) return;
+void Viewport::set_context(const core::Id& volume, const std::vector<core::Id>& inputs,
+                           const std::vector<core::Id>& inside) {
+  if (impl_->context_volume == volume && impl_->context_inputs == inputs && impl_->context_inside == inside) return;
+  impl_->context_inside = inside;
   impl_->context_volume = volume;
   impl_->context_inputs = inputs;
   if (!impl_->ensure()) return;

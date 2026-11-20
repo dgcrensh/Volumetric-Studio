@@ -27,6 +27,17 @@
 //   model.reference.parent       names the layout's geometry or variables from inside
 //                                a volume
 //
+// Levels (L3). Inside a composite volume C is C's level: C's layout is to
+// its children what the root layout is to the top-level volumes. So from
+// inside C, besides C's own tree, boundary, joining surfaces and
+// parameters, its children's boundaries, parameters and published outputs
+// may be named, and the surfaces, keep-outs and links between them;
+// anything deeper (a grandchild, a child's contents) is
+// model.reference.contents, and anything of a level around C is
+// model.reference.parent. From the root the same holds for the top level.
+// A surface delegated down to a volume (hierarchy.hpp) is one of its
+// inputs.
+//
 // An id that names nothing resolves to Kind::Unknown without error: whether
 // that is a broken reference is for the rebuild to say, in context.
 //

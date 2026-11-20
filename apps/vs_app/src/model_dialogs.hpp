@@ -15,6 +15,10 @@
 //   LinkDialog         a published output driving a layout variable or a
 //                      volume parameter
 //
+// Each works at one level (L3): the root layout, or a composite's (`level`,
+// for a volume its `parent`). Its pickers list that layout's features and
+// the volumes at that level only, so what it makes stays inside the level.
+//
 // Each reads its widgets back into the model value (value()), keeping the
 // id it was given; the main window previews and commits it like a feature.
 
@@ -60,7 +64,7 @@ class ConnectionDialog : public EditDialog {
 
  public:
   ConnectionDialog(const model::ConnectionSurface& surface, const eval::Evaluation& evaluation,
-                   QWidget* parent = nullptr);
+                   const Id& level = {}, QWidget* parent = nullptr);
   ~ConnectionDialog() override;
   [[nodiscard]] model::ConnectionSurface value() const;
   void set_value(const model::ConnectionSurface& surface);
@@ -76,7 +80,8 @@ class KeepOutDialog : public EditDialog {
   Q_OBJECT
 
  public:
-  KeepOutDialog(const model::KeepOut& keep_out, const eval::Evaluation& evaluation, QWidget* parent = nullptr);
+  KeepOutDialog(const model::KeepOut& keep_out, const eval::Evaluation& evaluation, const Id& level = {},
+                QWidget* parent = nullptr);
   ~KeepOutDialog() override;
   [[nodiscard]] model::KeepOut value() const;
   void set_value(const model::KeepOut& keep_out);
@@ -92,7 +97,8 @@ class LinkDialog : public EditDialog {
   Q_OBJECT
 
  public:
-  LinkDialog(const model::Link& link, const eval::Evaluation& evaluation, QWidget* parent = nullptr);
+  LinkDialog(const model::Link& link, const eval::Evaluation& evaluation, const Id& level = {},
+             QWidget* parent = nullptr);
   ~LinkDialog() override;
   [[nodiscard]] model::Link value() const;
   void set_value(const model::Link& link);

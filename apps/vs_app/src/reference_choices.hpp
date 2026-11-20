@@ -70,7 +70,8 @@ ReferenceChoices reference_choices(const eval::Evaluation& evaluation, const Id&
                                    std::optional<std::size_t> index = std::nullopt);
 
 // Choices for connection surfaces, which the layout owns: the layout's
-// sketches (sketch patches) and planes (datum patches).
-ReferenceChoices layout_choices(const eval::Evaluation& evaluation);
+// sketches (sketch patches) and planes (datum patches). `level` is the root
+// (null) or a composite (L3), whose own layout and inputs are its choices.
+ReferenceChoices layout_choices(const eval::Evaluation& evaluation, const Id& level = {});
 
 }  // namespace vs::app

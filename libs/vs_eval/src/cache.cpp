@@ -1,4 +1,5 @@
 #include "vs/eval/cache.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <bit>
 #include <cstring>
@@ -63,6 +64,11 @@ std::optional<Hash256> cache_key(const model::Document& document,
     h.add(sc->blob).add(sc->format);
   } else if (const auto* pc = std::get_if<model::ParametricContents>(&v.contents)) {
     h.add(feature::to_json(pc->tree));
+  } else if (const auto* cc = std::get_if<model::CompositeContents>(&v.contents)) {
+    // A composite's own part (L3); the engine adds its children's keys.
+    h.add(feature::to_json(cc->layout));
+    h.add(static_cast<std::uint64_t>(cc->delegations.size()));
+    for (const auto& d : cc->delegations) h.add(d.surface).add(d.child);
   } else {
     h.add(std::get<model::ProceduralContents>(v.contents).graph);
   }
@@ -74,7 +80,7 @@ std::optional<Hash256> cache_key(const model::Document& document,
   // The connection surfaces joining it.
   for (std::size_t k = 0; k < document.connections.size(); ++k) {
     const model::ConnectionSurface& c = document.connections[k];
-    if (!c.joins(v.id)) continue;
+    if (!model::joins(document, c, v.id)) continue;
     const model::ConnectionBuild& cb = layout.connections[k];
     h.add(c.id).add(c.type()).add(cb.ok);
     if (!cb.ok) continue;

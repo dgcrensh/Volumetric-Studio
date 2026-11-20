@@ -1,4 +1,5 @@
 #include "vs/mesh/seam_library.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -132,8 +133,7 @@ SeamLibrary build_seams(const model::Document& document, const model::DocumentBu
   }
   for (const model::ConnectionSurface& surface : document.connections) {
     if (surface.type() == model::ConnectionType::Clearance) continue;
-    if (volume && std::find(surface.volumes.begin(), surface.volumes.end(), *volume) ==
-                      surface.volumes.end()) {
+    if (volume && !model::joins(document, surface, *volume)) {
       continue;
     }
     const model::ConnectionBuild* cb = build.find_connection(surface.id);
@@ -151,7 +151,8 @@ SeamLibrary build_seams(const model::Document& document, const model::DocumentBu
       library.diagnostics.add(seam.error());
       continue;
     }
-    seam->volumes = surface.volumes;
+    // The volumes whose contents meet it: delegations followed down (L3).
+    seam->volumes = model::seam_sides(document, surface);
     library.add(std::move(seam).value());
   }
   return library;

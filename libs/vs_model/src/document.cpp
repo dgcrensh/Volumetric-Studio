@@ -15,6 +15,7 @@ std::string_view to_string(VolumeKind kind) {
     case VolumeKind::Static: return "static";
     case VolumeKind::Parametric: return "parametric";
     case VolumeKind::Procedural: return "procedural";
+    case VolumeKind::Composite: return "composite";
   }
   return "static";
 }
@@ -78,17 +79,25 @@ bool Volume::contents_empty() const {
   if (const auto* p = std::get_if<ParametricContents>(&contents)) {
     return p->tree.features().empty() && p->tree.variables().empty();
   }
+  if (std::holds_alternative<CompositeContents>(contents)) return false;
   return std::get<ProceduralContents>(contents).graph.empty();
 }
 
 const feature::FeatureTree* Volume::tree() const {
-  const auto* p = std::get_if<ParametricContents>(&contents);
-  return p ? &p->tree : nullptr;
+  if (const auto* p = std::get_if<ParametricContents>(&contents)) return &p->tree;
+  if (const auto* c = std::get_if<CompositeContents>(&contents)) return &c->layout;
+  return nullptr;
 }
 
 feature::FeatureTree* Volume::tree() {
-  auto* p = std::get_if<ParametricContents>(&contents);
-  return p ? &p->tree : nullptr;
+  return const_cast<feature::FeatureTree*>(std::as_const(*this).tree());
+}
+
+const Delegation* CompositeContents::delegation(const Id& surface) const {
+  for (const auto& d : delegations) {
+    if (d.surface == surface) return &d;
+  }
+  return nullptr;
 }
 
 const VolumeParameter* Volume::find_parameter(const Id& pid) const {
@@ -223,6 +232,12 @@ SubjectRef Document::link_subject(const Id& lid) const {
     for (const auto& v : volumes) {
       if (const auto* p = v.find_parameter(l->target)) {
         target = fmt::format("{}.{}", name_or(v.name, "Volume", v.id), p->name);
+      }
+      // A variable of a composite's layout (L3).
+      if (const auto* c = std::get_if<CompositeContents>(&v.contents)) {
+        if (const auto* cvar = c->layout.variables().find(l->target)) {
+          target = fmt::format("{}: {}", name_or(v.name, "Volume", v.id), cvar->name);
+        }
       }
     }
   }

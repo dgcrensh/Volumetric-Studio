@@ -10,6 +10,7 @@
 
 #include "vs/kernel/operations.hpp"
 #include "vs/kernel/queries.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/validate/registry.hpp"
 
 namespace vs::validate {
@@ -74,6 +75,10 @@ class LayoutChecker {
       for (std::size_t j = i + 1; j < vols.size(); ++j) {
         Prepared& a = vols[i];
         Prepared& b = vols[j];
+        // Only siblings are checked against each other (L3): a child is
+        // inside its parent, and meets its parent's neighbours only
+        // through surfaces delegated to it.
+        if (!(a.volume->parent == b.volume->parent)) continue;
         if (!a.box.intersects(b.box, tol_)) continue;
         ++report_.pairs_tested;
         if (overlap(a, b)) continue;
@@ -83,6 +88,9 @@ class LayoutChecker {
       }
     }
     report_.diagnostics.append(contacts);
+    for (const Prepared& child : vols) {
+      if (!child.volume->parent.is_null()) nesting(child, vols);
+    }
     report_.diagnostics.append(check_connections(doc_, build_, settings_));
     return std::move(report_);
   }
@@ -138,6 +146,42 @@ class LayoutChecker {
     return true;
   }
 
+  // --- nesting (L3) ----------------------------------------------------------------
+
+  // A child's boundary must lie inside its composite's: whatever pokes out
+  // is reported with its depth (the region's thinnest side), as overlap is.
+  void nesting(const Prepared& child, const std::vector<Prepared>& vols) {
+    const auto parent = std::find_if(vols.begin(), vols.end(), [&](const Prepared& p) {
+      return p.volume->id == child.volume->parent;
+    });
+    if (parent == vols.end()) return;  // the parent's boundary failed: reported already
+    if (parent->box.contains(child.box, tol_)) {
+      // Inside the box, but the boundary needn't be a box: check properly
+      // unless the parent fills its box.
+      const auto pm = kernel::mass_properties(parent->build->boundary);
+      if (pm && std::abs(pm->volume - parent->box.volume()) <= tol_ * parent->box.volume()) return;
+    }
+    auto outside = kernel::cut(child.build->boundary, std::vector<Solid>{parent->build->boundary}, {tol_});
+    if (!outside) {
+      if (outside.error().code == "kernel.boolean.empty_result") return;
+      undecided(child, *parent, "nesting", outside.error());
+      return;
+    }
+    if (outside->is_empty()) return;
+    const dbox3 region = kernel::bounding_box(*outside);
+    const double depth = smallest_side(region);
+    const auto mass = kernel::mass_properties(*outside);
+    const double volume = mass ? mass->volume : 0.0;
+    if (depth <= tol_ || volume <= 0.0) return;
+    report_.diagnostics.add(Diagnostic::error(
+        "validate.nesting.outside",
+        fmt::format("'{}' reaches {} mm outside '{}', the composite it belongs to ({} mm³ from "
+                    "{}); a child must stay inside its parent's boundary",
+                    child.volume->name, mm(depth), parent->volume->name, mm(volume),
+                    box_text(region)),
+        {doc_.boundary_subject(child.volume->id), doc_.boundary_subject(parent->volume->id)}));
+  }
+
   // --- contact --------------------------------------------------------------------
 
   std::string face_label(const Prepared& p, const Face& face, std::size_t index) const {
@@ -156,18 +200,21 @@ class LayoutChecker {
                std::abs(dot(cylinder->axis.direction, c.axis.direction)) > 1.0 - 1e-9 &&
                length(across) <= tol_ && cylinder->inward == c.inward;
       }
-      if (same) return readable(n.name);
+      if (same) return readable(n.name, p.volume->parent);
     }
     return fmt::format("face {}", index + 1);
   }
 
-  // "<feature id>:<name>" with the feature's label instead of its id.
-  std::string readable(const std::string& name) const {
+  // "<feature id>:<name>" with the feature's label instead of its id; the
+  // feature is in the layout of the volume's level.
+  std::string readable(const std::string& name, const Id& level) const {
     const auto colon = name.find(':');
     if (colon == std::string::npos) return name;
     const auto id = Id::parse(name.substr(0, colon));
     if (!id) return name;
-    return fmt::format("{}:{}", doc_.layout.label(*id), name.substr(colon + 1));
+    const feature::FeatureTree* layout = model::level_layout(doc_, level);
+    return fmt::format("{}:{}", layout != nullptr ? layout->label(*id) : id->to_string(),
+                       name.substr(colon + 1));
   }
 
   const std::vector<BoundaryFace>& faces_of(Prepared& p) const {
@@ -362,7 +409,16 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
       }
     }
 
-    for (const auto& vid : c.volumes) {
+    // Each volume it names, and each it is delegated down to (L3).
+    std::vector<Id> met;
+    for (const auto& named : c.volumes) {
+      Id at = named;
+      for (std::size_t guard = 0; !at.is_null() && guard <= document.volumes.size(); ++guard) {
+        met.push_back(at);
+        at = model::delegate_of(document, at, c.id);
+      }
+    }
+    for (const auto& vid : met) {
       const VolumeBuild* vb = build.find_volume(vid);
       if (!vb || vb->boundary.is_empty()) continue;
       auto d = kernel::min_distance(cb->patch, vb->boundary);

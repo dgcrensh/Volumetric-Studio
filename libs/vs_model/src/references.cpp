@@ -2,6 +2,8 @@
 
 #include <fmt/format.h>
 
+#include "vs/model/hierarchy.hpp"
+
 namespace vs::model {
 
 std::string_view to_string(TargetKind kind) {
@@ -97,78 +99,156 @@ Target classify(const Document& doc, const Id& id) {
   return t;
 }
 
+namespace {
+
+// What a level (the root, or a composite) makes of something that lives at
+// level `at` (the root, or inside volume `at`'s contents).
+enum class Seen { Own, Below, Above, Elsewhere };
+
+Seen seen_from(const Document& doc, const Id& level, const Id& at) {
+  if (at == level) return Seen::Own;
+  if (!at.is_null() && is_within(doc, at, level)) return Seen::Below;
+  if (at.is_null() || is_within(doc, level, at)) return Seen::Above;
+  return Seen::Elsewhere;
+}
+
+// The volume whose contents hide something living at `at`, as seen from
+// `level`: the child of `level` holding it, else `at` itself.
+Id hider(const Document& doc, const Id& level, const Id& at) {
+  const Id c = child_toward(doc, level, at);
+  return c.is_null() ? at : c;
+}
+
+Diagnostic hidden(const Document& doc, const Scope& scope, const Id& owner, const SubjectRef* by) {
+  const std::string owner_label = volume_label(doc, owner);
+  if (scope.is_layout()) {
+    return refusal("model.reference.contents",
+                   fmt::format("it refers to something inside the contents of '{}', which "
+                               "nothing outside the volume may see; refer to its boundary, a "
+                               "connection surface or a published output instead",
+                               owner_label),
+                   by, {doc.volume_subject(owner)});
+  }
+  return refusal("model.reference.contents",
+                 fmt::format("the contents of '{}' refer to something inside the contents of "
+                             "'{}'; a volume can't see inside its children or its neighbours",
+                             volume_label(doc, scope.volume), owner_label),
+                 by, {doc.volume_subject(owner)});
+}
+
+Id parent_of(const Document& doc, const Id& volume) {
+  const Volume* v = doc.find_volume(volume);
+  return v != nullptr ? v->parent : Id{};
+}
+
+}  // namespace
+
 Result<Target> resolve(const Document& doc, const Scope& scope, const Id& id,
                        const SubjectRef* by) {
   const Target t = classify(doc, id);
-  if (scope.is_layout()) {
-    if (t.kind == TargetKind::InContents) {
-      const std::string owner = volume_label(doc, t.owner);
-      return refusal("model.reference.contents",
-                     fmt::format("it refers to something inside the contents of '{}', which "
-                                 "nothing outside the volume may see; refer to its boundary, a "
-                                 "connection surface or a published output instead",
-                                 owner),
-                     by, {doc.volume_subject(t.owner)});
-    }
-    return t;
-  }
+  const Id& self = scope.volume;  // the level: null for the root layout
+  const std::string self_label = scope.is_layout() ? "the layout" : volume_label(doc, self);
 
-  const Id& self = scope.volume;
-  const std::string self_label = volume_label(doc, self);
+  const auto parent_refusal = [&](const SubjectRef& what) {
+    return refusal("model.reference.parent",
+                   fmt::format("the contents of '{}' refer to '{}' of the layout around it; "
+                               "contents anchor only to their own boundary and connection "
+                               "surfaces",
+                               self_label, what.label),
+                   by, {what});
+  };
+
   switch (t.kind) {
     case TargetKind::Unknown:
       return t;
     case TargetKind::InContents:
-      if (t.owner == self) return t;
-      return refusal("model.reference.contents",
-                     fmt::format("the contents of '{}' refer to something inside the contents "
-                                 "of '{}'; a volume can't see its neighbours",
-                                 self_label, volume_label(doc, t.owner)),
-                     by, {doc.volume_subject(t.owner)});
-    case TargetKind::Volume:
+    case TargetKind::LayoutFeature:
+    case TargetKind::LayoutVariable:
+    case TargetKind::KeepOut:
+    case TargetKind::Link: {
+      // The level the target lives at.
+      Id at;
+      if (t.kind == TargetKind::InContents) at = t.owner;
+      if (t.kind == TargetKind::KeepOut) at = level_of(doc, *doc.find_keep_out(t.id));
+      if (t.kind == TargetKind::Link) at = level_of(doc, *doc.find_link(t.id));
+      switch (seen_from(doc, self, at)) {
+        case Seen::Own: return t;
+        case Seen::Below: return hidden(doc, scope, hider(doc, self, at), by);
+        case Seen::Elsewhere: return hidden(doc, scope, at, by);
+        case Seen::Above: break;
+      }
+      SubjectRef what;
+      if (t.kind == TargetKind::LayoutFeature) {
+        what = doc.layout.subject(t.id);
+      } else if (t.kind == TargetKind::LayoutVariable) {
+        what = doc.layout.variables().subject(t.id);
+      } else if (t.kind == TargetKind::KeepOut) {
+        what = doc.keep_out_subject(t.id);
+      } else if (t.kind == TargetKind::Link) {
+        what = doc.link_subject(t.id);
+      } else {
+        const feature::FeatureTree* tree = doc.find_volume(at)->tree();
+        what = tree->variables().find(t.id) ? tree->variables().subject(t.id) : tree->subject(t.id);
+      }
+      return parent_refusal(what);
+    }
+    case TargetKind::Volume: {
       if (t.id == self) return t;
+      switch (seen_from(doc, self, parent_of(doc, t.id))) {
+        case Seen::Own: return t;
+        case Seen::Below: return hidden(doc, scope, hider(doc, self, parent_of(doc, t.id)), by);
+        default: break;
+      }
+      if (is_within(doc, self, t.id)) return parent_refusal(doc.volume_subject(t.id));
       return refusal("model.reference.sibling",
                      fmt::format("the contents of '{}' refer to the volume '{}'; a volume sees "
                                  "only its own boundary and connection surfaces",
                                  self_label, volume_label(doc, t.id)),
                      by, {doc.volume_subject(t.id)});
-    case TargetKind::Parameter:
+    }
+    case TargetKind::Parameter: {
       if (t.owner == self) return t;
+      switch (seen_from(doc, self, parent_of(doc, t.owner))) {
+        case Seen::Own: return t;
+        case Seen::Below:
+          return hidden(doc, scope, hider(doc, self, parent_of(doc, t.owner)), by);
+        default: break;
+      }
+      if (is_within(doc, self, t.owner)) {
+        return parent_refusal({core::SubjectKind::Parameter, t.id,
+                               fmt::format("a parameter of '{}'", volume_label(doc, t.owner))});
+      }
       return refusal("model.reference.sibling",
                      fmt::format("the contents of '{}' refer to a parameter of '{}'; give '{}' "
                                  "a parameter of its own and drive it from the layout",
                                  self_label, volume_label(doc, t.owner), self_label),
                      by, {doc.volume_subject(t.owner)});
+    }
     case TargetKind::ConnectionSurface: {
       const ConnectionSurface* s = doc.find_connection(t.id);
-      if (s && s->joins(self)) return t;
+      const Id at = s != nullptr ? level_of(doc, *s) : Id{};
+      const Seen seen = seen_from(doc, self, at);
+      if (s != nullptr && seen == Seen::Own) return t;
+      if (s != nullptr && !scope.is_layout() && joins(doc, *s, self)) return t;
+      if (s != nullptr && seen == Seen::Below) return hidden(doc, scope, hider(doc, self, at), by);
       return refusal("model.reference.not_input",
                      fmt::format("the contents of '{}' refer to the connection surface '{}', "
                                  "which doesn't join '{}'",
                                  self_label, doc.connection_subject(t.id).label, self_label),
                      by, {doc.connection_subject(t.id)});
     }
-    case TargetKind::PublishedOutput:
+    case TargetKind::PublishedOutput: {
+      switch (seen_from(doc, self, parent_of(doc, t.owner))) {
+        case Seen::Own: return t;
+        case Seen::Below:
+          return hidden(doc, scope, hider(doc, self, parent_of(doc, t.owner)), by);
+        default: break;
+      }
       return refusal("model.reference.not_input",
                      fmt::format("the contents of '{}' refer to a published output; outputs "
                                  "reach a volume only through a link to one of its parameters",
                                  self_label),
                      by, {doc.output_subject({t.owner, t.id})});
-    case TargetKind::LayoutFeature:
-    case TargetKind::LayoutVariable:
-    case TargetKind::KeepOut:
-    case TargetKind::Link: {
-      const SubjectRef what = t.kind == TargetKind::LayoutFeature
-                                  ? doc.layout.subject(t.id)
-                              : t.kind == TargetKind::LayoutVariable
-                                  ? doc.layout.variables().subject(t.id)
-                              : t.kind == TargetKind::KeepOut ? doc.keep_out_subject(t.id)
-                                                              : doc.link_subject(t.id);
-      return refusal("model.reference.parent",
-                     fmt::format("the contents of '{}' refer to '{}' of the layout; contents "
-                                 "anchor only to their own boundary and connection surfaces",
-                                 self_label, what.label),
-                     by, {what});
     }
   }
   return t;
@@ -210,44 +290,60 @@ Result<Target> resolve(const Document& doc, const Scope& scope, const PublishedO
 Diagnostics check_variable_name(const Document& doc, const Scope& scope, std::string_view name,
                                 const SubjectRef& by) {
   Diagnostics out;
-  if (scope.is_layout()) {
-    if (doc.layout.variables().find(name)) return out;
-    for (const auto& v : doc.volumes) {
-      const auto* tree = v.tree();
-      if (tree && tree->variables().find(name)) {
-        out.add(refusal("model.reference.contents",
-                        fmt::format("it uses '{}', a variable inside the contents of '{}', "
-                                    "which nothing outside the volume may see",
-                                    name, volume_label(doc, v.id)),
-                        &by, {doc.volume_subject(v.id)}));
+  const Volume* me = scope.is_layout() ? nullptr : doc.find_volume(scope.volume);
+  if (!scope.is_layout() && me == nullptr) return out;
+  // The level's own names: its layout's variables, and inside a volume its
+  // parameters.
+  const feature::FeatureTree* own = me != nullptr ? me->tree() : &doc.layout;
+  if (own != nullptr && own->variables().find(name)) return out;
+  if (me != nullptr && me->find_parameter(name)) return out;
+
+  if (me != nullptr) {
+    // A name of a composite around this volume (L3): the parent's geometry.
+    for (const Id& level : ancestors(doc, me->id)) {
+      const Volume* a = doc.find_volume(level);
+      const feature::FeatureTree* t = a != nullptr ? a->tree() : nullptr;
+      if ((t != nullptr && t->variables().find(name)) || (a != nullptr && a->find_parameter(name))) {
+        out.add(refusal("model.reference.parent",
+                        fmt::format("the contents of '{}' use '{}' of '{}', the volume around "
+                                    "it; add a parameter to '{}' driven by it and use that",
+                                    me->name, name, a->name, me->name),
+                        &by, {doc.volume_subject(level)}));
         return out;
       }
     }
-    return out;
+    if (const auto* var = doc.layout.variables().find(name)) {
+      out.add(refusal("model.reference.parent",
+                      fmt::format("the contents of '{}' use the layout variable '{}'; add a "
+                                  "parameter to '{}' driven by it and use that",
+                                  me->name, name, me->name),
+                      &by, {doc.layout.variables().subject(var->id)}));
+      return out;
+    }
   }
-  const Volume* self = doc.find_volume(scope.volume);
-  if (!self) return out;
-  const auto* tree = self->tree();
-  if ((tree && tree->variables().find(name)) || self->find_parameter(name)) return out;
-  if (const auto* var = doc.layout.variables().find(name)) {
-    out.add(refusal("model.reference.parent",
-                    fmt::format("the contents of '{}' use the layout variable '{}'; add a "
-                                "parameter to '{}' driven by it and use that",
-                                self->name, name, self->name),
-                    &by, {doc.layout.variables().subject(var->id)}));
-    return out;
-  }
+
+  // A name inside some other volume's contents. From the root layout only
+  // their variables count: a layout expression never names parameters.
   for (const auto& v : doc.volumes) {
-    if (v.id == self->id) continue;
+    if (me != nullptr && v.id == me->id) continue;
     const auto* other = v.tree();
-    if ((other && other->variables().find(name)) || v.find_parameter(name)) {
+    const bool has =
+        (other && other->variables().find(name)) || (me != nullptr && v.find_parameter(name));
+    if (!has) continue;
+    if (me == nullptr) {
+      out.add(refusal("model.reference.contents",
+                      fmt::format("it uses '{}', a variable inside the contents of '{}', "
+                                  "which nothing outside the volume may see",
+                                  name, volume_label(doc, v.id)),
+                      &by, {doc.volume_subject(v.id)}));
+    } else {
       out.add(refusal("model.reference.contents",
                       fmt::format("the contents of '{}' use '{}', which belongs to '{}'; a "
                                   "volume can't see its neighbours",
-                                  self->name, name, volume_label(doc, v.id)),
+                                  me->name, name, volume_label(doc, v.id)),
                       &by, {doc.volume_subject(v.id)}));
-      return out;
     }
+    return out;
   }
   return out;
 }

@@ -6,6 +6,8 @@
 
 #include <fmt/format.h>
 
+#include "vs/model/hierarchy.hpp"
+
 namespace vs::model {
 
 using core::SubjectKind;
@@ -101,6 +103,19 @@ class GraphBuilder {
         add(NodeKind::PublishedOutput, o.id, v.id, doc_.output_subject({v.id, o.id}),
             fmt::format("output '{}' of '{}'", o.name, name));
       }
+      // A composite's layout is a level of its own (L3): its variables and
+      // features are nodes like the root layout's.
+      if (const auto* comp = std::get_if<CompositeContents>(&v.contents)) {
+        const auto& cvars = comp->layout.variables();
+        for (const auto& var : cvars.variables()) {
+          add(NodeKind::Variable, var.id, v.id, cvars.subject(var.id),
+              fmt::format("variable '{}' of '{}'", var.name, name));
+        }
+        for (const auto& f : comp->layout.features()) {
+          const auto s = comp->layout.subject(f.id);
+          add(NodeKind::Feature, f.id, v.id, s, fmt::format("'{}' of '{}'", s.label, name));
+        }
+      }
     }
     for (const auto& l : doc_.links) {
       const auto s = doc_.link_subject(l.id);
@@ -109,16 +124,28 @@ class GraphBuilder {
   }
 
   // Edges to the layout variables an expression names.
-  void uses_expression(std::size_t from, const std::string& text) {
+  void uses_expression(std::size_t from, const std::string& text, const Id& level = {}) {
     if (text.empty()) return;
     auto e = feature::Expression::parse(text);
     if (!e) return;
-    for (const auto& name : e->references()) uses_variable(from, name);
+    for (const auto& name : e->references()) uses_variable(from, name, level);
   }
-  void uses_variable(std::size_t from, std::string_view name) {
-    if (const auto* v = doc_.layout.variables().find(name)) edge(from, find(NodeKind::Variable, v->id));
+  // A name at `level`: a variable of its layout, or inside a composite one
+  // of the composite's parameters.
+  void uses_variable(std::size_t from, std::string_view name, const Id& level = {}) {
+    if (const feature::FeatureTree* t = level_layout(doc_, level)) {
+      if (const auto* v = t->variables().find(name)) {
+        edge(from, find(NodeKind::Variable, v->id));
+        return;
+      }
+    }
+    if (const Volume* c = level.is_null() ? nullptr : doc_.find_volume(level)) {
+      if (const auto* p = c->find_parameter(name)) edge(from, find(NodeKind::Parameter, p->id));
+    }
   }
-  void uses_param(std::size_t from, const Param& p) { uses_expression(from, p.expression); }
+  void uses_param(std::size_t from, const Param& p, const Id& level = {}) {
+    uses_expression(from, p.expression, level);
+  }
 
   // A layout feature, sketch entity or other layout id: its feature node.
   void uses_layout(std::size_t from, const Id& id) {
@@ -126,12 +153,21 @@ class GraphBuilder {
       edge(from, f);
       return;
     }
-    for (const auto& f : doc_.layout.features()) {
-      if (const auto* s = f.as<feature::SketchFeature>()) {
-        if (s->sketch.find_entity(id)) {
-          edge(from, find(NodeKind::Feature, f.id));
-          return;
+    const auto in_tree = [&](const feature::FeatureTree& tree) {
+      for (const auto& f : tree.features()) {
+        if (const auto* s = f.as<feature::SketchFeature>()) {
+          if (s->sketch.find_entity(id)) {
+            edge(from, find(NodeKind::Feature, f.id));
+            return true;
+          }
         }
+      }
+      return false;
+    };
+    if (in_tree(doc_.layout)) return;
+    for (const auto& v : doc_.volumes) {  // composites' layouts (L3)
+      if (const auto* c = std::get_if<CompositeContents>(&v.contents); c && in_tree(c->layout)) {
+        return;
       }
     }
   }
@@ -156,24 +192,41 @@ class GraphBuilder {
     }
   }
 
-  void add_edges() {
-    const auto& vars = doc_.layout.variables();
-    for (const auto& v : vars.variables()) {
-      uses_expression(*find(NodeKind::Variable, v.id), v.expression);
+  // A layout's own edges: its variables' expressions, and its features'
+  // references. `level` is the root (null) or the composite owning it,
+  // whose boundary, joining surfaces and parameters its features may use.
+  void tree_edges(const feature::FeatureTree& tree, const Id& level) {
+    for (const auto& v : tree.variables().variables()) {
+      uses_expression(*find(NodeKind::Variable, v.id), v.expression, level);
     }
-
-    const auto& features = doc_.layout.features();
     std::optional<std::size_t> last_body;
-    for (const auto& f : features) {
+    for (const auto& f : tree.features()) {
       const std::size_t n = *find(NodeKind::Feature, f.id);
       const auto refs = feature::references_of(f);
-      for (const auto& id : refs.features) edge(n, find(NodeKind::Feature, id));
-      for (const auto& name : refs.variables) uses_variable(n, name);
+      for (const auto& id : refs.features) {
+        if (auto t = find(NodeKind::Feature, id)) {
+          edge(n, t);
+        } else if (!level.is_null() && id == level) {
+          edge(n, find(NodeKind::VolumeBoundary, id));
+        } else {
+          edge(n, find(NodeKind::ConnectionSurface, id));
+        }
+      }
+      for (const auto& name : refs.variables) uses_variable(n, name, level);
       if (const auto* ex = f.as<feature::ExtrudeFeature>();
           ex && ex->extent == feature::Extent::ThroughAll) {
         edge(n, last_body);
       }
       if (changes_body(f) && !f.suppressed) last_body = n;
+    }
+  }
+
+  void add_edges() {
+    tree_edges(doc_.layout, {});
+    for (const auto& v : doc_.volumes) {
+      if (const auto* comp = std::get_if<CompositeContents>(&v.contents)) {
+        tree_edges(comp->layout, v.id);
+      }
     }
 
     for (const auto& v : doc_.volumes) {
@@ -190,14 +243,22 @@ class GraphBuilder {
           edge(b, find(NodeKind::KeepOut, k.id));
         }
       }
-      for (const auto& p : v.parameters) uses_param(*find(NodeKind::Parameter, p.id), p.value);
+      for (const auto& p : v.parameters) {
+        uses_param(*find(NodeKind::Parameter, p.id), p.value, v.parent);
+      }
 
       const std::size_t c = *find(NodeKind::VolumeContents, v.id);
       edge(c, b);
       for (const auto& s : doc_.connections) {
-        if (s.joins(v.id)) edge(c, find(NodeKind::ConnectionSurface, s.id));
+        if (joins(doc_, s, v.id)) edge(c, find(NodeKind::ConnectionSurface, s.id));
       }
       for (const auto& p : v.parameters) edge(c, find(NodeKind::Parameter, p.id));
+      // A composite's contents are its children (L3).
+      if (v.composite()) {
+        for (const std::size_t i : children(doc_, v.id)) {
+          edge(c, find(NodeKind::VolumeContents, doc_.volumes[i].id));
+        }
+      }
       for (const auto& o : v.outputs) edge(*find(NodeKind::PublishedOutput, o.id), c);
     }
 
@@ -214,6 +275,7 @@ class GraphBuilder {
 
     for (const auto& s : doc_.connections) {
       const std::size_t n = *find(NodeKind::ConnectionSurface, s.id);
+      const Id level = level_of(doc_, s);
       if (const auto* sp = std::get_if<SketchPatch>(&s.geometry)) {
         uses_layout(n, sp->sketch);
       } else if (const auto* cp = std::get_if<CylinderPatch>(&s.geometry)) {
@@ -222,31 +284,31 @@ class GraphBuilder {
           uses_layout(n, e->sketch);
         }
         for (const Param* p : {&cp->radius, &cp->start_angle, &cp->sweep, &cp->start, &cp->length}) {
-          uses_param(n, *p);
+          uses_param(n, *p, level);
         }
       } else {
         const auto& dp = std::get<DatumPatch>(s.geometry);
         uses_plane(n, dp.plane);
-        uses_param(n, dp.u);
-        uses_param(n, dp.v);
-        uses_param(n, dp.width);
-        uses_param(n, dp.height);
+        uses_param(n, dp.u, level);
+        uses_param(n, dp.v, level);
+        uses_param(n, dp.width, level);
+        uses_param(n, dp.height, level);
       }
-      if (const auto* c = std::get_if<ClearanceParams>(&s.params)) uses_param(n, c->gap);
+      if (const auto* c = std::get_if<ClearanceParams>(&s.params)) uses_param(n, c->gap, level);
       if (const auto* b = std::get_if<BoltedFlangeParams>(&s.params)) {
-        uses_param(n, b->min_wall);
-        uses_param(n, b->holes.u);
-        uses_param(n, b->holes.v);
+        uses_param(n, b->min_wall, level);
+        uses_param(n, b->holes.u, level);
+        uses_param(n, b->holes.v, level);
         if (const auto* bc = std::get_if<BoltCircle>(&b->holes.layout)) {
-          uses_param(n, bc->count);
-          uses_param(n, bc->diameter);
-          uses_param(n, bc->start_angle);
+          uses_param(n, bc->count, level);
+          uses_param(n, bc->diameter, level);
+          uses_param(n, bc->start_angle, level);
         } else {
           const auto& g = std::get<BoltGrid>(b->holes.layout);
-          uses_param(n, g.columns);
-          uses_param(n, g.rows);
-          uses_param(n, g.pitch_x);
-          uses_param(n, g.pitch_y);
+          uses_param(n, g.columns, level);
+          uses_param(n, g.rows, level);
+          uses_param(n, g.pitch_x, level);
+          uses_param(n, g.pitch_y, level);
         }
       }
     }

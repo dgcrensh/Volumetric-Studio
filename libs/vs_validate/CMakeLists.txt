@@ -22,6 +22,8 @@ vs_add_library_tests(vs_validate
     tests/test_containment.cpp
     tests/test_curved.cpp
     ../vs_model/tests/curved.cpp
+    tests/test_nested.cpp
+    ../vs_model/tests/nested.cpp
     tests/test_fixtures.cpp
     tests/test_layout.cpp
     tests/test_module.cpp

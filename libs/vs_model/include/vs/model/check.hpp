@@ -27,6 +27,15 @@
 //                  model.connection.keep_out       it joins a keep-out volume
 //                  model.connection.unknown_thread the thread isn't an ISO size
 //                  model.connection.curved_flange  a bolted flange on a cylinder patch
+//                  model.volume.parent             (L3) the parent is missing or isn't a
+//                                                  composite, or the parents loop
+//                  model.composite.delegation      a delegation names a surface not joining
+//                                                  the composite, a volume not its child,
+//                                                  or a surface twice
+//                  model.composite.undelegated     (warning) a bonded or bolted surface joins
+//                                                  a composite and no child meets it
+//                  model.level.mixed               a surface or keep-out names volumes of
+//                                                  different levels
 //                  model.link.not_output           the source isn't a published output
 //                  model.link.not_scalar           the source isn't one number
 //                  model.link.bad_target           the target isn't a layout variable or
