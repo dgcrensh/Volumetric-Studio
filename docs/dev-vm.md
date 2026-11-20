@@ -18,11 +18,25 @@ These can't be scripted:
    *NVIDIA T4 Virtual Workstation GPUs* (`NVIDIA_T4_VWS_GPUS`) in the regions
    you'd use. Requests are usually granted within minutes to a day. The
    create script checks these and names the one that's missing.
-3. **gcloud** on the machine you create the VM from:
-   [install it](https://cloud.google.com/sdk/docs/install), then
+3. **gcloud** on the machine you create the VM from (macOS, Linux or
+   Windows): [install it](https://cloud.google.com/sdk/docs/install), then
    `gcloud auth login` and `gcloud config set project <project id>`.
 
 ## Create the VM
+
+There are two equivalent scripts; use whichever fits the machine. Neither
+needs anything but gcloud (and curl, for the bash one), and both pass the
+same Windows bootstrap to the VM.
+
+On macOS or Linux (bash 3.2 or later, so the stock macOS bash works; no
+PowerShell needed):
+
+```bash
+scripts/gcp/new-dev-vm.sh --windows-user dallas
+scripts/gcp/new-dev-vm.sh --dry-run    # check quota, zones and firewall first; creates nothing
+```
+
+On Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\gcp\New-DevVm.ps1 -WindowsUser dallas
@@ -30,13 +44,27 @@ powershell -ExecutionPolicy Bypass -File scripts\gcp\New-DevVm.ps1 -WindowsUser 
 
 It restricts RDP to your current public IP (firewall rule
 `vstudio-allow-rdp`, re-pointed on every run, so run it again or pass
-`-AllowRdpFrom` when your IP changes), then tries an L4 on a `g2-standard-8`
-and falls back to a T4 on an `n1-standard-8`, zone by zone, preferred US
-regions first, skipping regions without quota and moving on when a zone is
-out of GPUs. The `-vws` GPU types carry the RTX Virtual Workstation (GRID)
-licence. Useful options: `-Gpus T4`, `-Regions us-east1,us-west1`,
-`-OnlyPreferredRegions`, `-NoBuild`, `-Branch <branch>`, `-Name <vm>`.
-`-WindowsUser` creates that user and prints its password.
+`--allow-rdp-from` / `-AllowRdpFrom` when your IP changes), then tries an L4
+on a `g2-standard-8` and falls back to a T4 on an `n1-standard-8`, zone by
+zone, preferred US regions first, skipping regions without quota and moving
+on when a zone is out of GPUs. The `-vws` GPU types carry the RTX Virtual
+Workstation (GRID) licence. Every L4 region is tried before the first T4,
+including ones outside the US; pass `--only-preferred-regions` to stay in
+the preferred ones.
+
+| bash | PowerShell | What |
+| --- | --- | --- |
+| `--gpus T4` | `-Gpus T4` | GPUs to try, in order (default L4 then T4) |
+| `--regions us-east1,us-west1` | `-Regions us-east1,us-west1` | regions tried first |
+| `--only-preferred-regions` | `-OnlyPreferredRegions` | never try other regions |
+| `--no-build` | `-NoBuild` | bootstrap stops after fetching the cache |
+| `--branch <branch>` | `-Branch <branch>` | branch the VM clones and builds |
+| `--name <vm>` | `-Name <vm>` | VM name (default `vstudio-dev`) |
+| `--windows-user <name>` | `-WindowsUser <name>` | create that user and print its password |
+| `--dry-run` | | run only the read-only checks and print what it would create |
+
+`scripts/gcp/new-dev-vm.sh --help` lists the rest (machine types, disk size,
+project, repository URL).
 
 The boot disk is Windows Server 2022 Datacenter (Desktop Experience), 200 GB
 balanced. The VM's first boot runs `scripts\gcp\bootstrap-windows.ps1`:
@@ -59,7 +87,8 @@ once if the driver asked for it.
 
 ## After the bootstrap (manual)
 
-RDP in as the user `-WindowsUser` created, then:
+RDP in as the user `--windows-user` / `-WindowsUser` created (from a Mac,
+with Windows App, formerly Microsoft Remote Desktop, from the App Store), then:
 
 1. `gh auth login` (browser sign-in), then `gh auth setup-git` so `git push`
    works.

@@ -94,8 +94,10 @@ baseline, so assets are named by that key (`vcpkg-cache.ps1 key`), and
 `build.ps1` warns when the local toolset isn't the pinned one. After a new
 dependency, a baseline bump or a Visual Studio update, rebuild the app
 preset on the desktop and publish again. `scripts\gcp\New-DevVm.ps1`
-creates a Compute Engine GPU VM whose startup script
-(`scripts\gcp\bootstrap-windows.ps1`) installs everything and builds;
+(or `scripts/gcp/new-dev-vm.sh` from macOS or Linux: bash 3.2 and BSD
+tools, `--dry-run` to check first) creates a Compute Engine GPU VM whose
+startup script (`scripts\gcp\bootstrap-windows.ps1`) installs everything
+and builds;
 `docs/dev-vm.md` has the manual steps and decision 0019 the reasoning.
 
 ## Layout
