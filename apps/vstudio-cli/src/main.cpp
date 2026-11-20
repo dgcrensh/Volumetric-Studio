@@ -80,8 +80,9 @@ Commands:
 
 Options:
   --version         Print the version and exit
-  --gpu             Sample procedural fields on the GPU (only when it gives exactly
-                    the CPU's samples; otherwise it says why and the CPU does it)
+  --gpu             Sample and mesh procedural fields on the GPU where it gives
+                    exactly the CPU's results and is faster (it says which)
+  --gpu=force       The same, faster or not (benchmarks)
   --log-level <l>   trace, debug, info, warning, error or off (default: warning)
   -h, --help        Print this message and exit
 )";
@@ -110,11 +111,19 @@ int main(int argc, char** argv) {
     } else if (arg == "-h" || arg == "--help") {
       std::cout << kUsage;
       return 0;
-    } else if (arg == "--gpu") {
-      // Sample procedural fields on the GPU when it matches the CPU (L1).
-      const auto status = vs::gpu::install();
+    } else if (arg == "--gpu" || arg == "--gpu=force") {
+      // Sampling (L1) and meshing (L1b) on the GPU where it matches the CPU.
+      vs::gpu::InstallOptions options;
+      options.force = arg == "--gpu=force";
+      const auto status = vs::gpu::install(options);
       if (status.installed) {
-        std::cout << "gpu         fields sampled on " << status.device << "\n";
+        const auto where = [](bool gpu) { return gpu ? "GPU" : "CPU"; };
+        std::cout << "gpu         " << status.device << ": sampling on the " << where(status.sampling)
+                  << ", clip on the " << where(status.clip) << ", unmerged net on the "
+                  << where(status.meshing) << " (checks and calibration "
+                  << static_cast<long>(status.install_ms) << " ms)\n";
+        if (!status.calibration.empty()) std::cout << "            " << status.calibration << "\n";
+        if (!status.why.empty()) std::cout << "            " << status.why << "\n";
       } else {
         std::cout << "gpu         not used: " << status.why << "\n";
       }

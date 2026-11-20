@@ -563,7 +563,7 @@ void add_conversions(NodeRegistry& r) {
           return;
         }
         const SampledField samples = sample(*ctx.field("field"), *grid, ctx.pool());
-        auto m = std::make_shared<mesh::Mesh>(to_mesh(surface_nets(samples), ctx.inputs().volume));
+        auto m = std::make_shared<mesh::Mesh>(to_mesh(surface_nets(samples, ctx.pool()), ctx.inputs().volume));
         const auto triangles = static_cast<double>(m->triangle_count());
         ctx.set("mesh", MeshValue(std::move(m)));
         ctx.set("samples", static_cast<double>(grid->size()));

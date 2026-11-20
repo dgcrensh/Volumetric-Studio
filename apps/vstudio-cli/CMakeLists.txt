@@ -241,14 +241,15 @@ if(VS_BUILD_TESTS)
   add_test(NAME "vstudio-cli: bench-gyroid times a small gyroid"
     COMMAND vstudio-cli bench-gyroid --size 20 --cell 1)
   set_tests_properties("vstudio-cli: bench-gyroid times a small gyroid" PROPERTIES
-    PASS_REGULAR_EXPRESSION "surface nets.*containment.*contained.*engine.*mass")
+    PASS_REGULAR_EXPRESSION "unmerged net.*merge.*containment.*contained.*engine.*mass")
 endif()
 
 if(VS_BUILD_TESTS)
-  # L1: the same procedural project with fields sampled on the GPU (or, with
-  # no usable GPU, on the CPU, saying why): the same output hash either way.
+  # L1, L1b: the same procedural project sampled and meshed on the GPU (or,
+  # with no usable GPU, on the CPU, saying why): the same output either way.
+  # --gpu=force puts every stage that matches the CPU on the GPU, faster or not.
   add_test(NAME "vstudio-cli: --gpu samples a procedural volume"
-    COMMAND vstudio-cli --gpu rebuild "${PROJECT_SOURCE_DIR}/libs/vs_proc/tests/data/shell_and_ball.vsproj")
+    COMMAND vstudio-cli --gpu=force rebuild "${PROJECT_SOURCE_DIR}/libs/vs_proc/tests/data/shell_and_ball.vsproj")
   set_tests_properties("vstudio-cli: --gpu samples a procedural volume" PROPERTIES
-    PASS_REGULAR_EXPRESSION "gpu +(fields sampled on|not used).*Shelled +current +regenerated.*result +ok")
+    PASS_REGULAR_EXPRESSION "gpu +(.*: sampling on the|not used).*Shelled +current +regenerated.*result +ok")
 endif()

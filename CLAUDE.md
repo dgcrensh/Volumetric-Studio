@@ -451,6 +451,17 @@ so they are registered. A new library must also be added to
   vertex and centroid is contained. `convert.field_to_mesh` (with its
   `samples` cost) and `convert.mesh_to_field` convert inside graphs.
   `mesh::combine()` takes generated meshes from the engine. Decision 0011.
+- **Parallel surface nets** (L1b, decision 0019): `surface_nets(samples,
+  pool)` is `unmerged_net()` (vertex and polygon passes in z layers,
+  joined in grid order; a `MeshingBackend` may take it) then
+  `merge_net()` (cubes in waves `i + 3j + 9k`: earlier neighbours always
+  in earlier waves, cubes of a wave three apart). The mesh is
+  `surface_nets_reference()`'s (M11's serial code, kept in
+  `src/surface_nets_reference.cpp`) bit for bit on any thread count;
+  `test_parallel_mesher.cpp` compares them element by element. **Change
+  the meshing in both, or the tests fail.** `clip_to_boundary()` also
+  offers the clip to the backend; `closed_manifold()` is the parallel
+  stand-in for `mesh::analyse()` that `mesh_contents()` runs first.
 - **Node library** (M12, decision 0012): `field.lattice` (cubic, BCC,
   octet struts) and `field.tpms` (gyroid, Schwarz P, diamond) with cell
   and thickness, gradable by a field; `field.thicken`, `.clamp`,
@@ -486,7 +497,7 @@ so they are registered. A new library must also be added to
   CPU baseline) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
   block out, fill, iterate, swap and ship end to end.
 
-## vs_gpu essentials (L1)
+## vs_gpu essentials (L1, L1b)
 
 - **What.** Procedural fields sampled on the GPU with exactly the CPU's
   values (decision 0018, plan `docs/plans/L1-gpu-field-evaluation.md`).
@@ -504,8 +515,22 @@ so they are registered. A new library must also be added to
   **Any change to `FieldExpr::eval()`, `TriangleDistance` or the
   infill maths must be mirrored in `glsl.cpp`**; `vs_gpu_tests` catches
   a mismatch on a machine with a GPU.
-- **Where.** The app installs it at start (`--cpu` skips; About says
-  which device); `vstudio-cli --gpu <command>`.
+- **Meshing (L1b, decision 0019).** `src/meshing.cpp`: `clip_gpu()` (the
+  boundary distance through the field shader) and `unmerged_net_gpu()`
+  (four passes: tetrahedron masks, vertices, triangle counts, triangles;
+  outputs placed by exclusive sums in grid order), equal to
+  `unmerged_net_cpu()` element for element; `meshing_self_check()`
+  guards them. **Any change to `unmerged_net_cpu()` must be mirrored
+  there.** NVIDIA's compiler loses exactness on local arrays of doubles
+  indexed at run time: recompute instead (decision 0019).
+- **Calibration.** After the checks, `install()` times sampling, clip and
+  unmerged net on a half-million-sample grid on the GPU and on every CPU
+  thread, and gives the GPU only the stages it won (`Status::sampling`,
+  `.clip`, `.meshing`, `.calibration`); about 3 s on the RTX 2070 Super
+  desktop. `InstallOptions::force` (tests, `--gpu=force`) skips it.
+- **Where.** The app installs it at start on a background thread (`--cpu`
+  skips; About says which stage runs where); `vstudio-cli --gpu <command>`
+  or `--gpu=force <command>`.
 
 ## vs_app essentials
 

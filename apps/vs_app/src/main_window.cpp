@@ -417,9 +417,18 @@ void MainWindow::build_menus() {
   help->addAction(tr("&About"), this, [this] {
     const auto v = core::version_string();
     const gpu::Status g = gpu::status();
-    const QString fields = g.installed ? tr("Procedural fields are sampled on %1.").arg(qstr(g.device))
-                           : g.why.empty() ? tr("Procedural fields are sampled on the CPU.")
-                                           : tr("Procedural fields are sampled on the CPU: %1.").arg(qstr(g.why));
+    QString fields;
+    if (g.installed) {
+      const auto where = [&](bool gpu) { return gpu ? tr("the GPU") : tr("the CPU"); };
+      fields = tr("GPU: %1. Sampling runs on %2, the boundary clip on %3 and surface nets on %4 (the "
+                  "GPU takes a stage only when it matches the CPU exactly and was faster here).")
+                   .arg(qstr(g.device), where(g.sampling), where(g.clip), where(g.meshing));
+      if (!g.calibration.empty()) fields += tr("\nCalibration: %1.").arg(qstr(g.calibration));
+      if (!g.why.empty()) fields += tr("\n%1.").arg(qstr(g.why));
+    } else {
+      fields = g.why.empty() ? tr("Procedural fields are sampled and meshed on the CPU.")
+                             : tr("Procedural fields are sampled and meshed on the CPU: %1.").arg(qstr(g.why));
+    }
     QMessageBox::about(this, tr("Volumetric CAD Studio"),
                        tr("Volumetric CAD Studio %1\n\nEvery design is a tree of volumes.\n\n%2").arg(qstr(v), fields));
   });

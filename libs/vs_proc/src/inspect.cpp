@@ -73,7 +73,7 @@ Preview preview(const Value& value, const GraphInputs& inputs, double cell, eval
     auto grid = grid_covering(inputs.bounds, cell);
     if (!grid) return p;
     SampledField samples = sample(**f, *grid, pool);
-    p.mesh = to_mesh(surface_nets(samples), inputs.volume);
+    p.mesh = to_mesh(surface_nets(samples, pool), inputs.volume);
     p.samples = std::move(samples);
   } else if (const auto* m = std::get_if<MeshValue>(&value); m != nullptr && *m) {
     p.mesh = **m;

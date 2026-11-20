@@ -20,6 +20,7 @@ vs_add_library(vs_proc
     src/inspect.cpp
     src/mesh_boolean.cpp
     src/mesher.cpp
+    src/surface_nets_reference.cpp
     src/module.cpp
     src/nodes.cpp
     src/nodes_frames.cpp
@@ -52,6 +53,7 @@ vs_add_library_tests(vs_proc
     tests/test_graph.cpp
     tests/test_mesh_acceptance.cpp
     tests/test_mesher.cpp
+    tests/test_parallel_mesher.cpp
     tests/test_module.cpp
     tests/test_nodes.cpp
     tests/test_templates.cpp
