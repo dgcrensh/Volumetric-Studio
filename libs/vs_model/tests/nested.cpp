@@ -116,8 +116,8 @@ Nested make_nested() {
   middle.plane = FeatureRef{h_plane};
   middle.u = Param::of(10);
   middle.v = Param::of(5);
-  middle.width = Param::of(20);
-  middle.height = Param::of(10);
+  middle.width = Param::of(18);
+  middle.height = Param::of(8);
   ConnectionSurface middle_surface = bonded("Middle", middle, {n.left, n.right});
   n.middle = middle_surface.id;
 

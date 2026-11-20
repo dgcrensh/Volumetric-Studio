@@ -13,7 +13,7 @@
 //
 //   Seat    (root)     bonded, z = 0, x 0..20: Base and Housing;
 //                      Housing passes it to Left, Left to Core
-//   Middle  (Housing)  bonded, x = 20, z 0..10: Left and Right;
+//   Middle  (Housing)  bonded, x = 20, y 1..19, z 1..9: Left and Right;
 //                      Left passes it to Core
 //   Joint   (Left)     bonded, z = 10: Core and Cap
 //

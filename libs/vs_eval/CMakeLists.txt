@@ -33,9 +33,11 @@ vs_add_library_tests(vs_eval
     tests/test_engine.cpp
     tests/test_import.cpp
     tests/test_module.cpp
+    tests/test_nested.cpp
     tests/test_step_export.cpp
     tests/test_thread_pool.cpp
-    ../vs_model/tests/bracket.cpp)
+    ../vs_model/tests/bracket.cpp
+    ../vs_model/tests/nested.cpp)
 
 if(VS_BUILD_TESTS)
   target_include_directories(vs_eval_tests PRIVATE

@@ -47,7 +47,9 @@ vs_add_library_tests(vs_proc
     tests/test_acceptance.cpp
     tests/test_check.cpp
     tests/test_curved.cpp
+    tests/test_nested.cpp
     ../vs_model/tests/curved.cpp
+    ../vs_model/tests/nested.cpp
     tests/test_data.cpp
     tests/test_distance.cpp
     tests/test_engine.cpp
