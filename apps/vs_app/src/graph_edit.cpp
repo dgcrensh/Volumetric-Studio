@@ -27,6 +27,7 @@ Rgb port_color(PortType type) {
     case PortType::Frames: return {0.92f, 0.58f, 0.12f};
     case PortType::Curves: return {0.88f, 0.30f, 0.55f};
     case PortType::List: return {0.60f, 0.52f, 0.35f};
+    case PortType::Children: return {0.30f, 0.70f, 0.72f};
   }
   return {};
 }
@@ -70,6 +71,12 @@ GraphContext graph_context(const model::Document& document, const Id& volume) {
   GraphContext c;
   for (const auto& s : document.connections) {
     if (model::joins(document, s, volume)) c.surfaces.push_back({s.id, s.name, s.type()});
+  }
+  // L4: a composite's templates, for its generator's children nodes.
+  if (const model::Volume* v = document.find_volume(volume)) {
+    if (const auto* comp = std::get_if<model::CompositeContents>(&v->contents)) {
+      for (const auto& t : comp->templates) c.templates.push_back(t.name);
+    }
   }
   return c;
 }
@@ -138,6 +145,8 @@ std::optional<std::map<std::string, Setting, std::less<>>> default_settings(cons
         // add_node() adds a parameter first when there is none.
         if (!graph.parameters.empty()) settings.emplace(prop.name, Setting(graph.parameters.front().name));
         break;
+      case PropertyKind::Template:
+      case PropertyKind::TemplateParameter: settings.emplace(prop.name, Setting(std::string())); break;
       case PropertyKind::Name: {
         std::set<std::string, std::less<>> used;
         for (const auto& n : graph.nodes) {

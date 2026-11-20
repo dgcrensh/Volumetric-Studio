@@ -353,7 +353,7 @@ Diagnostics check_volume_graph(const Graph& graph, const model::Document& docume
     const bool children = node.type == "output.children";
     if (children != (composite != nullptr)) {
       out.add(Diagnostic::error(
-          "proc.graph.output",
+          "proc.graph.output_kind",
           composite != nullptr
               ? fmt::format("'{}': a composite's generator emits child volumes; use an "
                             "output.children node",

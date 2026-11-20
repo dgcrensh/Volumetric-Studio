@@ -57,6 +57,7 @@ struct VolumeRow {
   model::VolumeKind kind = model::VolumeKind::Static;
   bool keep_out = false;
   bool placeholder = false;  // no contents yet
+  bool generated = false;    // L4: made by its composite's procedure; read-only
   model::VolumeStatus status = model::VolumeStatus::Stale;
   bool stale_contents = false;
   std::size_t errors = 0, warnings = 0;  // this volume's own diagnostics
@@ -80,8 +81,10 @@ std::vector<VolumeRow> volume_rows(const eval::Evaluation& evaluation,
                                    const std::map<Id, model::VolumeStatus>& states = {});
 std::vector<SurfaceRow> surface_rows(const eval::Evaluation& evaluation);
 
-// The text for a kind ("Static", "Parametric", "Procedural", "Placeholder", "Keep-out").
+// The text for a kind ("Static", "Parametric", "Procedural", "Placeholder", "Keep-out"),
+// with "Generated " before it for a generated volume (L4).
 std::string kind_label(const VolumeRow& row);
+std::string base_kind_label(const VolumeRow& row);  // without "Generated "
 std::string status_label(model::VolumeStatus status);
 
 // --- feature tree ---------------------------------------------------------------------

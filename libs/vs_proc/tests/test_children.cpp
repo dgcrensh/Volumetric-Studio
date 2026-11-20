@@ -214,10 +214,10 @@ TEST_CASE("A composite's generator ends in output.children, and only there",
   const GridGraph g = grid_graph(r.seat);
   CHECK_FALSE(check_volume_graph(g.graph, doc, r.rack).has_errors());
   // A procedural volume can't emit children.
-  CHECK(has(check_volume_graph(g.graph, doc, r.base), "proc.graph.output"));
+  CHECK(has(check_volume_graph(g.graph, doc, r.base), "proc.graph.output_kind"));
   // A composite's graph can't end in contents.
   CHECK(has(check_volume_graph(scenes::shell_and_ball().graph, doc, r.rack),
-            "proc.graph.output"));
+            "proc.graph.output_kind"));
   // Two outputs, of either kind.
   Graph two = g.graph;
   two.add("output", "Contents");

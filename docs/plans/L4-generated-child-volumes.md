@@ -2,6 +2,19 @@
 
 Nov 20, 2026 · follows L3 · decision record: `docs/decisions/0022-generated-child-volumes.md`
 
+**Status: built.** As below, with these differences found while building
+it (decision 0022 has the details): templates carry an `origin` and
+generated copies a `contents_offset`, because sketches are placed in
+model coordinates and a parametric template would otherwise fill every
+copy in the same place; a wrong output node for the volume's kind is its
+own code, `proc.graph.output_kind` (`proc.graph.output` alone counts as
+"unfinished" in the editor), and a template the composite lacks is
+`proc.reference.template`; generated children's names needn't be
+distinct; read-only generated rows are refused with a status message
+rather than a code; and the composite's menu also has Stop generating
+children. A shared scene, `libs/vs_model/tests/rack.*`, is the rack used
+by every suite.
+
 ## Goal
 
 Let a composite's children come from a procedure, so nested volumes can be

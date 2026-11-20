@@ -162,6 +162,11 @@ class MainWindow : public QMainWindow {
   // Edits a parametric volume's contents in context (a placeholder is made
   // parametric first). False when the volume can't hold a feature tree.
   bool edit_in_context(const Id& volume);
+  // L4: whether the shown evaluation made `volume` from a composite's
+  // procedure (generated volumes are read-only), and Make template: an
+  // authored child of a composite becomes one of its templates.
+  [[nodiscard]] bool is_generated(const Id& volume) const;
+  core::Diagnostics make_template_of(const Id& child);
   void leave_context();
   // L3: where new volumes, connection surfaces, keep-outs and links go: the
   // composite whose layout is edited in context, else the root (null).
