@@ -108,12 +108,13 @@ void grid(NodeContext& ctx) {
   for (int a = 0; a < 3; ++a) {
     const double lo = component(box.min, a);
     const double hi = component(box.max, a);
-    for (std::size_t i = 0; i <= n[a]; ++i) {
-      walls[a].push_back(i == n[a] ? hi
+    const std::size_t u = static_cast<std::size_t>(a);
+    for (std::size_t i = 0; i <= n[u]; ++i) {
+      walls[u].push_back(i == n[u] ? hi
                                    : lo + (hi - lo) * static_cast<double>(i) /
-                                              static_cast<double>(n[a]));
+                                              static_cast<double>(n[u]));
     }
-    if (!check_size(ctx, "count", walls[a][1] - walls[a][0])) return;
+    if (!check_size(ctx, "count", walls[u][1] - walls[u][0])) return;
   }
   const auto index = [&](std::size_t i, std::size_t j, std::size_t k) {
     return i + n[0] * (j + n[1] * k);
@@ -150,9 +151,10 @@ void grid(NodeContext& ctx) {
       for (std::size_t i = 0; i < n[0]; ++i) {
         const std::array<std::size_t, 3> at{i, j, k};
         for (int a = 0; a < 3; ++a) {
-          if (at[a] + 1 >= n[a]) continue;
+          const std::size_t u = static_cast<std::size_t>(a);
+          if (at[u] + 1 >= n[u]) continue;
           std::array<std::size_t, 3> next = at;
-          ++next[a];
+          ++next[u];
           GeneratedSurface s;
           s.a = index(at[0], at[1], at[2]);
           s.b = index(next[0], next[1], next[2]);
@@ -162,10 +164,10 @@ void grid(NodeContext& ctx) {
                                        : model::ConnectionType::Bonded;
           s.gap = gap;
           s.axis = a;
-          s.offset = walls[a][next[a]];
+          s.offset = walls[u][next[u]];
           const auto axes = in_plane(a);
-          for (int q = 0; q < 2; ++q) {
-            const int b = axes[q];
+          for (std::size_t q = 0; q < 2; ++q) {
+            const std::size_t b = static_cast<std::size_t>(axes[q]);
             s.lo[q] = walls[b][at[b]] + margin;
             s.hi[q] = walls[b][at[b] + 1] - margin;
             if (!check_size(ctx, "margin", s.hi[q] - s.lo[q])) return;

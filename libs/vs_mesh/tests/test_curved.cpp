@@ -141,7 +141,7 @@ std::map<std::pair<std::uint32_t, std::uint32_t>, int> edge_counts(
     const std::vector<Triangle>& triangles) {
   std::map<std::pair<std::uint32_t, std::uint32_t>, int> out;
   for (const Triangle& t : triangles) {
-    for (int k = 0; k < 3; ++k) {
+    for (std::size_t k = 0; k < 3; ++k) {
       const std::uint32_t a = t[k], b = t[(k + 1) % 3];
       ++out[{std::min(a, b), std::max(a, b)}];
     }

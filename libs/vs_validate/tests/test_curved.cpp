@@ -26,7 +26,9 @@ std::string codes(const Diagnostics& ds) {
 
 std::size_t count(const Diagnostics& ds, const std::string& code) {
   std::size_t n = 0;
-  for (const auto& d : ds) n += d.code == code ? 1 : 0;
+  for (const auto& d : ds) {
+    if (d.code == code) ++n;
+  }
   return n;
 }
 
