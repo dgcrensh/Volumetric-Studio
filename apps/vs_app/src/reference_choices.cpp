@@ -1,5 +1,7 @@
 #include "reference_choices.hpp"
 
+#include "vs/model/hierarchy.hpp"
+
 #include <fmt/format.h>
 
 #include <cctype>
@@ -163,8 +165,10 @@ ReferenceChoices reference_choices(const eval::Evaluation& evaluation, const Id&
     for (const auto& face : vb->boundary_faces) {
       std::string what = face.name;
       if (const auto colon = face.name.find(':'); colon != std::string::npos) {
-        if (const auto fid = Id::parse(face.name.substr(0, colon)); fid && doc.layout.find(*fid) != nullptr) {
-          what = doc.layout.label(*fid) + " " + face_label(doc.layout, *fid, face.name.substr(colon + 1));
+        // The boundary's features are in the layout of its level (L3).
+        const feature::FeatureTree* lay = model::level_layout(doc, v->parent);
+        if (const auto fid = Id::parse(face.name.substr(0, colon)); fid && lay != nullptr && lay->find(*fid) != nullptr) {
+          what = lay->label(*fid) + " " + face_label(*lay, *fid, face.name.substr(colon + 1));
         }
       }
       const std::string label = "Boundary: " + what;
@@ -173,7 +177,7 @@ ReferenceChoices reference_choices(const eval::Evaluation& evaluation, const Id&
     }
   }
   for (const auto& s : doc.connections) {
-    if (!s.joins(volume)) continue;
+    if (!model::joins(doc, s, volume)) continue;
     const std::string label = "Surface: " + s.name;
     out.planes.push_back({label, FeatureRef{s.id}});
     out.faces.push_back({label + " patch", FaceRef{s.id, "patch"}});
@@ -186,8 +190,8 @@ ReferenceChoices reference_choices(const eval::Evaluation& evaluation, const Id&
   return out;
 }
 
-ReferenceChoices layout_choices(const eval::Evaluation& evaluation) {
-  return reference_choices(evaluation, Id{}, std::nullopt);
+ReferenceChoices layout_choices(const eval::Evaluation& evaluation, const Id& level) {
+  return reference_choices(evaluation, level, std::nullopt);
 }
 
 }  // namespace vs::app

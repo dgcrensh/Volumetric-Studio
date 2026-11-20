@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include "vs/model/hierarchy.hpp"
 #include "vs/proc/bake.hpp"
 
 namespace vs::app {
@@ -111,7 +112,7 @@ std::optional<Guidance> guide(const model::Document& document, const core::Id& v
           "surfaces stay where the layout puts them: mate to one of those.",
           name);
       for (const auto& s : document.connections) {
-        if (s.joins(volume)) {
+        if (model::joins(document, s, volume)) {
           g.action = Guidance::Action::UseConnection;
           g.action_label = fmt::format("Select {}", s.name);
           g.target = s.id;

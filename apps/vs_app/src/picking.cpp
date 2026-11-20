@@ -3,6 +3,7 @@
 #include <cmath>
 #include <variant>
 
+#include "vs/model/hierarchy.hpp"
 #include "vs/kernel/queries.hpp"
 
 namespace vs::app {
@@ -84,7 +85,7 @@ std::vector<std::pair<Id, ItemRole>> pickable_items(const eval::Evaluation& eval
   out.emplace_back(context_volume, ItemRole::Boundary);
   out.emplace_back(context_volume, ItemRole::Contents);
   for (const auto& s : doc.connections) {
-    if (s.joins(context_volume)) out.emplace_back(s.id, ItemRole::ConnectionSurface);
+    if (model::joins(doc, s, context_volume)) out.emplace_back(s.id, ItemRole::ConnectionSurface);
   }
   return out;
 }

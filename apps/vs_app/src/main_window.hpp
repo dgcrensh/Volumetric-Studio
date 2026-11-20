@@ -163,6 +163,12 @@ class MainWindow : public QMainWindow {
   // parametric first). False when the volume can't hold a feature tree.
   bool edit_in_context(const Id& volume);
   void leave_context();
+  // L3: where new volumes, connection surfaces, keep-outs and links go: the
+  // composite whose layout is edited in context, else the root (null).
+  [[nodiscard]] Id authoring_level() const;
+  // L3: which child of `composite` meets `surface` (null: none). The
+  // connection-surface menu's "Met by" choice.
+  bool set_met_by(const Id& composite, const Id& surface, const Id& child);
 
   // A dialog for a new feature of `kind` at the end of the tree being
   // edited, or for an existing feature of `volume`'s tree (null: layout).
@@ -332,6 +338,7 @@ class MainWindow : public QMainWindow {
   std::map<core::Id, model::VolumeStatus> last_states_;
 
   Id editing_volume_;
+  std::vector<QTreeWidgetItem*> volume_items_;  // in volume_rows() order (L3: nested)
 
   QPointer<EditDialog> dialog_;
   std::function<Command()> dialog_command_;

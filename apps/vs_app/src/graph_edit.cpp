@@ -6,6 +6,7 @@
 #include <cctype>
 #include <set>
 
+#include "vs/model/hierarchy.hpp"
 #include "vs/feature/expression.hpp"
 #include "vs/proc/check.hpp"
 
@@ -68,7 +69,7 @@ std::string unique_node_name(const Graph& graph, const std::string& title) {
 GraphContext graph_context(const model::Document& document, const Id& volume) {
   GraphContext c;
   for (const auto& s : document.connections) {
-    if (s.joins(volume)) c.surfaces.push_back({s.id, s.name, s.type()});
+    if (model::joins(document, s, volume)) c.surfaces.push_back({s.id, s.name, s.type()});
   }
   return c;
 }

@@ -40,10 +40,11 @@ QFormLayout* add_page(QStackedWidget* pages) {
 }
 
 // Layout solid features that add material: what a boundary or cutter can use.
-std::vector<Choice<Id>> adding_features(const eval::Evaluation& ev) {
+std::vector<Choice<Id>> adding_features(const eval::Evaluation& ev, const Id& level) {
   std::vector<Choice<Id>> out;
-  for (const auto& c : layout_choices(ev).solid_features) {
-    const auto* f = ev.document.layout.find(c.ref);
+  const feature::FeatureTree* tree = tree_of(ev.document, level);
+  for (const auto& c : layout_choices(ev, level).solid_features) {
+    const auto* f = tree != nullptr ? tree->find(c.ref) : nullptr;
     bool adds = false;
     if (f != nullptr) {
       if (const auto* e = f->as<feature::ExtrudeFeature>()) adds = e->operation == feature::Operation::Add;
@@ -56,10 +57,10 @@ std::vector<Choice<Id>> adding_features(const eval::Evaluation& ev) {
   return out;
 }
 
-std::vector<Choice<Id>> volume_choices(const model::Document& doc, bool keep_outs) {
+std::vector<Choice<Id>> volume_choices(const model::Document& doc, bool keep_outs, const Id& level) {
   std::vector<Choice<Id>> out;
   for (const auto& v : doc.volumes) {
-    if (v.keep_out == keep_outs) out.push_back({v.name, v.id});
+    if (v.keep_out == keep_outs && v.parent == level) out.push_back({v.name, v.id});
   }
   return out;
 }
@@ -102,12 +103,12 @@ VolumeDialog::VolumeDialog(const model::Volume& volume, const eval::Evaluation& 
     auto* list = new QListWidget;
     list->setMinimumHeight(90);
     p->addRow(tr("Union of"), list);
-    w.features = CheckList<Id>(list, adding_features(ev));
+    w.features = CheckList<Id>(list, adding_features(ev, volume.parent));
     watch(list);
   }
   {
     auto* p = add_page(pages);
-    const auto choices = layout_choices(ev);
+    const auto choices = layout_choices(ev, volume.parent);
     auto* lo = new QComboBox;
     auto* hi = new QComboBox;
     p->addRow(tr("Minimum corner"), lo);
@@ -285,12 +286,12 @@ struct ConnectionDialog::Widgets {
   QDoubleSpinBox* spacing = nullptr;
 };
 
-ConnectionDialog::ConnectionDialog(const model::ConnectionSurface& surface, const eval::Evaluation& ev,
+ConnectionDialog::ConnectionDialog(const model::ConnectionSurface& surface, const eval::Evaluation& ev, const Id& level,
                                    QWidget* parent)
     : EditDialog(tr("Connection surface"), parent), original_(surface), w_(std::make_unique<Widgets>()) {
   auto& w = *w_;
   QFormLayout* f = form();
-  const ReferenceChoices layout = layout_choices(ev);
+  const ReferenceChoices layout = layout_choices(ev, level);
   auto param = [&](QFormLayout* form, const QString& label, ParamUnit unit) {
     auto* e = new ParamEdit(unit);
     form->addRow(label, e);
@@ -342,8 +343,8 @@ ConnectionDialog::ConnectionDialog(const model::ConnectionSurface& surface, cons
   auto* second = new QComboBox;
   f->addRow(tr("Joins"), first);
   f->addRow(tr("and"), second);
-  w.first = RefPicker<Id>(first, volume_choices(ev.document, false));
-  w.second = RefPicker<Id>(second, volume_choices(ev.document, false), true, tr("(the outside)"));
+  w.first = RefPicker<Id>(first, volume_choices(ev.document, false, level));
+  w.second = RefPicker<Id>(second, volume_choices(ev.document, false, level), true, tr("(the outside)"));
   watch(first);
   watch(second);
 
@@ -513,22 +514,22 @@ struct KeepOutDialog::Widgets {
   CheckList<Id> volumes;
 };
 
-KeepOutDialog::KeepOutDialog(const model::KeepOut& keep_out, const eval::Evaluation& ev, QWidget* parent)
+KeepOutDialog::KeepOutDialog(const model::KeepOut& keep_out, const eval::Evaluation& ev, const Id& level, QWidget* parent)
     : EditDialog(tr("Keep-out region"), parent), original_(keep_out), w_(std::make_unique<Widgets>()) {
   auto& w = *w_;
   QFormLayout* f = form();
   w.name = new QLineEdit;
   f->addRow(tr("Name"), w.name);
   watch(w.name);
-  auto cutters = adding_features(ev);
-  for (const auto& c : volume_choices(ev.document, true)) cutters.push_back({"Keep-out volume " + c.label, c.ref});
+  auto cutters = adding_features(ev, level);
+  for (const auto& c : volume_choices(ev.document, true, level)) cutters.push_back({"Keep-out volume " + c.label, c.ref});
   auto* cl = new QListWidget;
   f->addRow(tr("Cut with"), cl);
   w.cutters = CheckList<Id>(cl, std::move(cutters));
   watch(cl);
   auto* vl = new QListWidget;
   f->addRow(tr("From the boundaries of"), vl);
-  w.volumes = CheckList<Id>(vl, volume_choices(ev.document, false));
+  w.volumes = CheckList<Id>(vl, volume_choices(ev.document, false, level));
   watch(vl);
   set_value(keep_out);
 }
@@ -559,16 +560,18 @@ struct LinkDialog::Widgets {
   RefPicker<Id> target;
 };
 
-LinkDialog::LinkDialog(const model::Link& link, const eval::Evaluation& ev, QWidget* parent)
+LinkDialog::LinkDialog(const model::Link& link, const eval::Evaluation& ev, const Id& level, QWidget* parent)
     : EditDialog(tr("Link"), parent), original_(link), w_(std::make_unique<Widgets>()) {
   auto& w = *w_;
   QFormLayout* f = form();
   std::vector<Choice<model::PublishedOutputRef>> sources;
   std::vector<Choice<Id>> targets;
-  for (const auto& var : ev.document.layout.variables().variables()) {
+  const feature::FeatureTree* layout = tree_of(ev.document, level);
+  for (const auto& var : layout != nullptr ? layout->variables().variables() : std::vector<feature::Variable>{}) {
     targets.push_back({"Layout variable " + var.name, var.id});
   }
   for (const auto& v : ev.document.volumes) {
+    if (!(v.parent == level)) continue;  // links stay inside a level (L3)
     for (const auto& o : v.outputs) {
       if (model::is_scalar(o.quantity)) sources.push_back({v.name + ": " + o.name, {v.id, o.id}});
     }

@@ -58,9 +58,11 @@ Command remove_variable(Id volume, Id variable);
 // --- volumes ------------------------------------------------------------------------------
 
 // A new volume (placeholder contents) bounded by layout solid features.
-model::Volume volume_from_features(std::string name, std::vector<Id> features);
+// `parent`: the composite it goes in (L3), null at the root; the features or
+// points are then of that composite's layout.
+model::Volume volume_from_features(std::string name, std::vector<Id> features, Id parent = {});
 // A new volume bounded by the box between two layout points.
-model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max);
+model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max, Id parent = {});
 
 Command add_volume(model::Volume volume);
 // Replaces the volume with the same id: name, boundary, keep-out flag,
@@ -103,7 +105,7 @@ Command unbake_volume(Id volume);
 // --- swapping contents (M16) -------------------------------------------------------------------
 
 // What a volume's contents can be swapped to.
-enum class ContentsKind { Placeholder, Parametric, Procedural, Baked };
+enum class ContentsKind { Placeholder, Parametric, Procedural, Baked, Composite };
 std::string_view to_string(ContentsKind kind);
 // The kind a volume's contents are now (nullopt: a keep-out, or imported
 // static contents, which aren't any of these).
@@ -115,6 +117,10 @@ std::optional<ContentsKind> contents_kind(const model::Volume& volume);
 Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> baked_mesh = std::nullopt);
 
 // --- connection surfaces, keep-out regions, links -----------------------------------------------
+
+// L3: which child of `composite` meets `surface`, a surface joining the
+// composite from outside (null child: none; the surface stops there).
+Command set_delegation(Id composite, Id surface, Id child);
 
 Command add_connection(model::ConnectionSurface surface);
 Command update_connection(model::ConnectionSurface surface);
