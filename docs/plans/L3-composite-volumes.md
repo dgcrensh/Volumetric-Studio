@@ -2,7 +2,15 @@
 
 Nov 20, 2026 · follows L2 · decision record: `docs/decisions/0021-composite-volumes.md`
 
-**Status: planned.**
+**Status: built.** As below, with three differences found while building it
+(decision 0021 has the details): "Met by" is a choice on the connection
+surface's menu rather than in the inspector, one entry for each composite
+the surface joins; re-routing a surface drops the inner composites' onward
+passes that no longer receive it; and `route()` names the composite
+(`ActTarget::volume`) for every layout-level diagnostic inside one, not
+just for the new nesting check. A checked-in sample,
+`libs/vs_model/tests/data/nested.vsproj`, is the plan's three-level
+document with every leaf filled.
 
 ## Goal
 

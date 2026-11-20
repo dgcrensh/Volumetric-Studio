@@ -27,6 +27,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 #include <fmt/format.h>
@@ -1024,13 +1025,11 @@ void MainWindow::sync_tree_selection() {
   const core::Id subject = viewport_subject(selection_);
   if (!subject.is_null()) {
     const QString id = qstr(subject.to_string());
-    for (int g = 0; g < volumes_->topLevelItemCount(); ++g) {
-      QTreeWidgetItem* group = volumes_->topLevelItem(g);
-      for (int i = 0; i < group->childCount(); ++i) {
-        if (group->child(i)->data(0, kRoleId).toString() == id) {
-          group->child(i)->setSelected(true);
-          volumes_->scrollToItem(group->child(i));
-        }
+    // Every row, children of composites included (L3).
+    for (QTreeWidgetItemIterator it(volumes_); *it != nullptr; ++it) {
+      if ((*it)->parent() != nullptr && (*it)->data(0, kRoleId).toString() == id) {
+        (*it)->setSelected(true);
+        volumes_->scrollToItem(*it);
       }
     }
   }

@@ -1,0 +1,870 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "c23c1f968589d3eb47dfa847a920899f",
+    "name": "Nested",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [
+        {
+          "id": "1e63718963b9c768a45eac392dca10ad",
+          "name": "w",
+          "expression": "40"
+        }
+      ],
+      "features": [
+        {
+          "id": "6f58a05f4fb4840b2a1305b189a7f391",
+          "name": "Base low",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": -10.0
+          }
+        },
+        {
+          "id": "79011cf4d70cd691765c229fbcc37080",
+          "name": "Origin",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "8d24bcc338c1603dce3f3c321c9d84f5",
+          "name": "Base high",
+          "type": "datum_point",
+          "at": {
+            "x": {
+              "value": 0.0,
+              "expression": "w"
+            },
+            "y": 20.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "c6fad6ce6dce1e1b179823e4a26d17bb",
+          "name": "Housing high",
+          "type": "datum_point",
+          "at": {
+            "x": {
+              "value": 0.0,
+              "expression": "w"
+            },
+            "y": 20.0,
+            "z": 20.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "ea95368c3cb5daef1e44dd5c59a3e46a",
+        "name": "Base",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "6f58a05f4fb4840b2a1305b189a7f391"
+            },
+            "max": {
+              "feature": "8d24bcc338c1603dce3f3c321c9d84f5"
+            }
+          }
+        },
+        "contents": {
+          "kind": "parametric",
+          "tree": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "0e6ee4bb9d488d44f81ed8f7608daa99",
+                "name": "Bottom",
+                "type": "datum_plane",
+                "offset": {
+                  "base": {
+                    "principal": "xy"
+                  },
+                  "distance": -10.0
+                }
+              },
+              {
+                "id": "30e9c1bd3b242d9b7d440fcf8d8a4e29",
+                "name": "Outline",
+                "type": "sketch",
+                "plane": {
+                  "feature": "0e6ee4bb9d488d44f81ed8f7608daa99"
+                },
+                "sketch": {
+                  "constraints": [],
+                  "entities": [
+                    {
+                      "id": "3ea8328a1bb889b1408b799b8f4ec021",
+                      "position": [
+                        0.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "ba19d1d181017c8fd1dd53874aed1a10",
+                      "position": [
+                        40.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "6ed00602b63e47ec526d6fee5b7d21fd",
+                      "position": [
+                        40.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "549fc6d99ddd9e77bae8dd8cb05df370",
+                      "position": [
+                        0.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "end": "ba19d1d181017c8fd1dd53874aed1a10",
+                      "id": "1b748c8dabd55d6b8608c2e3afb94a2d",
+                      "start": "3ea8328a1bb889b1408b799b8f4ec021",
+                      "type": "line"
+                    },
+                    {
+                      "end": "6ed00602b63e47ec526d6fee5b7d21fd",
+                      "id": "4d1be4fc51c7762825b6fff46a0576cb",
+                      "start": "ba19d1d181017c8fd1dd53874aed1a10",
+                      "type": "line"
+                    },
+                    {
+                      "end": "549fc6d99ddd9e77bae8dd8cb05df370",
+                      "id": "c3d123ce04842945d56aad528b3c114b",
+                      "start": "6ed00602b63e47ec526d6fee5b7d21fd",
+                      "type": "line"
+                    },
+                    {
+                      "end": "3ea8328a1bb889b1408b799b8f4ec021",
+                      "id": "8abb70d764b17872000f3d53e780a368",
+                      "start": "549fc6d99ddd9e77bae8dd8cb05df370",
+                      "type": "line"
+                    }
+                  ],
+                  "format": "vstudio.sketch",
+                  "id": "30e9c1bd3b242d9b7d440fcf8d8a4e29",
+                  "name": "Outline",
+                  "plane": {
+                    "origin": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "x_axis": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "y_axis": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "version": 1
+                }
+              },
+              {
+                "id": "64d60c429ad5c693629215d6a7e8e068",
+                "name": "Fill",
+                "type": "extrude",
+                "sketch": "30e9c1bd3b242d9b7d440fcf8d8a4e29",
+                "operation": "add",
+                "extent": "blind",
+                "depth": 10.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "d4de9110df63b9e6cd9eb5a7069f4afe",
+        "name": "Housing",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "79011cf4d70cd691765c229fbcc37080"
+            },
+            "max": {
+              "feature": "c6fad6ce6dce1e1b179823e4a26d17bb"
+            }
+          }
+        },
+        "contents": {
+          "kind": "composite",
+          "layout": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "5c12d2fcc61e37340d348984f9e5fb0c",
+                "name": "Origin",
+                "type": "datum_point",
+                "at": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                }
+              },
+              {
+                "id": "9088577fde6eaf8ca69968161136c328",
+                "name": "Split",
+                "type": "datum_point",
+                "at": {
+                  "x": 20.0,
+                  "y": 20.0,
+                  "z": 20.0
+                }
+              },
+              {
+                "id": "55c69a6f827c71b5ddc839673ae22b57",
+                "name": "Right low",
+                "type": "datum_point",
+                "at": {
+                  "x": 20.0,
+                  "y": 0.0,
+                  "z": 0.0
+                }
+              },
+              {
+                "id": "9ab5513f86e602e56c83a8ce951dd981",
+                "name": "Right high",
+                "type": "datum_point",
+                "at": {
+                  "x": {
+                    "value": 0.0,
+                    "expression": "width"
+                  },
+                  "y": 20.0,
+                  "z": 20.0
+                }
+              },
+              {
+                "id": "24ec69dadc37995b8603d9363f2fa164",
+                "name": "Split plane",
+                "type": "datum_plane",
+                "offset": {
+                  "base": {
+                    "principal": "yz"
+                  },
+                  "distance": 20.0
+                }
+              }
+            ]
+          },
+          "delegations": [
+            {
+              "surface": "50951ea4d03a2aec1e80f82345637bbd",
+              "child": "5c25bf2373d79a22c7a41bb7f9104630"
+            }
+          ]
+        },
+        "parameters": [
+          {
+            "id": "52f525ce81fddee99d5ed53296c9373d",
+            "name": "width",
+            "value": {
+              "value": 0.0,
+              "expression": "w"
+            }
+          }
+        ],
+        "outputs": [
+          {
+            "id": "226767fd76e0955e90c309133c3fbfac",
+            "name": "volume",
+            "quantity": "volume"
+          }
+        ]
+      },
+      {
+        "id": "5c25bf2373d79a22c7a41bb7f9104630",
+        "name": "Left",
+        "parent": "d4de9110df63b9e6cd9eb5a7069f4afe",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "5c12d2fcc61e37340d348984f9e5fb0c"
+            },
+            "max": {
+              "feature": "9088577fde6eaf8ca69968161136c328"
+            }
+          }
+        },
+        "contents": {
+          "kind": "composite",
+          "layout": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "2f87585206e1f4415fb5b5dd405bf116",
+                "name": "Origin",
+                "type": "datum_point",
+                "at": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                }
+              },
+              {
+                "id": "7128f5797b72c2fd2d4c78396127f75d",
+                "name": "Middle",
+                "type": "datum_point",
+                "at": {
+                  "x": 20.0,
+                  "y": 20.0,
+                  "z": 10.0
+                }
+              },
+              {
+                "id": "2cfe995d752c3f5a787116802e30b6c1",
+                "name": "Cap low",
+                "type": "datum_point",
+                "at": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 10.0
+                }
+              },
+              {
+                "id": "779e682097a505ff1687330353b7deec",
+                "name": "Top",
+                "type": "datum_point",
+                "at": {
+                  "x": 20.0,
+                  "y": 20.0,
+                  "z": 20.0
+                }
+              },
+              {
+                "id": "94475d3e2671b6941b964bae9ea1ea42",
+                "name": "Joint plane",
+                "type": "datum_plane",
+                "offset": {
+                  "base": {
+                    "principal": "xy"
+                  },
+                  "distance": 10.0
+                }
+              }
+            ]
+          },
+          "delegations": [
+            {
+              "surface": "50951ea4d03a2aec1e80f82345637bbd",
+              "child": "6598b2d0558b62c4a91ea4763be1cb95"
+            },
+            {
+              "surface": "14c7dc129737b3d143d2dce84d544f35",
+              "child": "6598b2d0558b62c4a91ea4763be1cb95"
+            }
+          ]
+        }
+      },
+      {
+        "id": "a2dbedaa7e9db1116974395fcf40b1d3",
+        "name": "Right",
+        "parent": "d4de9110df63b9e6cd9eb5a7069f4afe",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "55c69a6f827c71b5ddc839673ae22b57"
+            },
+            "max": {
+              "feature": "9ab5513f86e602e56c83a8ce951dd981"
+            }
+          }
+        },
+        "contents": {
+          "kind": "parametric",
+          "tree": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "4ab1c70f85c3d74a39da1842fb20b597",
+                "name": "Bottom",
+                "type": "datum_plane",
+                "offset": {
+                  "base": {
+                    "principal": "xy"
+                  },
+                  "distance": 0.0
+                }
+              },
+              {
+                "id": "a9d7a3e441c0dc0c0c39b02c64a8df38",
+                "name": "Outline",
+                "type": "sketch",
+                "plane": {
+                  "feature": "4ab1c70f85c3d74a39da1842fb20b597"
+                },
+                "sketch": {
+                  "constraints": [],
+                  "entities": [
+                    {
+                      "id": "6d4da9172dae38ba7ffc66abb35e487a",
+                      "position": [
+                        20.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "8eaf41345f4b1d79afa4443010318548",
+                      "position": [
+                        40.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "676063f9aa9cc781b4a6c0e98ca197dc",
+                      "position": [
+                        40.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "adf3319160f1b22f7e52750da383885f",
+                      "position": [
+                        20.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "end": "8eaf41345f4b1d79afa4443010318548",
+                      "id": "524bae0d09e7acf74bf46f1217f7aee2",
+                      "start": "6d4da9172dae38ba7ffc66abb35e487a",
+                      "type": "line"
+                    },
+                    {
+                      "end": "676063f9aa9cc781b4a6c0e98ca197dc",
+                      "id": "473ecd55396dc0cabad74a6930bbd9be",
+                      "start": "8eaf41345f4b1d79afa4443010318548",
+                      "type": "line"
+                    },
+                    {
+                      "end": "adf3319160f1b22f7e52750da383885f",
+                      "id": "3b247c0850655852763edf2de93f120b",
+                      "start": "676063f9aa9cc781b4a6c0e98ca197dc",
+                      "type": "line"
+                    },
+                    {
+                      "end": "6d4da9172dae38ba7ffc66abb35e487a",
+                      "id": "3c7d15895d1c5cb602e35af2762c29b4",
+                      "start": "adf3319160f1b22f7e52750da383885f",
+                      "type": "line"
+                    }
+                  ],
+                  "format": "vstudio.sketch",
+                  "id": "a9d7a3e441c0dc0c0c39b02c64a8df38",
+                  "name": "Outline",
+                  "plane": {
+                    "origin": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "x_axis": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "y_axis": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "version": 1
+                }
+              },
+              {
+                "id": "59190da98012a949ffdaddd2ce53e4c4",
+                "name": "Fill",
+                "type": "extrude",
+                "sketch": "a9d7a3e441c0dc0c0c39b02c64a8df38",
+                "operation": "add",
+                "extent": "blind",
+                "depth": 20.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "6598b2d0558b62c4a91ea4763be1cb95",
+        "name": "Core",
+        "parent": "5c25bf2373d79a22c7a41bb7f9104630",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "2f87585206e1f4415fb5b5dd405bf116"
+            },
+            "max": {
+              "feature": "7128f5797b72c2fd2d4c78396127f75d"
+            }
+          }
+        },
+        "contents": {
+          "kind": "parametric",
+          "tree": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "757eb4216af7fd8ecdd43f94d4dde346",
+                "name": "Bottom",
+                "type": "datum_plane",
+                "offset": {
+                  "base": {
+                    "principal": "xy"
+                  },
+                  "distance": 0.0
+                }
+              },
+              {
+                "id": "8b2c06e35513891d488eeb266467507a",
+                "name": "Outline",
+                "type": "sketch",
+                "plane": {
+                  "feature": "757eb4216af7fd8ecdd43f94d4dde346"
+                },
+                "sketch": {
+                  "constraints": [],
+                  "entities": [
+                    {
+                      "id": "934183e4ea6b87707f3d3af0feb5ce17",
+                      "position": [
+                        0.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "d8b87214c0e1aa11507cfd69efb89c78",
+                      "position": [
+                        20.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "8c060f94a65b3d92fcc86fb7a9def73e",
+                      "position": [
+                        20.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "ddb71eaf34c5241dc7ae4589ab9dda13",
+                      "position": [
+                        0.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "end": "d8b87214c0e1aa11507cfd69efb89c78",
+                      "id": "62cd36fc5b6dec3a73f272e00157af97",
+                      "start": "934183e4ea6b87707f3d3af0feb5ce17",
+                      "type": "line"
+                    },
+                    {
+                      "end": "8c060f94a65b3d92fcc86fb7a9def73e",
+                      "id": "b42042244eb8ce49443b4ea917003c9b",
+                      "start": "d8b87214c0e1aa11507cfd69efb89c78",
+                      "type": "line"
+                    },
+                    {
+                      "end": "ddb71eaf34c5241dc7ae4589ab9dda13",
+                      "id": "ca023f2abf5123a05ef10608fee952d5",
+                      "start": "8c060f94a65b3d92fcc86fb7a9def73e",
+                      "type": "line"
+                    },
+                    {
+                      "end": "934183e4ea6b87707f3d3af0feb5ce17",
+                      "id": "b413498878b187d685c69f02b27c9d4f",
+                      "start": "ddb71eaf34c5241dc7ae4589ab9dda13",
+                      "type": "line"
+                    }
+                  ],
+                  "format": "vstudio.sketch",
+                  "id": "8b2c06e35513891d488eeb266467507a",
+                  "name": "Outline",
+                  "plane": {
+                    "origin": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "x_axis": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "y_axis": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "version": 1
+                }
+              },
+              {
+                "id": "66d77a7ea5caf53c454b236261435c46",
+                "name": "Fill",
+                "type": "extrude",
+                "sketch": "8b2c06e35513891d488eeb266467507a",
+                "operation": "add",
+                "extent": "blind",
+                "depth": 10.0
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "80a8e859c46707062d6d35a095474518",
+        "name": "Cap",
+        "parent": "5c25bf2373d79a22c7a41bb7f9104630",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "2cfe995d752c3f5a787116802e30b6c1"
+            },
+            "max": {
+              "feature": "779e682097a505ff1687330353b7deec"
+            }
+          }
+        },
+        "contents": {
+          "kind": "parametric",
+          "tree": {
+            "format": "vstudio.features",
+            "version": 1,
+            "variables": [],
+            "features": [
+              {
+                "id": "71d0a59bb71aaf847299a4eb7e7ede07",
+                "name": "Bottom",
+                "type": "datum_plane",
+                "offset": {
+                  "base": {
+                    "principal": "xy"
+                  },
+                  "distance": 10.0
+                }
+              },
+              {
+                "id": "a50e5c56b1d420abaae1a17d4947bb4c",
+                "name": "Outline",
+                "type": "sketch",
+                "plane": {
+                  "feature": "71d0a59bb71aaf847299a4eb7e7ede07"
+                },
+                "sketch": {
+                  "constraints": [],
+                  "entities": [
+                    {
+                      "id": "867f08e39f3fd61ee0e7e083b8cfd59b",
+                      "position": [
+                        0.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "7050be6b645891bf8d64f0988191d409",
+                      "position": [
+                        20.0,
+                        0.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "704dd4ae5375a63b4e51616decc9ac0b",
+                      "position": [
+                        20.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "id": "85e576f254237060749c647d7611367e",
+                      "position": [
+                        0.0,
+                        20.0
+                      ],
+                      "type": "point"
+                    },
+                    {
+                      "end": "7050be6b645891bf8d64f0988191d409",
+                      "id": "08341beeee488a47b7d6ec178e67b9c6",
+                      "start": "867f08e39f3fd61ee0e7e083b8cfd59b",
+                      "type": "line"
+                    },
+                    {
+                      "end": "704dd4ae5375a63b4e51616decc9ac0b",
+                      "id": "5fdbd097bf4883fcab106a7a8e2d6df7",
+                      "start": "7050be6b645891bf8d64f0988191d409",
+                      "type": "line"
+                    },
+                    {
+                      "end": "85e576f254237060749c647d7611367e",
+                      "id": "a6deb39ab93a45b2e293d9e81f14231b",
+                      "start": "704dd4ae5375a63b4e51616decc9ac0b",
+                      "type": "line"
+                    },
+                    {
+                      "end": "867f08e39f3fd61ee0e7e083b8cfd59b",
+                      "id": "371fe48177f0b542bd71879ecdb7bc53",
+                      "start": "85e576f254237060749c647d7611367e",
+                      "type": "line"
+                    }
+                  ],
+                  "format": "vstudio.sketch",
+                  "id": "a50e5c56b1d420abaae1a17d4947bb4c",
+                  "name": "Outline",
+                  "plane": {
+                    "origin": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "x_axis": [
+                      1.0,
+                      0.0,
+                      0.0
+                    ],
+                    "y_axis": [
+                      0.0,
+                      1.0,
+                      0.0
+                    ]
+                  },
+                  "version": 1
+                }
+              },
+              {
+                "id": "2dd0b1cc239923e30e966f5b5562792a",
+                "name": "Fill",
+                "type": "extrude",
+                "sketch": "a50e5c56b1d420abaae1a17d4947bb4c",
+                "operation": "add",
+                "extent": "blind",
+                "depth": 10.0
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "50951ea4d03a2aec1e80f82345637bbd",
+        "name": "Seat",
+        "volumes": [
+          "ea95368c3cb5daef1e44dd5c59a3e46a",
+          "d4de9110df63b9e6cd9eb5a7069f4afe"
+        ],
+        "geometry": {
+          "datum": {
+            "plane": {
+              "principal": "xy"
+            },
+            "u": 10.0,
+            "v": 10.0,
+            "width": 20.0,
+            "height": 20.0
+          }
+        },
+        "type": "bonded",
+        "seam": {
+          "spacing": 0.0
+        }
+      },
+      {
+        "id": "14c7dc129737b3d143d2dce84d544f35",
+        "name": "Middle",
+        "volumes": [
+          "5c25bf2373d79a22c7a41bb7f9104630",
+          "a2dbedaa7e9db1116974395fcf40b1d3"
+        ],
+        "geometry": {
+          "datum": {
+            "plane": {
+              "feature": "24ec69dadc37995b8603d9363f2fa164"
+            },
+            "u": 10.0,
+            "v": 5.0,
+            "width": 18.0,
+            "height": 8.0
+          }
+        },
+        "type": "bonded",
+        "seam": {
+          "spacing": 0.0
+        }
+      },
+      {
+        "id": "e698bd1d1886cc5388c633999ad05705",
+        "name": "Joint",
+        "volumes": [
+          "6598b2d0558b62c4a91ea4763be1cb95",
+          "80a8e859c46707062d6d35a095474518"
+        ],
+        "geometry": {
+          "datum": {
+            "plane": {
+              "feature": "94475d3e2671b6941b964bae9ea1ea42"
+            },
+            "u": 10.0,
+            "v": 10.0,
+            "width": 20.0,
+            "height": 20.0
+          }
+        },
+        "type": "bonded",
+        "seam": {
+          "spacing": 0.0
+        }
+      }
+    ],
+    "keep_outs": [],
+    "links": []
+  },
+  "blobs": []
+}

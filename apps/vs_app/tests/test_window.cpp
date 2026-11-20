@@ -9,6 +9,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 #include <algorithm>
 #include <cmath>
@@ -39,11 +40,9 @@ bool wait_shown(app::MainWindow& w, int timeout_ms = 120000) {
 
 QTreeWidgetItem* volume_item(QTreeWidget& tree, const core::Id& id) {
   const QString key = QString::fromStdString(id.to_string());
-  for (int g = 0; g < tree.topLevelItemCount(); ++g) {
-    auto* group = tree.topLevelItem(g);
-    for (int i = 0; i < group->childCount(); ++i) {
-      if (group->child(i)->data(0, Qt::UserRole + 1).toString() == key) return group->child(i);
-    }
+  // Children of composites sit under their parent's row (L3).
+  for (QTreeWidgetItemIterator it(&tree); *it != nullptr; ++it) {
+    if ((*it)->parent() != nullptr && (*it)->data(0, Qt::UserRole + 1).toString() == key) return *it;
   }
   return nullptr;
 }

@@ -247,8 +247,8 @@ so they are registered. A new library must also be added to
 ## vs_model essentials
 
 - **Document.** `Document` holds the layout (a `FeatureTree`), the volumes
-  under it (one level), and the connection surfaces, keep-outs and links the
-  root owns. Ids are unique across the whole document, contents included.
+  (every depth, one flat list), and the connection surfaces, keep-outs and
+  links. Ids are unique across the whole document, contents included.
   A `Volume` has a boundary (layout solid features' tools, or a box between
   two layout points), a keep-out flag, contents (static file, parametric
   tree, procedural graph JSON), parameters, a seed and published outputs.
@@ -281,8 +281,27 @@ so they are registered. A new library must also be added to
   blob hashes and runs `check()` (`load_project(path, false)` skips it, for
   validation). `content_hash()` hashes the document's
   JSON plus the blobs. `vstudio-cli info <project> [--build]` prints one.
-  `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the sample
-  with `vs_model_tests "[.generate]"`.
+  `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the samples
+  (`bracket.vsproj`, `nested.vsproj`) with `vs_model_tests "[.generate]"`.
+- **Composites** (L3, decision 0021, `hierarchy.hpp`): `Volume::parent`
+  names a composite (null at the root; written to JSON only when set, so
+  flat documents and their hashes are what they were). A **level** is the
+  root or a composite; `CompositeContents` is its layout (a `FeatureTree`,
+  rebuilt with the composite's inputs like a parametric tree, and what
+  `Volume::tree()` returns) plus `delegations` (`{surface, child}`: which
+  child meets a surface joining the composite). Children's boundaries,
+  and the surfaces, keep-outs and links of a level, are built from its
+  layout (`model.level.mixed` when one names volumes of two levels);
+  `build_layout()` goes level by level, parents first (`level_order()`).
+  `resolve()` treats "inside a composite" as its level: children's
+  boundaries, parameters and outputs yes, anything deeper
+  `model.reference.contents`, anything around it `.parent`. Use
+  `model::joins(doc, surface, volume)` (names it, or delegated down to
+  it), never `ConnectionSurface::joins()`, for a volume's inputs;
+  `seam_sides()` gives the leaves that meet a surface. Composite outputs
+  add children's `ContentsMeasure`s up (Volume, Mass, Centre of gravity,
+  Envelope only). Tests: `tests/nested.*` (root → Housing → Left → Core
+  and Cap, plus Right and Base), shared by every suite.
 
 ## vs_validate essentials
 
@@ -292,8 +311,11 @@ so they are registered. A new library must also be added to
   tolerance), undeclared contact (`validate.contact` per pair of faces
   lying against each other, named from `VolumeBuild::boundary_faces`;
   `validate.contact.edge` for an edge or point touch), skipped for pairs
-  sharing a connection surface or involving a keep-out. Connection rules
-  (`validate.connection.*`): patch on each joined boundary, clearance gap
+  sharing a connection surface or involving a keep-out, and between
+  siblings only (L3); `validate.nesting.outside` is a child reaching out
+  of its composite. Connection rules
+  (`validate.connection.*`): patch on each joined boundary (and each child
+  it is delegated to), clearance gap
   and flange wall at least the minimum feature size, ISO 273 holes clear of
   the patch edge and each other by the minimum wall.
 - **Containment** (`containment.hpp`): `check_containment(boundary, solid
@@ -383,6 +405,11 @@ so they are registered. A new library must also be added to
   optional weld. Volumes downstream of others through links run in later
   waves, the layout rebuilt with the link values. `preview()` is the same
   without generating. The engine keeps each volume's last valid contents.
+  A composite (L3) is never generated or cached: after its children (they
+  are upstream of it) it takes the worst of their statuses, a key hashing
+  its definition and their keys, and outputs adding their measures up.
+  `combine()`, 3MF and STEP take leaves only; STEP parts of children are
+  named by path ("Housing / Left / Core").
 - **States.** Current; Failed (generation or containment failed, or the
   boundary or a parameter: shows its last valid contents as
   `stale_contents`, blocks only its dependants, which get `eval.blocked`);
@@ -604,6 +631,15 @@ so they are registered. A new library must also be added to
   set_pick_mode()`, `pick_at()` (clicking again in place picks what's
   behind), `project()` and `look_along()`; feature dialogs' Pick buttons
   (`FeatureDialog::begin_pick()`, `apply_pick()`).
+- **Composites** (L3, decision 0021): the volume tree nests children
+  under their composite (`VolumeRow::parent`, `depth`); swap offers
+  Composite; edit in context on a composite edits its layout and makes it
+  `MainWindow::authoring_level()`, where new volumes, surfaces, keep-outs
+  and links go (their dialogs take the level and list only its layout's
+  features and volumes; descendants stay undimmed through
+  `Viewport::set_context(..., inside)`). `set_delegation()` /
+  `MainWindow::set_met_by()` is the surface menu's "Met inside ... by";
+  deleting a composite deletes everything inside it.
 - **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
   `check_for_export()`: `validate()`, the shown evaluation's volume
   diagnostics, volumes not current, and the weld; Model > Validate and every
