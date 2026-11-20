@@ -116,7 +116,8 @@ if ($existing.Code -eq 0 -and $existing.Out.Trim()) {
 $projectInfo = Get-Json @("compute", "project-info", "describe")
 $allRegions = Get-FreeQuota $projectInfo.quotas "GPUS_ALL_REGIONS"
 if ($allRegions -lt 1) {
-  throw ("GPUS_ALL_REGIONS quota is $allRegions. Request 1 or more at " +
+  throw ("GPUS_ALL_REGIONS quota is $allRegions in project $Project. If your GPU quota is in " +
+    "another project, pass -Project <id>. Otherwise request 1 or more at " +
     "https://console.cloud.google.com/iam-admin/quotas?project=$Project (filter: GPUs (all regions)). " +
     "Free-trial accounts must upgrade billing first. See docs\dev-vm.md.")
 }

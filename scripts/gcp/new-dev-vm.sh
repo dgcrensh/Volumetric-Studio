@@ -163,7 +163,8 @@ gc compute project-info describe --flatten=quotas \
   die "Could not read the project's quotas:"$'\n'"$err"
 all_regions="$(printf '%s\n' "$out" | free_quota GPUS_ALL_REGIONS)"
 if [ "$all_regions" -lt 1 ]; then
-  die "GPUS_ALL_REGIONS quota is $all_regions. Request 1 or more at" \
+  die "GPUS_ALL_REGIONS quota is $all_regions in project $project. If your GPU quota is in" \
+    "another project, pass --project <id>. Otherwise request 1 or more at" \
     "https://console.cloud.google.com/iam-admin/quotas?project=$project (filter: GPUs (all regions))." \
     "Free-trial accounts must upgrade billing first. See docs/dev-vm.md."
 fi

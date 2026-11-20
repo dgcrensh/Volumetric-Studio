@@ -63,6 +63,10 @@ the preferred ones.
 | `--windows-user <name>` | `-WindowsUser <name>` | create that user and print its password |
 | `--dry-run` | | run only the read-only checks and print what it would create |
 
+Both use gcloud's configured project unless you pass `--project <id>` /
+`-Project <id>`; the GPU quota is per project, so point it at the project
+that has it (or `gcloud config set project <id>` once).
+
 `scripts/gcp/new-dev-vm.sh --help` lists the rest (machine types, disk size,
 project, repository URL).
 
