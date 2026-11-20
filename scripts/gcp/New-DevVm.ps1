@@ -8,7 +8,8 @@
   project selected (gcloud config set project <id>).
 
   1. Checks the project's GPU quota (GPUS_ALL_REGIONS and the per-region
-     virtual workstation GPU quota) and skips regions with none free.
+     virtual workstation GPU quota). Only GPUS_ALL_REGIONS at 0 stops it;
+     the regional numbers are reported, since gcloud doesn't always list them.
   2. Restricts RDP to this machine's public IP with the firewall rule
      "vstudio-allow-rdp" on the target tag "vstudio-dev".
   3. Tries each GPU in -Gpus (L4 on a G2, then T4 on an N1 by default) in each
@@ -88,9 +89,11 @@ function Get-Json([string[]] $Arguments) {
   $r.Out.Substring($start) | ConvertFrom-Json
 }
 
+# Free quota of a metric, or $null when it isn't listed (gcloud's lists don't
+# carry every GPU quota).
 function Get-FreeQuota($Quotas, [string] $Metric) {
   $q = $Quotas | Where-Object { $_.metric -eq $Metric } | Select-Object -First 1
-  if (-not $q) { return 0 }
+  if (-not $q) { return $null }
   [int]($q.limit - $q.usage)
 }
 
@@ -115,8 +118,11 @@ if ($existing.Code -eq 0 -and $existing.Out.Trim()) {
 
 $projectInfo = Get-Json @("compute", "project-info", "describe")
 $allRegions = Get-FreeQuota $projectInfo.quotas "GPUS_ALL_REGIONS"
-if ($allRegions -lt 1) {
-  throw ("GPUS_ALL_REGIONS quota is $allRegions. Request 1 or more at " +
+if ($null -eq $allRegions) {
+  Write-Host "GPUS_ALL_REGIONS isn't listed for $Project; carrying on."
+} elseif ($allRegions -lt 1) {
+  throw ("GPUS_ALL_REGIONS quota is $allRegions in project $Project. If your GPU quota is in " +
+    "another project, pass -Project <id>. Otherwise request 1 or more at " +
     "https://console.cloud.google.com/iam-admin/quotas?project=$Project (filter: GPUs (all regions)). " +
     "Free-trial accounts must upgrade billing first. See docs\dev-vm.md.")
 }
@@ -154,6 +160,10 @@ function Get-RegionFree([string] $Region, [string] $Metric) {
   Get-FreeQuota $regionQuota[$Region] $Metric
 }
 
+# The regional quota gcloud reports is only shown, never used to skip a
+# region: the vWS quota can be missing from that list or read 0 while the
+# console still creates the VM. A create refused for quota just moves on to
+# the next zone, like a stockout.
 $attempts = @()
 foreach ($gpu in $Gpus) {
   $type = $GpuTypes[$gpu]
@@ -168,9 +178,10 @@ foreach ($gpu in $Gpus) {
   }
   foreach ($group in $ordered) {
     $free = Get-RegionFree $group.Name $type.Quota
-    if ($free -lt 1) {
-      Write-Host "  skip $($group.Name): $($type.Quota) quota has $free free"
-      continue
+    if ($null -eq $free) {
+      Write-Host "  $($group.Name): $($type.Quota) isn't listed by gcloud; trying it anyway"
+    } elseif ($free -lt 1) {
+      Write-Host "  $($group.Name): $($type.Quota) reads $free free; trying it anyway"
     }
     foreach ($zone in ($group.Group | Sort-Object)) {
       $attempts += [pscustomobject]@{ Gpu = $gpu; Zone = $zone; Accelerator = $type.Accelerator }
@@ -178,8 +189,7 @@ foreach ($gpu in $Gpus) {
   }
 }
 if (-not $attempts) {
-  throw ("No zone has free quota for $($Gpus -join ' or ') virtual workstation GPUs. Request " +
-    "NVIDIA_L4_VWS_GPUS or NVIDIA_T4_VWS_GPUS in a region at https://console.cloud.google.com/iam-admin/quotas?project=$Project.")
+  throw "No zone offers $($Gpus -join ' or ') virtual workstation GPUs in the regions asked for."
 }
 
 # --- create -----------------------------------------------------------------------
@@ -203,7 +213,10 @@ foreach ($a in $attempts) {
     throw "Create failed for a reason another zone won't fix:`n$($r.Out)"
   }
 }
-if (-not $created) { throw "No zone had capacity. Try again later, or pass -Gpus T4 / more -Regions." }
+if (-not $created) {
+  throw ("No zone had capacity or quota. Try again later, pass -Gpus T4 / more -Regions, or check " +
+    "NVIDIA_L4_VWS_GPUS / NVIDIA_T4_VWS_GPUS at https://console.cloud.google.com/iam-admin/quotas?project=$Project.")
+}
 
 $ip = (Invoke-Gcloud @("compute", "instances", "describe", $Name, "--zone=$($created.Zone)",
   "--format=value(networkInterfaces[0].accessConfigs[0].natIP)")).Out.Trim()
