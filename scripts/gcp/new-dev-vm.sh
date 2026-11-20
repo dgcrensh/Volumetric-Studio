@@ -85,7 +85,7 @@ while [ $# -gt 0 ]; do
     --allow-rdp-from) need_value "$@"; allow_rdp_from="$2"; shift ;;
     --windows-user) need_value "$@"; windows_user="$2"; shift ;;
     --dry-run) dry_run=1 ;;
-    -h|--help) sed -n '2,43p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument '$1' (see --help)" ;;
   esac
   shift
