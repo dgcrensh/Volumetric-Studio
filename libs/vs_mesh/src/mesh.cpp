@@ -65,7 +65,7 @@ Diagnostics Mesh::check(const core::SubjectRef& subject) const {
 }
 
 validate::MeshView view(const Mesh& mesh) {
-  return validate::MeshView{mesh.positions, mesh.indices};
+  return validate::MeshView{mesh.positions, mesh.indices, {}};
 }
 
 double double_area(const Mesh& mesh, std::size_t triangle) {

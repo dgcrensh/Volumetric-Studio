@@ -7,6 +7,7 @@
 #include <string>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -23,6 +24,7 @@
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <NCollection_List.hxx>
 #include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
@@ -61,11 +63,43 @@ TopoDS_Shape unified(const TopoDS_Shape& shape) {
   return shape;
 }
 
+// The shape with its faces split along the outlines of `faces` lying on
+// them (a general fuse of the shape with the faces, keeping only the
+// shape's pieces).
+core::Result<TopoDS_Shape> imprinted(const TopoDS_Shape& shape, std::span<const Face> faces,
+                                     double tolerance) {
+  NCollection_List<TopoDS_Shape> arguments, tools;
+  arguments.Append(shape);
+  for (const Face& f : faces) {
+    if (!f.is_empty()) tools.Append(topo(f));
+  }
+  if (tools.IsEmpty()) return shape;
+  BRepAlgoAPI_Splitter splitter;
+  splitter.SetArguments(arguments);
+  splitter.SetTools(tools);
+  splitter.SetFuzzyValue(tolerance);
+  splitter.SetNonDestructive(true);
+  splitter.Build();
+  if (!splitter.IsDone() || splitter.HasErrors()) {
+    return failed("A connection surface's patch couldn't be imprinted on the solid");
+  }
+  const TopoDS_Shape out = splitter.Shape();
+  if (out.IsNull()) return failed("Imprinting a patch left nothing");
+  // The splitter wraps its result in a compound; keep the solid inside.
+  TopExp_Explorer it(out, TopAbs_SOLID);
+  if (it.More()) {
+    const TopoDS_Shape solid = it.Current();
+    it.Next();
+    if (!it.More()) return solid;
+  }
+  return out;
+}
+
 }  // namespace
 
 core::Result<Tessellation> tessellate(const Shape& shape, const TessellationParams& params,
-                                      const core::ProductSettings& settings) {
-  (void)settings;
+                                      const core::ProductSettings& settings,
+                                      std::span<const Face> imprints) {
   if (!(std::isfinite(params.deflection) && params.deflection > 0 &&
         std::isfinite(params.angle) && params.angle > 0)) {
     return Diagnostic::error("kernel.tessellate.params",
@@ -74,7 +108,13 @@ core::Result<Tessellation> tessellate(const Shape& shape, const TessellationPara
   if (shape.is_empty()) return Diagnostic::error("kernel.tessellate.empty", "The shape is empty");
   return detail::guarded<core::Result<Tessellation>>(
       "kernel.tessellate.failed", "Tessellation", [&]() -> core::Result<Tessellation> {
-        BRepBuilderAPI_Copy copy(unified(topo(shape)), true, false);
+        TopoDS_Shape base = unified(topo(shape));
+        if (!imprints.empty()) {
+          auto split = imprinted(base, imprints, settings.linear_tolerance_mm);
+          if (!split) return split.error();
+          base = *split;
+        }
+        BRepBuilderAPI_Copy copy(base, true, false);
         const TopoDS_Shape s = copy.Shape();
 
         ShapeMap vertex_map, edge_map, face_map;
@@ -153,6 +193,7 @@ core::Result<Tessellation> tessellate(const Shape& shape, const TessellationPara
           TessFace tf;
           tf.face = detail::wrap<Face>(f);
           tf.plane = face_plane(tf.face);
+          if (!tf.plane) tf.cylinder = face_cylinder(tf.face);
           tf.uv_outward = f.Orientation() != TopAbs_REVERSED;
 
           TopLoc_Location loc;
@@ -313,6 +354,11 @@ dvec2 edge_uv(const Face& face, const Edge& oriented, double t) {
   }
   const gp_Pnt2d p = c->Value(t);
   return {p.X(), p.Y()};
+}
+
+dvec3 face_point(const Face& face, const dvec2& uv) {
+  const BRepAdaptor_Surface s(TopoDS::Face(topo(face)), false);
+  return from_occ(s.Value(uv.x, uv.y));
 }
 
 }  // namespace vs::kernel

@@ -12,7 +12,9 @@
 // faces never meet and nothing is welded across them.
 //
 // The outline is the built patch's boundary (model::ConnectionBuild::patch,
-// read with kernel::face_loops()) in the surface's frame. A bolted flange
+// read with kernel::face_loops()) in the surface's frame; a cylindrical
+// patch's (L2) is its unrolled rectangle, or a band's two ends, from
+// ConnectionBuild::cylinder. A bolted flange
 // adds each bolt's ISO 273 clearance hole as a circular hole loop, because
 // the holes go through the faces both volumes share. Spacing:
 // ConnectionSurface::seam.spacing when positive, else derive_spacing().

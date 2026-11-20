@@ -1,6 +1,7 @@
 #include "vs/eval/engine.hpp"
 
 #include <algorithm>
+#include <unordered_set>
 #include <utility>
 
 #include <fmt/format.h>
@@ -8,6 +9,7 @@
 #include "vs/eval/measure.hpp"
 #include "vs/core/version.hpp"
 #include "vs/mesh/io.hpp"
+#include "vs/mesh/seam_library.hpp"
 #include "vs/model/check.hpp"
 #include "vs/model/dependency.hpp"
 #include "vs/validate/containment.hpp"
@@ -46,6 +48,38 @@ Hash256 Evaluation::output_hash() const {
 }
 
 namespace {
+
+// L2: per triangle of a volume's mesh, the containment slack its seams
+// allow. Triangles touching a curved seam's vertex are the seam's chords of
+// the shared surface, or meet them, so their centroids may stray outside by
+// the seam's deflection plus the boundary tessellation's; nothing else gets
+// any. Empty when no curved surface joins the volume.
+std::vector<float> curved_seam_slack(const model::Document& document,
+                                     const model::DocumentBuild& layout, const Id& volume,
+                                     const mesh::Mesh& m, const core::ProductSettings& settings) {
+  bool curved = false;
+  for (std::size_t k = 0; k < document.connections.size(); ++k) {
+    if (document.connections[k].joins(volume) && k < layout.connections.size() &&
+        layout.connections[k].ok && layout.connections[k].cylinder) {
+      curved = true;
+    }
+  }
+  if (!curved) return {};
+  std::unordered_set<Id> ids;
+  for (const mesh::Seam& s : mesh::build_seams(document, layout, settings, volume).seams) {
+    if (!s.curved()) continue;
+    for (const mesh::SeamVertex& v : s.vertices) ids.insert(v.id);
+  }
+  std::vector<float> slack(m.triangle_count(), 0.0f);
+  for (std::size_t t = 0; t < slack.size(); ++t) {
+    for (const std::uint32_t v : m.triangle(t)) {
+      if (!m.seam_vertices[v].is_null() && ids.contains(m.seam_vertices[v])) {
+        slack[t] = static_cast<float>(2.0 * mesh::kSeamDeflection);
+      }
+    }
+  }
+  return slack;
+}
 
 // The document with each link's value written into its target: a layout
 // variable takes it as its expression, a parameter as its value.
@@ -378,8 +412,11 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         if (!c.solid.is_empty()) {
           contained = validate::check_containment(boundary, c.solid, self, settings_);
         } else if (c.mesh) {
+          const std::vector<float> slack =
+              curved_seam_slack(ev.document, layout, v.id, *c.mesh, settings_);
           contained = validate::check_containment(
-              boundary, validate::MeshView{c.mesh->positions, c.mesh->indices}, self, settings_,
+              boundary, validate::MeshView{c.mesh->positions, c.mesh->indices, slack}, self,
+              settings_,
               [this](std::size_t count, const std::function<void(std::size_t)>& task) {
                 pool_.run(count, task);
               });

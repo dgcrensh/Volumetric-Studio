@@ -216,6 +216,14 @@ class GraphBuilder {
       const std::size_t n = *find(NodeKind::ConnectionSurface, s.id);
       if (const auto* sp = std::get_if<SketchPatch>(&s.geometry)) {
         uses_layout(n, sp->sketch);
+      } else if (const auto* cp = std::get_if<CylinderPatch>(&s.geometry)) {
+        if (const auto* f = std::get_if<feature::FeatureRef>(&cp->axis)) uses_layout(n, f->feature);
+        if (const auto* e = std::get_if<feature::SketchEntityRef>(&cp->axis)) {
+          uses_layout(n, e->sketch);
+        }
+        for (const Param* p : {&cp->radius, &cp->start_angle, &cp->sweep, &cp->start, &cp->length}) {
+          uses_param(n, *p);
+        }
       } else {
         const auto& dp = std::get<DatumPatch>(s.geometry);
         uses_plane(n, dp.plane);

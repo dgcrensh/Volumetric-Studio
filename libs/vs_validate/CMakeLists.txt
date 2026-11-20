@@ -20,6 +20,8 @@ vs_add_library_tests(vs_validate
   SOURCES
     tests/fixtures.cpp
     tests/test_containment.cpp
+    tests/test_curved.cpp
+    ../vs_model/tests/curved.cpp
     tests/test_fixtures.cpp
     tests/test_layout.cpp
     tests/test_module.cpp
@@ -27,6 +29,8 @@ vs_add_library_tests(vs_validate
     tests/test_registry.cpp)
 
 if(VS_BUILD_TESTS)
+  target_include_directories(vs_validate_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../vs_model/tests)
   target_compile_definitions(vs_validate_tests PRIVATE
     VS_VALIDATE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 endif()

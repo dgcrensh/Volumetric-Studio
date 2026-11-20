@@ -61,6 +61,10 @@ std::string geometry_text(const Document& doc, const ConnectionSurface& c) {
   if (const auto* sp = std::get_if<SketchPatch>(&c.geometry)) {
     return fmt::format("sketch '{}'", doc.layout.label(sp->sketch));
   }
+  if (const auto* cp = std::get_if<CylinderPatch>(&c.geometry)) {
+    return fmt::format("cylinder of radius {}, sweep {} rad, length {}", param_text(cp->radius),
+                       param_text(cp->sweep), param_text(cp->length));
+  }
   const auto& dp = std::get<DatumPatch>(c.geometry);
   return fmt::format("{} x {} rectangle on a plane", param_text(dp.width), param_text(dp.height));
 }

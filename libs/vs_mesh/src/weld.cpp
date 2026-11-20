@@ -154,10 +154,10 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
     const bool is_fill = !is_seam && std::binary_search(fills[s].begin(), fills[s].end(), corners);
     if (!is_seam && !is_fill) continue;
     const Seam& seam = lib.seams[s];
-    const dvec2& a = seam.vertices[seam_index[tri[0]]].uv;
-    const dvec2& b = seam.vertices[seam_index[tri[1]]].uv;
-    const dvec2& c = seam.vertices[seam_index[tri[2]]].uv;
-    const double o = core::cross(b - a, c - a);
+    // In uv, unwrapped across a band's cut (L2).
+    const std::array<dvec2, 3> q =
+        seam.triangle_uv({seam_index[tri[0]], seam_index[tri[1]], seam_index[tri[2]]});
+    const double o = core::cross(q[1] - q[0], q[2] - q[0]);
     tri_side[t] = o > 0 ? 1 : (o < 0 ? -1 : 0);
     if (is_fill) {
       tri_fill[t] = true;

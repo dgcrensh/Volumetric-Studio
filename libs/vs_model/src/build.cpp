@@ -36,6 +36,22 @@ std::string_view to_string(VolumeStatus status) {
   return "stale";
 }
 
+bool CylinderBuild::band() const { return sweep >= 2.0 * std::numbers::pi; }
+
+SketchPlane cylinder_frame(const kernel::Axis& axis) {
+  const core::dvec3 n = core::normalize(axis.direction);
+  // The principal axis least aligned with the direction (the first such,
+  // in x, y, z order), made perpendicular to it.
+  const std::array<core::dvec3, 3> principal{core::dvec3{1, 0, 0}, core::dvec3{0, 1, 0},
+                                             core::dvec3{0, 0, 1}};
+  std::size_t best = 0;
+  for (std::size_t i = 1; i < 3; ++i) {
+    if (std::abs(core::dot(principal[i], n)) < std::abs(core::dot(principal[best], n))) best = i;
+  }
+  const core::dvec3 x = core::normalize(principal[best] - n * core::dot(principal[best], n));
+  return SketchPlane{axis.origin, x, core::cross(n, x)};
+}
+
 const VolumeBuild* DocumentBuild::find_volume(const Id& volume) const {
   for (const auto& v : volumes) {
     if (v.volume == volume) return &v;
@@ -201,6 +217,41 @@ class DocumentBuilder {
                              face.name));
   }
 
+  Result<kernel::Axis> axis_of(const feature::AxisRef& ref, const SubjectRef& by) const {
+    if (const auto* p = std::get_if<feature::PrincipalAxis>(&ref)) {
+      switch (*p) {
+        case feature::PrincipalAxis::X: return kernel::Axis{{0, 0, 0}, {1, 0, 0}};
+        case feature::PrincipalAxis::Y: return kernel::Axis{{0, 0, 0}, {0, 1, 0}};
+        case feature::PrincipalAxis::Z: return kernel::Axis{{0, 0, 0}, {0, 0, 1}};
+      }
+    }
+    if (const auto* f = std::get_if<feature::FeatureRef>(&ref)) {
+      auto r = layout_result(f->feature, by, "model.connection.axis_failed");
+      if (!r) return r.error();
+      if (!(*r)->axis) {
+        return error(by, "model.connection.axis_failed",
+                     fmt::format("'{}' is not an axis", doc_.layout.subject(f->feature).label));
+      }
+      return *(*r)->axis;
+    }
+    const auto& e = std::get<feature::SketchEntityRef>(ref);
+    auto r = layout_result(e.sketch, by, "model.connection.axis_failed");
+    if (!r) return r.error();
+    const sketch::Sketch* sk = (*r)->sketch.get();
+    const auto line = sk ? sketch::line_geometry(*sk, e.entity) : std::nullopt;
+    if (!line) {
+      return error(by, "model.connection.axis_failed",
+                   fmt::format("the sketch line it uses as an axis isn't a line in '{}'",
+                               doc_.layout.subject(e.sketch).label));
+    }
+    const dvec3 a = sk->plane().to_model(line->start);
+    const dvec3 b = sk->plane().to_model(line->end);
+    if (core::length(b - a) < settings_.min_feature_size_mm()) {
+      return error(by, "model.connection.axis_failed", "its axis line is too short");
+    }
+    return kernel::Axis{a, core::normalize(b - a)};
+  }
+
   // --- boundaries ------------------------------------------------------------------
 
   Solid raw_boundary(const Volume& v, Diagnostics& diags) const {
@@ -363,6 +414,36 @@ class DocumentBuilder {
       cb.patch = *face;
       cb.frame = sk->plane();
       cb.area = profiles->front().area();
+    } else if (const auto* cp = std::get_if<CylinderPatch>(&c.geometry)) {
+      auto axis = axis_of(cp->axis, by);
+      if (!axis) return fail(axis.error());
+      auto r = eval(cp->radius, by, "radius");
+      auto a0 = eval(cp->start_angle, by, "start angle");
+      auto sweep = eval(cp->sweep, by, "sweep");
+      auto t0 = eval(cp->start, by, "start along the axis");
+      auto len = eval(cp->length, by, "length");
+      for (const auto* x : {&r, &a0, &sweep, &t0, &len}) {
+        if (!*x) return fail(x->error());
+      }
+      constexpr double kTurn = 2.0 * std::numbers::pi;
+      const double min = settings_.min_feature_size_mm();
+      if (*r < min || *len < min || !(*sweep > 0.0) || *sweep * *r < min ||
+          *sweep > kTurn + 1e-9) {
+        return fail(error(by, "model.connection.bad_size",
+                          fmt::format("its cylinder has radius {} mm, sweep {} rad and length {} "
+                                      "mm; the radius, the arc and the length must be at least {} "
+                                      "mm, and the sweep at most a full turn",
+                                      *r, *sweep, *len, min)));
+      }
+      CylinderBuild cyl{*r, *a0, std::abs(*sweep - kTurn) <= 1e-9 ? kTurn : *sweep, *t0, *len};
+      cb.frame = cylinder_frame(*axis);
+      auto face = kernel::make_cylinder_face({cb.frame.origin, cb.frame.normal()}, cb.frame.x_axis,
+                                             cyl.radius, cyl.start_angle, cyl.sweep, cyl.start,
+                                             cyl.length, settings_);
+      if (!face) return fail(about(by, face.error()));
+      cb.patch = *face;
+      cb.cylinder = cyl;
+      cb.area = cyl.radius * cyl.sweep * cyl.length;
     } else {
       const auto& dp = std::get<DatumPatch>(c.geometry);
       auto frame = plane_of(dp.plane, by);
@@ -399,6 +480,11 @@ class DocumentBuilder {
       cb.gap = *gap;
     }
     if (const auto* b = std::get_if<BoltedFlangeParams>(&c.params)) {
+      if (cb.cylinder) {
+        return fail(error(by, "model.connection.curved_flange",
+                          "a bolted flange must be planar; use a sketch profile or a datum "
+                          "rectangle, or make the surface bonded"));
+      }
       auto wall = eval(b->min_wall, by, "minimum wall");
       if (!wall) return fail(wall.error());
       cb.min_wall = *wall;
@@ -569,8 +655,16 @@ class DocumentBuilder {
       const ConnectionBuild& cb = in_.connections[k];
       feature::ExternalInput in;
       in.subject = doc_.connection_subject(c.id);
-      in.result.plane = cb.frame;
-      in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
+      if (cb.cylinder) {
+        const kernel::Axis axis{cb.frame.origin, cb.frame.normal()};
+        in.result.axis = axis;
+        in.result.faces.push_back(
+            {"patch", {cb.frame.origin, cb.frame.normal()},
+             kernel::Cylinder{axis, cb.cylinder->radius, /*inward=*/false}});
+      } else {
+        in.result.plane = cb.frame;
+        in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
+      }
       inputs.references.push_back(std::move(in));
     }
     for (const auto& [name, value] : layout.parameters) inputs.values.emplace(name, value);

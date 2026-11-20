@@ -1,6 +1,7 @@
 #pragma once
 
-// Seams (spec, "Seam conformity"): how a planar connection surface's
+// Seams (spec, "Seam conformity"): how a connection surface's (planar, or
+// since L2 cylindrical: see SeamOutline)
 // outline is divided into edges and vertices, and how its interior is
 // triangulated, once, for every volume that touches it.
 //
@@ -44,11 +45,13 @@
 //   mesh.seam.outline           no outer loop, or an empty loop
 //   mesh.triangulate.*          passed through (triangulate.hpp)
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "vs/core/diagnostic.hpp"
@@ -98,11 +101,27 @@ struct OutlineLoop {
   friend bool operator==(const OutlineLoop&, const OutlineLoop&) = default;
 };
 
-// A planar surface's exact outline: loops[0] is the outer boundary, the
-// rest are holes, all in `frame`'s 2D coordinates.
+// A surface's exact outline. For a plane: loops[0] is the outer boundary,
+// the rest are holes, all in `frame`'s 2D coordinates.
+//
+// Cylinders (L2): `radius` > 0 is a cylinder of that radius round the
+// frame's normal through its origin, and the 2D coordinates are unrolled:
+// x = radius·θ (θ counter-clockwise about the normal from the frame's x
+// axis), y along the normal. The outline is then a rectangle of lines in
+// those coordinates (lines along x are arcs round the axis, lines along y
+// run along it), counter-clockwise: one loop. A band (a full turn, `band`)
+// has two loops instead, each one line along x a full turn long: loops[0]
+// at the lower y running +x, loops[1] at the upper y running -x.
 struct SeamOutline {
+  SeamOutline() = default;
+  SeamOutline(const sketch::SketchPlane& frame_, std::vector<OutlineLoop> loops_,
+              double radius_ = 0.0, bool band_ = false)
+      : frame(frame_), loops(std::move(loops_)), radius(radius_), band(band_) {}
+
   sketch::SketchPlane frame;
   std::vector<OutlineLoop> loops;
+  double radius = 0.0;  // 0: the frame's plane
+  bool band = false;
   friend bool operator==(const SeamOutline&, const SeamOutline&) = default;
 };
 
@@ -135,7 +154,9 @@ struct Seam {
   std::vector<SeamVertex> vertices;  // outline vertices loop by loop, then interior ones
   std::size_t outline_vertex_count = 0;
   std::vector<SeamLoop> loops;   // [0] outer (counter-clockwise), then holes (clockwise)
-  std::vector<Triangle> triangles;  // counter-clockwise about the normal
+  // Counter-clockwise about the normal (in uv): for a cylinder, facing away
+  // from the axis.
+  std::vector<Triangle> triangles;
   // hole_fills[h - 1] covers hole loops[h] with triangles over its own
   // vertices only (counter-clockwise about the normal): what a volume
   // whose face has no hole there uses to close it (M8). Two volumes that
@@ -143,7 +164,32 @@ struct Seam {
   // it does the seam's own triangles.
   std::vector<std::vector<Triangle>> hole_fills;
 
+  // Cylinders (L2; see SeamOutline). The unrolled x of every point lies
+  // within π·radius of radius·centre_angle; for a band, in
+  // [x0, x0 + 2π·radius), so vertices on the band's cut take the lower x.
+  double radius = 0.0;
+  bool band = false;
+  double centre_angle = 0.0;
+
+  [[nodiscard]] bool curved() const { return radius > 0.0; }
+  // A plane's normal; for a cylinder, its axis direction.
   [[nodiscard]] dvec3 normal() const { return frame.normal(); }
+  // The surface's point at `uv`, and the `uv` of the surface point nearest
+  // `p` (frame coordinates for a plane, unrolled for a cylinder).
+  [[nodiscard]] dvec3 to_model(const dvec2& uv) const;
+  [[nodiscard]] dvec2 to_uv(const dvec3& p) const;
+  // How far `p` lies off the surface: along the normal for a plane, away
+  // from the axis for a cylinder (negative inside it).
+  [[nodiscard]] double offset(const dvec3& p) const;
+  // The surface's unit normal at (or nearest) `p`: the plane's normal, or
+  // away from a cylinder's axis.
+  [[nodiscard]] dvec3 normal_at(const dvec3& p) const;
+  // A triangle's corners in uv, unwrapped across a band's cut so the
+  // triangle is whole (on a plane, simply the vertices' uv).
+  [[nodiscard]] std::array<dvec2, 3> triangle_uv(const Triangle& t) const;
+  // `triangles`, facing along the surface's normal (`along`; for a
+  // cylinder, away from the axis) or against it.
+  [[nodiscard]] std::vector<Triangle> oriented_triangles(bool along) const;
   // The index of the vertex with this id, if it is one of this seam's.
   [[nodiscard]] std::optional<std::uint32_t> find(const core::Id& vertex) const;
   // `triangles`, wound counter-clockwise about `normal` (turned when
@@ -161,8 +207,16 @@ struct Seam {
   std::unordered_map<core::Id, std::uint32_t> by_id_;
 };
 
+// The most a curved seam's chords may stray from its surface with a
+// derived spacing, mm (the boundary tessellation's deflection).
+inline constexpr double kSeamDeflection = 0.01;
+
 // A spacing for a surface that doesn't set one: a sixteenth of the outer
-// loop's bounding-box diagonal, and at least the minimum feature size.
+// loop's bounding-box diagonal, and at least the minimum feature size. On
+// a cylinder (L2) the diagonal is the unrolled outline's, and the spacing
+// is at most sqrt(8·radius·kSeamDeflection) / 1.5, so its chords (which
+// run up to about 1.5 spacings round the axis, by the outline) stay within
+// kSeamDeflection of the surface (but at least the minimum feature size).
 double derive_spacing(const SeamOutline& outline, const core::ProductSettings& settings);
 
 // Divides and triangulates the outline. `surface` names the connection

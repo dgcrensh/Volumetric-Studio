@@ -248,7 +248,7 @@ The kernel interface stays small because procedural contents never touch B-rep. 
 - [x] Does OCCT's tolerance model fit a fixed ±1,000 mm box at 1e-6 mm? Yes (M1, decision 0001).
 - [x] Final working-space size and tolerance values: ±1,000 mm and 1e-6 mm (M1, decision 0001).
 - [x] Full list of connection surface types and their parameters for the MVP: bonded; clearance (gap); bolted flange (hole pattern, thread size, minimum wall) (M5, decision 0005).
-- [ ] Should a curved connection surface's seam definition be authored, or derived automatically? Deferred: the MVP has planar surfaces with derived seams; revisit in L2 (curved connection surfaces).
+- [x] Should a curved connection surface's seam definition be authored, or derived automatically? Derived, with the spacing authored (L2, decision 0020).
 - [x] Can the tessellator be made to respect fixed seam edges on B-rep faces? Yes (M8, decision 0008).
 - [x] Should field-to-mesh conversion be a single algorithm (e.g. dual contouring) or chosen per node? A single one: surface nets against the seams, behind one node, so dual contouring can replace it later (M11, decision 0011).
 - [x] Do procedural graphs need user-defined nodes (scripting) in the MVP?

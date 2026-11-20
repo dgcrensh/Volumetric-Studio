@@ -9,6 +9,7 @@
 //
 // tessellate() first merges faces and edges lying on the same surface or
 // curve (so a face split by a boolean along a line comes back whole),
+// splits faces along the outlines of any `imprints` lying on them (L2),
 // copies the shape (meshing attaches triangulations to the shape, and
 // handles are immutable and may be shared between threads), then runs
 // BRepMesh with `params`. The result describes:
@@ -33,11 +34,13 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "vs/core/settings.hpp"
 #include "vs/core/vec.hpp"
 #include "vs/kernel/primitives.hpp"
+#include "vs/kernel/queries.hpp"
 #include "vs/kernel/shape.hpp"
 
 namespace vs::kernel {
@@ -83,6 +86,9 @@ struct TessFace {
   Face face;
   // Planar faces: the plane, normal out of the material.
   std::optional<Plane> plane;
+  // Cylindrical faces (L2): the cylinder, `inward` when the normal out of
+  // the material points towards the axis.
+  std::optional<Cylinder> cylinder;
   std::vector<std::vector<TessEdgeUse>> wires;  // outer first
   // BRepMesh's triangulation of the face.
   std::vector<dvec3> points;
@@ -104,8 +110,13 @@ struct Tessellation {
   std::vector<TessFace> faces;
 };
 
+// `imprints` (L2): faces lying on faces of `shape`, whose outlines split
+// those faces before meshing, so a curved connection surface's patch is a
+// face (or several) of its own. A face that doesn't lie on the shape
+// changes nothing.
 core::Result<Tessellation> tessellate(const Shape& shape, const TessellationParams& params,
-                                      const core::ProductSettings& settings);
+                                      const core::ProductSettings& settings,
+                                      std::span<const Face> imprints = {});
 
 // The parameter of the point of `edge` nearest `point`, when that point is
 // within `tolerance` of it and within the edge's ends; nullopt otherwise.
@@ -119,5 +130,9 @@ dvec3 edge_point(const Edge& edge, double t);
 // TessEdgeUse) on `face`. A closed surface's seam has a different (u, v)
 // for each of its two uses.
 dvec2 edge_uv(const Face& face, const Edge& oriented, double t);
+
+// The point of `face`'s surface at parameters `uv` (L2: points a caller
+// adds inside a face it re-triangulates).
+dvec3 face_point(const Face& face, const dvec2& uv);
 
 }  // namespace vs::kernel

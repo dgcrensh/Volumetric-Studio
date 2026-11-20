@@ -318,7 +318,9 @@ std::vector<Property> inspect(const eval::Evaluation& evaluation, const Selectio
       if (s->volumes.size() == 1) joins += ", outside";
       add("Connection surface", "Joins", joins);
       add("Connection surface", "Patch",
-          std::holds_alternative<model::SketchPatch>(s->geometry) ? "sketch profile" : "datum rectangle");
+          std::holds_alternative<model::SketchPatch>(s->geometry)     ? "sketch profile"
+          : std::holds_alternative<model::CylinderPatch>(s->geometry) ? "cylinder"
+                                                                      : "datum rectangle");
       if (cb != nullptr && cb->ok) add("Connection surface", "Area", number(cb->area) + " mm²");
       add("Connection surface", "Seam spacing",
           s->seam.spacing > 0 ? number(s->seam.spacing) + " mm" : "derived");

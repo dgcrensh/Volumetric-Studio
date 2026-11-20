@@ -34,7 +34,10 @@
 //      replaced by the seam's own triangulation plus its hole fills (the
 //      contents have no bolt holes), and the rim they leave is stitched to
 //      the seam's outer loop by a strip that walks both loops together by
-//      arc length;
+//      arc length. On a curved seam (L2) "on the patch" is along the
+//      surface's normal at each point and inside its unrolled outline; a
+//      band's removal leaves two rims, each stitched to the seam loop at
+//      its height;
 //   4. containment: vertices (never seam vertices) move inward, against
 //      the boundary's gradient, until every vertex and every triangle's
 //      centroid is inside the boundary by the inset (on it, for triangles

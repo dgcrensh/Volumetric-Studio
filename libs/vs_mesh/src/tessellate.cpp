@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <set>
 #include <string>
@@ -105,6 +106,11 @@ struct SeamInfo {
   std::vector<std::uint32_t> outline;        // every outline vertex index
   bool reported = false;                     // uncovered already said
   bool placed = false;
+  // Curved seams (L2): the unrolled span, and the faces found to be the
+  // imprinted patch: their total area and which way they face.
+  double x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+  double piece_area = 0;
+  int pieces_along = 0, pieces_against = 0;
 };
 
 struct PolyPoint {
@@ -131,6 +137,20 @@ class Tessellator {
       }
       // Arcs bulge past their chords by less than a piece's length.
       info.box = info.box.expanded(s->spacing);
+      if (s->curved()) {
+        info.x0 = info.y0 = std::numeric_limits<double>::infinity();
+        info.x1 = info.y1 = -std::numeric_limits<double>::infinity();
+        for (const OutlineLoop& loop : s->outline.loops) {
+          for (const OutlineSegment& seg : loop.segments) {
+            for (const dvec2& p : {seg.start, seg.end}) {
+              info.x0 = std::min(info.x0, p.x);
+              info.x1 = std::max(info.x1, p.x);
+              info.y0 = std::min(info.y0, p.y);
+              info.y1 = std::max(info.y1, p.y);
+            }
+          }
+        }
+      }
       seams_.push_back(std::move(info));
     }
   }
@@ -143,6 +163,9 @@ class Tessellator {
     bind_vertices();
     divide_edges();
     for (std::uint32_t f = 0; f < t_.faces.size(); ++f) mesh_face(f);
+    for (std::uint32_t s = 0; s < seams_.size(); ++s) {
+      if (seams_[s].seam->curved()) place_curved(s);
+    }
     for (SeamInfo& s : seams_) {
       if (s.placed) {
         out_.seams.push_back(s.seam->surface);
@@ -201,15 +224,20 @@ class Tessellator {
   void bind_vertices() {
     for (std::uint32_t s = 0; s < seams_.size(); ++s) {
       const Seam& seam = *seams_[s].seam;
-      const dvec3 n = seam.normal();
+      // Distances to seam vertices: in the plane, or in space on a cylinder
+      // (whose unrolled coordinates jump across a band's cut).
+      const auto dist = [&](std::uint32_t j, const dvec3& p, const dvec2& q) {
+        return seam.curved() ? core::length(seam.vertices[j].position - p)
+                             : core::length(seam.vertices[j].uv - q);
+      };
       for (std::uint32_t v = 0; v < t_.vertices.size(); ++v) {
         const dvec3& p = t_.vertices[v];
-        if (std::abs(core::dot(p - seam.frame.origin, n)) > tol_) continue;
-        const dvec2 q = project(seam.frame, p);
+        if (std::abs(seam.offset(p)) > tol_) continue;
+        const dvec2 q = seam.to_uv(p);
         if (!seams_[s].box.expanded(tol_).contains(q)) continue;
         std::optional<std::uint32_t> hit;
         for (const std::uint32_t j : seams_[s].outline) {
-          if (core::length(seam.vertices[j].uv - q) <= tol_) {
+          if (dist(j, p, q) <= tol_) {
             hit = j;
             break;
           }
@@ -221,7 +249,7 @@ class Tessellator {
               if (outline_distance(seg, q) > tol_) continue;
               double best = std::numeric_limits<double>::infinity();
               for (const std::uint32_t j : seam.loops[l].vertices) {
-                const double d = core::length(seam.vertices[j].uv - q);
+                const double d = dist(j, p, q);
                 if (d < best) {
                   best = d;
                   hit = j;
@@ -272,11 +300,10 @@ class Tessellator {
   void divide_on_seam(std::uint32_t e, std::uint32_t s) {
     const TessEdge& te = t_.edges[e];
     const Seam& seam = *seams_[s].seam;
-    const dvec3 n = seam.normal();
     Box2 box;
     for (const dvec3& p : te.points) {
-      if (std::abs(core::dot(p - seam.frame.origin, n)) > tol_) return;
-      box.expand(project(seam.frame, p));
+      if (std::abs(seam.offset(p)) > tol_) return;
+      box.expand(seam.to_uv(p));
     }
     // The edge may bulge between its points (an arc): widen by its chord sag.
     double longest = 0;
@@ -292,12 +319,14 @@ class Tessellator {
     // Where each outline vertex lies on the edge (ends included).
     std::unordered_map<std::uint32_t, std::vector<double>> on_edge;
     std::vector<PolyPoint> hits;
+    // Ends bound to this seam's vertices count wherever those lie (a
+    // snapped end may sit outside the edge's box).
+    if (nodes_[first_node].seam == s) on_edge[nodes_[first_node].seam_vertex].push_back(first);
+    if (nodes_[last_node].seam == s) on_edge[nodes_[last_node].seam_vertex].push_back(last);
     for (const std::uint32_t j : seams_[s].outline) {
       const SeamVertex& sv = seam.vertices[j];
       if (!box.contains(sv.uv)) continue;
       const std::uint32_t node = seam_node(s, j);
-      if (node == first_node) on_edge[j].push_back(first);
-      if (node == last_node) on_edge[j].push_back(last);
       if (node == first_node || node == last_node) continue;
       const std::optional<double> at = kernel::edge_parameter(te.edge, sv.position, tol_);
       if (!at) continue;
@@ -325,7 +354,7 @@ class Tessellator {
         const double frac = (static_cast<double>(i - start) + 0.5) / static_cast<double>(end - start);
         const dvec2 mid = seam.outline.loops[l].segments[g].point(frac);
         const std::optional<double> tm =
-            kernel::edge_parameter(te.edge, seam.frame.to_model(mid), tol_);
+            kernel::edge_parameter(te.edge, seam.to_model(mid), tol_);
         if (!tm) continue;
         for (const double ta : a->second) {
           for (const double tb : b->second) {
@@ -374,10 +403,12 @@ class Tessellator {
   // 3 and 4. One face.
   void mesh_face(std::uint32_t fi) {
     const TessFace& f = t_.faces[fi];
+    if (f.cylinder && patch_piece(f)) return;
     std::vector<std::uint32_t> candidates;
     if (f.plane) {
       for (std::uint32_t s = 0; s < seams_.size(); ++s) {
         const Seam& seam = *seams_[s].seam;
+        if (seam.curved()) continue;
         if (std::abs(core::dot(f.plane->normal, seam.normal())) < 1.0 - 1e-9) continue;
         if (std::abs(core::dot(f.plane->origin - seam.frame.origin, seam.normal())) > tol_) continue;
         candidates.push_back(s);
@@ -392,6 +423,72 @@ class Tessellator {
       return;
     }
     if (!remesh_face(f, candidates)) keep_face(f);
+  }
+
+  // The curved seam whose cylinder `c` lies on, if any.
+  std::optional<std::uint32_t> curved_seam_of(const kernel::Cylinder& c) const {
+    for (std::uint32_t s = 0; s < seams_.size(); ++s) {
+      const Seam& seam = *seams_[s].seam;
+      if (!seam.curved() || std::abs(c.radius - seam.radius) > tol_) continue;
+      const dvec3 n = seam.normal();
+      if (std::abs(std::abs(core::dot(core::normalize(c.axis.direction), n)) - 1.0) > 1e-9) continue;
+      const dvec3 d = c.axis.origin - seam.frame.origin;
+      if (core::length(d - n * core::dot(d, n)) > tol_) continue;
+      return s;
+    }
+    return std::nullopt;
+  }
+
+  // A cylindrical face lying on a curved seam's cylinder and wholly inside
+  // its patch (L2): a piece of the imprinted patch. Its triangles give way
+  // to the seam's own (place_curved()). Returns false for any other face.
+  bool patch_piece(const TessFace& f) {
+    const kernel::Cylinder& c = *f.cylinder;
+    for (std::uint32_t s = 0; s < seams_.size(); ++s) {
+      SeamInfo& info = seams_[s];
+      const Seam& seam = *info.seam;
+      if (!seam.curved()) continue;
+      const dvec3 n = seam.normal();
+      if (std::abs(c.radius - seam.radius) > tol_) continue;
+      if (std::abs(std::abs(core::dot(core::normalize(c.axis.direction), n)) - 1.0) > 1e-9) continue;
+      const dvec3 d = c.axis.origin - seam.frame.origin;
+      if (core::length(d - n * core::dot(d, n)) > tol_) continue;
+      bool inside = !f.points.empty();
+      for (const dvec3& p : f.points) {
+        const dvec2 q = seam.to_uv(p);
+        if (q.y < info.y0 - tol_ || q.y > info.y1 + tol_ ||
+            (!seam.band && (q.x < info.x0 - tol_ || q.x > info.x1 + tol_))) {
+          inside = false;
+          break;
+        }
+      }
+      if (!inside) continue;
+      info.piece_area += kernel::surface_area(f.face);
+      (c.inward ? info.pieces_against : info.pieces_along) += 1;
+      return true;
+    }
+    return false;
+  }
+
+  // The seam's triangles in place of the patch's pieces, when they cover
+  // all of it.
+  void place_curved(std::uint32_t s) {
+    SeamInfo& info = seams_[s];
+    const Seam& seam = *info.seam;
+    if (info.pieces_along + info.pieces_against == 0) return;  // reported by run()
+    const double want = (info.x1 - info.x0) * (info.y1 - info.y0);  // unrolled: exact
+    if (std::abs(info.piece_area - want) > 1e-4 * want) {
+      uncovered(info, "The volume's faces cover only part of the surface's patch");
+      return;
+    }
+    if (info.pieces_along > 0 && info.pieces_against > 0) {
+      uncovered(info, "The volume lies on both sides of the surface's patch");
+      return;
+    }
+    for (const Triangle& tri : seam.oriented_triangles(info.pieces_along > 0)) {
+      triangles_.push_back({seam_node(s, tri[0]), seam_node(s, tri[1]), seam_node(s, tri[2])});
+    }
+    info.placed = true;
   }
 
   // BRepMesh's triangles, joined to the shared vertex and edge points.
@@ -565,6 +662,36 @@ class Tessellator {
         pts.push_back(q);
         point_node.push_back(add_node(f.points[p]));
       }
+      // What an imprinted patch left of a cylinder's face (L2). BRepMesh
+      // puts no points inside a cylinder, so its boundary, divided finely
+      // now along the patch, would be joined by long chords straight
+      // across the face; a triangular lattice at the seam's spacing keeps
+      // the triangles as close to the surface as the seam's.
+      if (f.cylinder) {
+        if (const std::optional<std::uint32_t> s = curved_seam_of(*f.cylinder)) {
+          const double h = seams_[*s].seam->spacing;
+          Box2 box;
+          for (const auto& loop : loops2d) {
+            for (const dvec2& q : loop) box.expand(q);
+          }
+          const double row = h * std::sqrt(3.0) / 2.0;
+          const auto j0 = static_cast<std::int64_t>(std::ceil(box.lo.y / row));
+          const auto j1 = static_cast<std::int64_t>(std::floor(box.hi.y / row));
+          for (std::int64_t j = j0; j <= j1; ++j) {
+            const double y = static_cast<double>(j) * row;
+            const double offset = (j % 2 != 0) ? 0.5 * h : 0.0;
+            const auto i0 = static_cast<std::int64_t>(std::ceil((box.lo.x - offset) / h));
+            const auto i1 = static_cast<std::int64_t>(std::floor((box.hi.x - offset) / h));
+            for (std::int64_t i = i0; i <= i1; ++i) {
+              const dvec2 q{static_cast<double>(i) * h + offset, y};
+              if (!inside(loops2d, q) || loops_distance(loops2d, q) < 0.5 * h) continue;
+              pts.push_back(q);
+              point_node.push_back(add_node(kernel::face_point(
+                  f.face, {q.x / f.uv_scale.x, q.y / f.uv_scale.y})));
+            }
+          }
+        }
+      }
     }
 
     const core::Result<std::vector<Triangle>> tris = triangulate(pts, loops, segments);
@@ -678,7 +805,29 @@ VolumeMesh tessellate(const kernel::Solid& solid, const core::SubjectRef& volume
                       std::span<const Seam* const> seams, const core::ProductSettings& settings,
                       const TessellationOptions& options) {
   VolumeMesh out;
-  const core::Result<Tessellation> t = kernel::tessellate(solid, options.params, settings);
+  // Curved seams' patches are imprinted, so each is a face (or several).
+  std::vector<kernel::Face> imprints;
+  for (const Seam* s : seams) {
+    if (!s->curved()) continue;
+    double x0 = std::numeric_limits<double>::infinity(), x1 = -x0, y0 = x0, y1 = -x0;
+    for (const OutlineLoop& loop : s->outline.loops) {
+      for (const OutlineSegment& seg : loop.segments) {
+        for (const dvec2& p : {seg.start, seg.end}) {
+          x0 = std::min(x0, p.x);
+          x1 = std::max(x1, p.x);
+          y0 = std::min(y0, p.y);
+          y1 = std::max(y1, p.y);
+        }
+      }
+    }
+    auto face = kernel::make_cylinder_face({s->frame.origin, s->normal()}, s->frame.x_axis,
+                                           s->radius, x0 / s->radius,
+                                           s->band ? 2.0 * std::numbers::pi : (x1 - x0) / s->radius, y0,
+                                           y1 - y0, settings);
+    if (face) imprints.push_back(*face);
+  }
+  const core::Result<Tessellation> t =
+      kernel::tessellate(solid, options.params, settings, imprints);
   if (!t) {
     Diagnostic d = t.error();
     d.subjects.insert(d.subjects.begin(), volume);

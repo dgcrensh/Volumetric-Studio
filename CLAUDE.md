@@ -263,7 +263,8 @@ so they are registered. A new library must also be added to
 - **Contents see inputs, nothing else.** A parametric tree is rebuilt with
   `feature::ExternalInputs`: the boundary by the volume's id (faces
   `<layout feature id>:<name>`, or `-x`..`+z` for a box), each joining
-  connection surface by its id (a plane, face `patch`), and parameters as
+  connection surface by its id (a plane, face `patch`; a curved one is
+  its axis and a cylindrical `patch`), and parameters as
   values. Published outputs reach anything only through a `Link` to a layout
   variable or parameter.
 - **Build.** `build(doc, settings, &blobs)` rebuilds the layout, boundaries
@@ -353,6 +354,18 @@ so they are registered. A new library must also be added to
   one per volume with its id) and in (our own writer and XML reader,
   zipped with miniz), OBJ in. `import.hpp` adds a
   mesh file as a static volume boxed by its bounds.
+- **Curved seams** (L2, decision 0020): a `CylinderPatch` (vs_model: a
+  layout axis, radius, start angle, sweep, start and length; a full turn
+  is a band) gets a seam in unrolled coordinates (`Seam::curved()`,
+  `band`, `to_uv()` / `to_model()` / `offset()` / `normal_at()`,
+  `triangle_uv()` across a band's cut); derived spacing keeps chords
+  within `kSeamDeflection`. B-rep volumes conform by imprinting the patch
+  (`kernel::tessellate(..., imprints)`) and replacing its pieces with the
+  seam; procedural ones through the same stitch (vs_proc), a band's two
+  rims each to its loop. The engine gives triangles touching a curved
+  seam a containment slack (`MeshView::centroid_slack`). Bolted flanges
+  stay planar (`model.connection.curved_flange`). Planar seams, meshes
+  and hashes are exactly what they were; keep it that way.
 - **Tests** mesh volumes with small meshers in `libs/vs_mesh/tests/meshers.*`
   (prisms, pyramids, a box round a patch) and weld random outlines;
   `test_tessellate.cpp` welds B-rep pairs (cylinders, cones, domes, fillets,

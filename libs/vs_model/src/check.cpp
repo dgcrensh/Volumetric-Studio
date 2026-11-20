@@ -191,6 +191,12 @@ class Checker {
       error("model.connection.unknown_thread", self,
             fmt::format("unknown thread size '{}' (M2 to M12, ISO metric coarse)", b->thread));
     }
+    if (std::holds_alternative<BoltedFlangeParams>(c.params) &&
+        std::holds_alternative<CylinderPatch>(c.geometry)) {
+      error("model.connection.curved_flange", self,
+            "a bolted flange must be planar; use a sketch profile or a datum rectangle, or make "
+            "the surface bonded");
+    }
   }
 
   void link_structure(const Link& l) {
@@ -325,6 +331,15 @@ class Checker {
     const SubjectRef by = doc_.connection_subject(c.id);
     if (const auto* sp = std::get_if<SketchPatch>(&c.geometry)) {
       layout_id(sp->sketch, by);
+    } else if (const auto* cp = std::get_if<CylinderPatch>(&c.geometry)) {
+      if (const auto* f = std::get_if<feature::FeatureRef>(&cp->axis)) layout_id(f->feature, by);
+      if (const auto* e = std::get_if<feature::SketchEntityRef>(&cp->axis)) {
+        layout_id(e->sketch, by);
+        layout_id(e->entity, by);
+      }
+      for (const Param* p : {&cp->radius, &cp->start_angle, &cp->sweep, &cp->start, &cp->length}) {
+        layout_param(*p, by);
+      }
     } else {
       const auto& dp = std::get<DatumPatch>(c.geometry);
       layout_plane(dp.plane, by);

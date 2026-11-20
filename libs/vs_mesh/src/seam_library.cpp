@@ -52,6 +52,29 @@ Result<SeamOutline> seam_outline(const model::ConnectionSurface& surface,
   const core::SubjectRef subject{core::SubjectKind::ConnectionSurface, surface.id, surface.name};
   SeamOutline outline;
   outline.frame = build.frame;
+  if (const auto& cyl = build.cylinder) {
+    // A cylinder (L2): its unrolled rectangle, or a band's two ends.
+    outline.radius = cyl->radius;
+    outline.band = cyl->band();
+    const double x0 = cyl->radius * cyl->start_angle;
+    const double x1 = cyl->radius * (cyl->start_angle + cyl->sweep);
+    const double y0 = cyl->start;
+    const double y1 = cyl->start + cyl->length;
+    const dvec2 c00{x0, y0}, c10{x1, y0}, c11{x1, y1}, c01{x0, y1};
+    if (outline.band) {
+      outline.loops.push_back(OutlineLoop{{OutlineSegment::line(c00, c10)}});
+      outline.loops.push_back(OutlineLoop{{OutlineSegment::line(c11, c01)}});
+    } else {
+      outline.loops.push_back(OutlineLoop{{OutlineSegment::line(c00, c10),
+                                           OutlineSegment::line(c10, c11),
+                                           OutlineSegment::line(c11, c01),
+                                           OutlineSegment::line(c01, c00)}});
+    }
+    if (std::holds_alternative<model::BoltedFlangeParams>(surface.params)) {
+      return Diagnostic::error("mesh.seam.curve", "A bolted flange can't be curved", {subject});
+    }
+    return outline;
+  }
   const dvec3 n = build.frame.normal();
   for (const kernel::FaceLoop& fl : kernel::face_loops(build.patch)) {
     OutlineLoop loop;

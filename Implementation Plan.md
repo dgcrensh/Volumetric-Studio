@@ -420,7 +420,7 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | --- | --- | --- |
 | L1 | GPU field evaluation | Compute shaders for field sampling with ordered reductions or quantised hashing; must match CPU hashes or document the quantisation. Plan: `docs/plans/L1-gpu-field-evaluation.md`. **Done (#22):** exact, no quantisation: GLSL FP64 with a correctly rounded sqrt gives the CPU's samples bit for bit; sampling 2.8x faster than 4 CPU threads on the 100 mm gyroid, but meshing now dominates (decision 0018) |
 | L1b | Faster meshing | Surface nets (18 of the 26 s of the 100 mm gyroid after L1, all on one thread) made parallel on the CPU with exactly the same mesh (slab passes, the per-cube merge by wavefronts), and the clip and unmerged net on the GPU where it measures faster. Plan: `docs/plans/L1b-parallel-and-gpu-meshing.md`. **Done (#24):** the same mesh bit for bit; engine 26.0 s to 10.8 s on the 100 mm gyroid (6-core desktop); GPU clip and unmerged net exact, used per stage only where calibration finds the GPU faster (decision 0019) |
-| L2 | Curved connection surfaces | Authored or derived seam definitions on curved patches (spec open question) |
+| L2 | Curved connection surfaces | Authored or derived seam definitions on curved patches (spec open question). Plan: `docs/plans/L2-curved-connection-surfaces.md`. **Built (#25):** cylindrical patches (curved rectangles and bands round a layout axis), bonded or clearance; seams derived in unrolled coordinates with the spacing authored (chords within 0.01 mm when derived); B-rep volumes conform by imprinting the patch, procedural ones by the same stitch through the seam's surface; planar results unchanged (decision 0020) |
 | L3 | Composite volumes and deep nesting | Child volumes authored at any depth |
 | L4 | Procedures that emit child volumes | Generated layouts pass the same overlap and containment checks |
 | L5 | Configurations and design tables | Drive procedure parameters and variables |
@@ -438,7 +438,7 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 | Does OCCT's tolerance model fit ±1,000 mm at 1e-6 mm? | M1 tolerance spike |
 | Final working-space size and tolerance | M1 decision record |
 | Connection surface types and parameters for the MVP | Bonded, clearance (gap), bolted flange (hole pattern, thread, minimum wall): M5, decision 0005 |
-| Authored or derived seams on curved connection surfaces | Deferred: MVP is planar with derived seams; revisit in L2 |
+| Authored or derived seams on curved connection surfaces | Derived, with the spacing authored: L2, decision 0020 (cylinders; bolted flanges stay planar) |
 | Can the tessellator respect fixed seam edges on B-rep faces? | Yes: M8, decision 0008 |
 | Single field-to-mesh algorithm or per node? | Single (surface nets) for the MVP, in M11 |
 | How published outputs are versioned | M9: outputs carry the producing volume's cache key, so dependants see a change whenever it changes |

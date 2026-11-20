@@ -177,6 +177,9 @@ struct KeepOut {
 
 // --- connection surfaces -------------------------------------------------------------
 
+// Patches are planar (a sketch profile or a datum rectangle) or, since L2,
+// cylindrical (CylinderPatch).
+//
 // The patch is the closed profile of a layout sketch: one outer loop,
 // holes allowed, on the sketch's plane.
 struct SketchPatch {
@@ -195,7 +198,24 @@ struct DatumPatch {
   friend bool operator==(const DatumPatch&, const DatumPatch&) = default;
 };
 
-using PatchGeometry = std::variant<SketchPatch, DatumPatch>;
+// A curved patch (L2): part of the cylinder of `radius` round a layout
+// axis. Round the axis it runs from `start_angle` through
+// `start_angle + sweep` (radians, counter-clockwise about the axis's
+// direction, from angle 0: build.hpp's cylinder_frame()); along it, from
+// `start` to `start + length` (mm from the axis's origin). A sweep of a
+// full turn (2π) makes a band: a ring round the axis, as a shaft and its
+// bore share. Bolted flanges can't be curved (check.hpp).
+struct CylinderPatch {
+  feature::AxisRef axis = feature::PrincipalAxis::Z;
+  Param radius = Param::of(10.0);
+  Param start_angle;
+  Param sweep = Param::of(6.283185307179586);  // a full turn: a band
+  Param start;
+  Param length = Param::of(10.0);
+  friend bool operator==(const CylinderPatch&, const CylinderPatch&) = default;
+};
+
+using PatchGeometry = std::variant<SketchPatch, DatumPatch, CylinderPatch>;
 
 enum class ConnectionType { Bonded, Clearance, BoltedFlange };
 std::string_view to_string(ConnectionType type);

@@ -72,21 +72,30 @@ int run_seams(std::span<const std::string_view> args, std::ostream& out, std::os
       out << fmt::format("  {:<12}{}\n", name, why);
       continue;
     }
-    std::size_t holes = seam->loops.size() - 1;
+    // A band (L2) is a ring: two loops, no holes, Euler characteristic 0.
+    const std::size_t holes = seam->band ? 0 : seam->loops.size() - 1;
     mesh::Mesh face;
     const auto map = mesh::add_seam_vertices(face, *seam);
-    mesh::add_seam_face(face, *seam, map, seam->normal(), surface.id);
+    if (seam->curved()) {
+      for (const mesh::Triangle& t : seam->oriented_triangles(true)) {
+        face.add_triangle(map[t[0]], map[t[1]], map[t[2]], surface.id);
+      }
+    } else {
+      mesh::add_seam_face(face, *seam, map, seam->normal(), surface.id);
+    }
     const mesh::TopologyReport topo = mesh::analyse(face);
-    const bool disc = topo.manifold() && topo.shells == 1 &&
-                      topo.euler_characteristic() == 1 - static_cast<long long>(holes);
+    const long long euler = seam->band ? 0 : 1 - static_cast<long long>(holes);
+    const bool disc = topo.manifold() && topo.shells == 1 && topo.euler_characteristic() == euler;
+    const char* shape = seam->band ? "ring" : "disc";
     ok = ok && disc;
     out << fmt::format(
         "  {:<12}spacing {:.4g} mm ({}), {} outline + {} interior vertices, {} loop{} ({} hole{}), "
-        "{} triangles, area {:.6g} mm², {}\n",
+        "{} triangles, area {:.6g} mm², {}{}\n",
         name, seam->spacing, surface.seam.spacing > 0 ? "set" : "derived",
         seam->outline_vertex_count, seam->vertices.size() - seam->outline_vertex_count,
         seam->loops.size(), seam->loops.size() == 1 ? "" : "s", holes, holes == 1 ? "" : "s",
-        seam->triangles.size(), seam->area(), disc ? "disc ok" : "NOT A DISC");
+        seam->triangles.size(), seam->area(), seam->curved() ? "cylinder, " : "",
+        disc ? fmt::format("{} ok", shape) : fmt::format("NOT A {}", seam->band ? "RING" : "DISC"));
   }
   for (const auto& d : lib.diagnostics) out << d.to_string() << "\n";
   out << (ok ? "result      ok\n" : "result      failed\n");
