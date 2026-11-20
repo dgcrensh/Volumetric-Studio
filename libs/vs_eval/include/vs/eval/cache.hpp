@@ -85,6 +85,10 @@ struct GeneratedContents {
   // positions and triangles, or the extra contents' hash) and the outputs' values: what the
   // determinism check compares.
   Hash256 output_hash;
+  // Set by a generator's job that stopped early because the evaluation was
+  // cancelled (M16): the engine drops it, neither shown nor cached, and the
+  // volume keeps its last contents, Stale.
+  bool cancelled = false;
 
   [[nodiscard]] bool ok() const { return status == model::VolumeStatus::Current; }
 };

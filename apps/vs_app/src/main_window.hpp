@@ -36,6 +36,22 @@
 // draws its output in the viewport (node_preview.hpp). The template
 // library, bake and unbake are in the Volume menu and the volume's
 // context menu.
+//
+// Interactive regeneration and guidance (M16):
+//
+//   - Dimension handles: a selected sketch or extrude shows handles on its
+//     dimensions (dimension_drag.hpp). Dragging one previews the change
+//     without generating (boundaries, untouched contents from the cache);
+//     releasing it commits one undoable step and generates.
+//   - While an evaluation runs, the status bar shows a progress bar and a
+//     Cancel button; contents being replaced stay on screen, grey, until
+//     their replacements arrive.
+//   - Swap contents (the volume's context menu): placeholder, modelled,
+//     procedural or baked, touching nothing outside the volume.
+//   - Habit guidance: fillet, cut or mate on generated contents shows an
+//     inline explanation with the right action (guidance.hpp).
+//   - Pick in view: feature dialogs' Pick buttons let the viewport pick a
+//     face or edge (picking.hpp), within edit-in-context's rules.
 
 #include <QMainWindow>
 #include <QPointer>
@@ -44,8 +60,12 @@
 #include <functional>
 #include <optional>
 
+#include "authoring.hpp"
+#include "dimension_drag.hpp"
 #include "exporter.hpp"
+#include "guidance.hpp"
 #include "history.hpp"
+#include "picking.hpp"
 #include "outline.hpp"
 #include "session.hpp"
 #include "widgets.hpp"
@@ -54,6 +74,8 @@ class QAction;
 class QDockWidget;
 class QLabel;
 class QMenu;
+class QProgressBar;
+class QPushButton;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
@@ -173,9 +195,43 @@ class MainWindow : public QMainWindow {
   void clear_node_preview();
   [[nodiscard]] std::shared_ptr<const NodePreviewResult> last_node_preview() const { return last_preview_; }
 
+  // --- interactive regeneration and guidance (M16)
+  // Dimension handles of the selected feature (empty unless a sketch or
+  // extrude is selected); the viewport draws them.
+  [[nodiscard]] const std::vector<DimensionHandle>& dimension_handles() const { return handles_; }
+  // A drag, as the viewport's handles drive it: begin, any number of
+  // moves to a value, then end (commit: one undoable step and a full
+  // generation; otherwise the project as it was).
+  bool begin_drag(const DimensionHandle& handle);
+  void drag_to(double value);
+  core::Diagnostics end_drag(bool commit = true);
+  [[nodiscard]] bool dragging() const { return drag_.has_value(); }
+  // The progress bar and cancel button shown while an evaluation runs.
+  [[nodiscard]] QProgressBar& progress_bar() { return *progress_; }
+  [[nodiscard]] QAction& cancel_action() { return *cancel_action_; }
+  [[nodiscard]] QString status_text() const;
+
+  // Swaps a volume's contents to another kind, touching nothing outside it
+  // (a placeholder, empty modelled contents, a procedure, or baked from its
+  // procedure's current mesh): one undoable step.
+  core::Diagnostics swap_contents(const Id& volume, ContentsKind kind);
+
+  // Shows guidance for a CAD habit on a volume, inline; nullopt (and
+  // nothing shown) when the habit is fine there.
+  std::optional<Guidance> guide(const Id& volume, Habit habit);
+  [[nodiscard]] const std::optional<Guidance>& shown_guidance() const { return guidance_; }
+  // The guidance's button.
+  void act_on_guidance();
+  void dismiss_guidance();
+
+  // Pick in view: the last pick a feature dialog was given.
+  [[nodiscard]] const std::optional<PickResolution>& last_pick() const { return last_pick_; }
+
  signals:
   // A full (not preview) evaluation reached the screen.
   void evaluationShown();
+  // A dimension drag's preview reached the screen (M16).
+  void dragPreviewShown();
   // The history moved (an edit, undo or redo).
   void historyChanged();
   // A node preview reached the viewport (M15).
@@ -264,6 +320,27 @@ class MainWindow : public QMainWindow {
   Id graph_volume_;
   std::string preview_port_;
   std::shared_ptr<const NodePreviewResult> last_preview_;
+
+  // M16.
+  void refresh_handles();
+  void on_handle_dragged(int index, double distance, bool finished);
+  void on_part_picked(const PickedPart& part);
+  void on_pick_requested(int field);
+  std::vector<DimensionHandle> handles_;
+  struct Drag {
+    DimensionHandle handle;
+    double value = 0.0;
+    bool moved = false;
+  };
+  std::optional<Drag> drag_;
+  QProgressBar* progress_ = nullptr;
+  QPushButton* cancel_button_ = nullptr;
+  QToolBar* guidance_bar_ = nullptr;
+  QLabel* guidance_label_ = nullptr;
+  QAction* guidance_action_ = nullptr;
+  std::optional<Guidance> guidance_;
+  Id dialog_tree_;  // the tree the open feature dialog edits
+  std::optional<PickResolution> last_pick_;
 
   SketchMode* sketch_mode_ = nullptr;
   struct SketchSession {

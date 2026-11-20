@@ -21,6 +21,10 @@
 // the pool's tasks runs inline, so results never depend on the thread
 // count.
 //
+// A long Job may watch `cancel` (M16) and stop early, setting `cancelled`
+// on `out`: the engine then treats the volume as one it never started
+// (Stale, its last contents kept, nothing cached).
+//
 // Generated contents with a `mesh` (vs_proc's, from M11) are checked for
 // containment like a static mesh, and go into the combined mesh as they
 // are (mesh::combine()'s `generated`), so they must already conform to

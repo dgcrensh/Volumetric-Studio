@@ -14,6 +14,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPainter>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
 #include <QStackedWidget>
@@ -183,9 +184,35 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   addToolBar(Qt::TopToolBarArea, context_bar_);
   context_bar_->setVisible(false);
 
+  // M16: inline guidance for CAD habits, under the context bar.
+  addToolBarBreak(Qt::TopToolBarArea);
+  guidance_bar_ = new QToolBar(tr("Guidance"), this);
+  guidance_bar_->setObjectName(QStringLiteral("guidance"));
+  guidance_bar_->setMovable(false);
+  guidance_label_ = new QLabel;
+  guidance_label_->setWordWrap(true);
+  guidance_label_->setStyleSheet(QStringLiteral("QLabel { padding: 4px 8px; color: #5a3d00; }"));
+  guidance_label_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  guidance_bar_->setStyleSheet(QStringLiteral("QToolBar { background: #fff4d6; border-bottom: 1px solid #e0c070; }"));
+  guidance_bar_->addWidget(guidance_label_);
+  guidance_action_ = guidance_bar_->addAction(QString(), this, &MainWindow::act_on_guidance);
+  guidance_bar_->addAction(tr("Dismiss"), this, &MainWindow::dismiss_guidance);
+  addToolBar(Qt::TopToolBarArea, guidance_bar_);
+  guidance_bar_->setVisible(false);
+
   status_label_ = new QLabel(tr("No project"));
   frame_label_ = new QLabel;
   statusBar()->addWidget(status_label_, 1);
+  // M16: progress and cancel for long generations.
+  progress_ = new QProgressBar;
+  progress_->setMaximumWidth(220);
+  progress_->setTextVisible(true);
+  progress_->setVisible(false);
+  cancel_button_ = new QPushButton(tr("Cancel"));
+  cancel_button_->setVisible(false);
+  connect(cancel_button_, &QPushButton::clicked, cancel_action_, &QAction::trigger);
+  statusBar()->addPermanentWidget(progress_);
+  statusBar()->addPermanentWidget(cancel_button_);
   statusBar()->addPermanentWidget(frame_label_);
 
   state_timer_ = new QTimer(this);
@@ -201,10 +228,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     status_label_->setText(tr("Regenerating…"));
     cancel_action_->setEnabled(true);
     state_timer_->start();
+    progress_->setRange(0, 0);  // busy until the first volume reports
+    progress_->setFormat(tr("Regenerating"));
+    progress_->setVisible(true);
+    cancel_button_->setVisible(true);
   });
   connect(session_, &Session::progressed, this, [this](int done, int total) {
     status_label_->setText(tr("Regenerating… %1 of %2 volumes").arg(done).arg(total));
+    if (total > 0) {
+      progress_->setRange(0, total);
+      progress_->setValue(done);
+      progress_->setFormat(tr("%v of %m volumes"));
+    }
   });
+  connect(viewport_, &Viewport::handleDragged, this, &MainWindow::on_handle_dragged);
+  connect(viewport_, &Viewport::partPicked, this, &MainWindow::on_part_picked);
   connect(session_, &Session::projectChanged, this, [this] {
     // A new project (opened, or set by a script): a fresh history.
     close_dialog();
@@ -216,6 +254,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     clear_node_preview();
     viewport_->set_context({}, {});
     context_bar_->setVisible(false);
+    drag_.reset();
+    dismiss_guidance();
     fitted_ = false;
     selection_ = {};
     refresh_edit_actions();
@@ -658,12 +698,25 @@ void MainWindow::select(const Selection& selection) {
   } else if (selection.kind != Selection::Kind::Node) {
     clear_node_preview();
   }
+  refresh_handles();
 }
 
 void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   const bool fit = !fitted_ && !snapshot->scene.items.empty();
   viewport_->show_scene(snapshot->scene, snapshot->prepared, fit);
   fitted_ = fitted_ || fit;
+  if (snapshot->drag) {
+    // A dimension drag's preview: the viewport only; the panels follow
+    // when the drag ends.
+    if (drag_) {
+      status_label_->setText(tr("Dragging %1: %2 mm (preview: %3 ms)")
+                                 .arg(qstr(drag_->handle.label))
+                                 .arg(drag_->value, 0, 'g', 6)
+                                 .arg(snapshot->evaluate_ms + snapshot->scene_ms, 0, 'f', 0));
+    }
+    emit dragPreviewShown();
+    return;
+  }
   // Keep the selection if it still exists.
   const auto& doc = snapshot->evaluation.document;
   if ((selection_.kind == Selection::Kind::Volume && doc.find_volume(selection_.id) == nullptr) ||
@@ -704,6 +757,9 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   state_timer_->stop();
   last_states_.clear();
   cancel_action_->setEnabled(false);
+  progress_->setVisible(false);
+  cancel_button_->setVisible(false);
+  refresh_handles();
   const auto& st = snapshot->evaluation.stats;
   status_label_->setText(tr("%1 — %2 volumes, %3 regenerated, %4 from cache, %5 ms (display %6 ms)%7%8")
                              .arg(qstr(doc.name))
@@ -1037,6 +1093,25 @@ void MainWindow::volume_context_menu(const QPoint& pos) {
       apply(import_contents(vid, std::move(bytes), format, session_->settings()));
     });
     if (!v->contents_empty()) menu.addAction(tr("Clear contents"), this, [this, vid] { apply(make_placeholder(vid)); });
+    // M16: swap the contents' kind, nothing outside the volume touched.
+    QMenu* swap = menu.addMenu(tr("Swap contents"));
+    const auto now = contents_kind(*v);
+    const std::pair<ContentsKind, const char*> kinds[] = {{ContentsKind::Placeholder, "Placeholder"},
+                                                          {ContentsKind::Parametric, "Modelled"},
+                                                          {ContentsKind::Procedural, "Procedural"},
+                                                          {ContentsKind::Baked, "Baked"}};
+    for (const auto& [k, label] : kinds) {
+      const ContentsKind target = k;
+      QAction* a = swap->addAction(tr(label), this, [this, vid, target] { swap_contents(vid, target); });
+      a->setCheckable(true);
+      a->setChecked(now == target);
+      if (target == ContentsKind::Baked) a->setEnabled(now == ContentsKind::Procedural);
+    }
+    // M16: CAD habits, redirected.
+    menu.addSeparator();
+    menu.addAction(tr("Fillet…"), this, [this, vid] { guide(vid, Habit::Fillet); });
+    menu.addAction(tr("Cut…"), this, [this, vid] { guide(vid, Habit::Cut); });
+    menu.addAction(tr("Mate…"), this, [this, vid] { guide(vid, Habit::Mate); });
   }
   menu.addAction(v->keep_out ? tr("Unmark keep-out") : tr("Mark as keep-out"), this,
                  [this, vid, k = v->keep_out] { apply(set_keep_out(vid, !k)); });
@@ -1122,6 +1197,15 @@ void MainWindow::start_dialog(EditDialog* d, std::function<Command()> make, std:
     if (dialog_ == d) dialog_ = nullptr;
     end_preview();
   });
+  // M16: pick in view. The pick mode ends with the dialog.
+  if (auto* fd = qobject_cast<FeatureDialog*>(d)) {
+    connect(fd, &FeatureDialog::pickRequested, this, &MainWindow::on_pick_requested);
+  }
+  connect(d, &QDialog::finished, this, [this] {
+    viewport_->set_pick_mode(PickMode::None);
+    refresh_handles();
+  });
+  refresh_handles();
   d->show();
   if (!commit_override) preview_timer_->start();
 }
@@ -1169,6 +1253,16 @@ FeatureDialog* MainWindow::insert_feature(feature::FeatureKind kind) {
   const Id volume = editing_volume_;
   const auto* tree = tree_of(history_.project().document, volume);
   if (tree == nullptr) return nullptr;
+  // M16: rounding generated contents is a CAD habit to redirect.
+  if (volume.is_null() && selection_.kind == Selection::Kind::Volume &&
+      (kind == feature::FeatureKind::Fillet || kind == feature::FeatureKind::Chamfer)) {
+    if (const auto* v = history_.project().document.find_volume(selection_.id);
+        v != nullptr && !v->keep_out && v->tree() == nullptr && !v->contents_empty()) {
+      guide(selection_.id, Habit::Fillet);
+      return nullptr;
+    }
+  }
+  dialog_tree_ = volume;
   feature::Feature f;
   f.id = Id::random();
   switch (kind) {
@@ -1218,6 +1312,7 @@ FeatureDialog* MainWindow::edit_feature(const Id& volume, const Id& feature) {
   const auto index = tree->index_of(feature);
   if (!index) return nullptr;
   const feature::Feature f = *tree->find(feature);
+  dialog_tree_ = volume;
   auto* d = new FeatureDialog(f, reference_choices(s->evaluation, volume, *index), this);
   start_dialog(d, [volume, d] { return replace_feature(volume, d->feature()); });
   return d;
@@ -1476,6 +1571,149 @@ void MainWindow::finish_sketch(bool accept) {
   sketch_mode_ = nullptr;
   sketch_session_.reset();
   refresh_edit_actions();
+}
+
+// --- interactive regeneration and guidance (M16) -----------------------------------------------------
+
+QString MainWindow::status_text() const { return status_label_->text(); }
+
+void MainWindow::refresh_handles() {
+  if (drag_) return;  // the handles stay as they were while one is dragged
+  std::vector<DimensionHandle> found;
+  const SnapshotPtr s = session_->latest();
+  if (s && !s->drag && !dialog_ && sketch_mode_ == nullptr && selection_.kind == Selection::Kind::Feature &&
+      viewport_->pick_mode() == PickMode::None) {
+    found = app::dimension_handles(s->evaluation, selection_.volume, selection_.id);
+  }
+  handles_ = std::move(found);
+  std::vector<ViewHandle> view;
+  view.reserve(handles_.size());
+  for (const auto& h : handles_) view.push_back({h.anchor, h.direction});
+  viewport_->set_handles(std::move(view));
+}
+
+bool MainWindow::begin_drag(const DimensionHandle& handle) {
+  if (!session_->has_project() || sketch_mode_ != nullptr) return false;
+  drag_ = Drag{handle, handle.value, false};
+  close_dialog();
+  dismiss_guidance();
+  status_label_->setText(tr("Dragging %1").arg(qstr(handle.label)));
+  return true;
+}
+
+void MainWindow::drag_to(double value) {
+  if (!drag_) return;
+  drag_->value = value;
+  drag_->moved = true;
+  core::Diagnostics why;
+  auto preview = history_.try_apply(drag_command(drag_->handle, value, session_->settings()), &why);
+  if (!preview) {
+    status_label_->setText(tr("Can't drag to %1: %2").arg(value, 0, 'g', 6).arg(qstr(first_error(why))));
+    return;
+  }
+  session_->drag_preview(std::move(preview));
+}
+
+core::Diagnostics MainWindow::end_drag(bool commit) {
+  if (!drag_) return {};
+  const Drag d = *drag_;
+  drag_.reset();
+  core::Diagnostics result;
+  if (commit && d.moved && d.value != d.handle.value) {
+    // One undoable step; showing it regenerates in full.
+    result = apply(drag_command(d.handle, d.value, session_->settings()));
+    if (result.has_errors()) session_->update_project(history_.current());
+  } else {
+    session_->update_project(history_.current());
+  }
+  return result;
+}
+
+void MainWindow::on_handle_dragged(int index, double distance, bool finished) {
+  if (!drag_) {
+    if (index < 0 || static_cast<std::size_t>(index) >= handles_.size()) return;
+    if (!begin_drag(handles_[static_cast<std::size_t>(index)])) return;
+  }
+  const double value = dragged_value(drag_->handle, distance);
+  if (value != drag_->value) drag_to(value);
+  if (finished) end_drag(true);
+}
+
+void MainWindow::on_pick_requested(int field) {
+  auto* fd = qobject_cast<FeatureDialog*>(dialog_.data());
+  const SnapshotPtr s = session_->latest();
+  if (fd == nullptr || field < 0 || !s) {
+    viewport_->set_pick_mode(PickMode::None);
+    refresh_handles();
+    return;
+  }
+  handles_.clear();
+  viewport_->set_handles({});
+  const bool edges = fd->pick_kind(field) == FeatureDialog::PickKind::Edge;
+  viewport_->set_pick_mode(edges ? PickMode::Edge : PickMode::Face, pickable_items(s->evaluation, dialog_tree_));
+  status_label_->setText(edges ? tr("Pick edges in the viewport for %1").arg(fd->pick_label(field))
+                               : tr("Pick a face in the viewport for %1").arg(fd->pick_label(field)));
+}
+
+void MainWindow::on_part_picked(const PickedPart& part) {
+  auto* fd = qobject_cast<FeatureDialog*>(dialog_.data());
+  const SnapshotPtr s = session_->latest();
+  if (fd == nullptr || fd->picking() < 0 || !s) return;
+  last_pick_ = resolve_pick(s->scene, s->evaluation, dialog_tree_, fd->choices(), part);
+  if (fd->apply_pick(*last_pick_)) {
+    status_label_->setText(tr("Picked %1").arg(qstr(last_pick_->label)));
+  } else {
+    status_label_->setText(fd->message());
+  }
+}
+
+core::Diagnostics MainWindow::swap_contents(const Id& volume, ContentsKind kind) {
+  // Baking takes the procedure's current mesh, which only the screen has.
+  if (kind == ContentsKind::Baked) return bake(volume);
+  return apply(app::swap_contents(volume, kind));
+}
+
+std::optional<Guidance> MainWindow::guide(const Id& volume, Habit habit) {
+  guidance_ = app::guide(history_.project().document, volume, habit, editing_volume_);
+  if (!guidance_) {
+    guidance_bar_->setVisible(false);
+    return std::nullopt;
+  }
+  guidance_label_->setText(QStringLiteral("<b>%1</b><br>%2")
+                               .arg(qstr(guidance_->title).toHtmlEscaped(), qstr(guidance_->text).toHtmlEscaped()));
+  guidance_action_->setText(qstr(guidance_->action_label));
+  guidance_bar_->setVisible(true);
+  status_label_->setText(qstr(guidance_->title));
+  return guidance_;
+}
+
+void MainWindow::dismiss_guidance() {
+  guidance_.reset();
+  if (guidance_bar_ != nullptr) guidance_bar_->setVisible(false);
+}
+
+void MainWindow::act_on_guidance() {
+  if (!guidance_) return;
+  const Guidance g = *guidance_;
+  dismiss_guidance();
+  switch (g.action) {
+    case Guidance::Action::EditGraph: edit_graph(g.volume); break;
+    case Guidance::Action::Unbake: unbake(g.volume); break;
+    case Guidance::Action::EditInContext: {
+      const model::Volume* v = history_.project().document.find_volume(g.volume);
+      if (v == nullptr) return;
+      // Imported contents give way to modelled ones (undoable).
+      if (v->tree() == nullptr && !v->contents_empty() &&
+          apply(app::swap_contents(g.volume, ContentsKind::Parametric)).has_errors()) {
+        return;
+      }
+      if (edit_in_context(g.volume) && g.habit == Habit::Fillet) insert_feature(feature::FeatureKind::Fillet);
+      break;
+    }
+    case Guidance::Action::AddKeepOut: new_keep_out(); break;
+    case Guidance::Action::UseConnection: select(Selection::of_surface(g.target)); break;
+    case Guidance::Action::AddConnection: new_connection(); break;
+  }
 }
 
 // --- files -------------------------------------------------------------------------------------------

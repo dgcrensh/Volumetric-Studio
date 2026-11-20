@@ -11,6 +11,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 #include "authoring.hpp"
 
 namespace vs::app {
@@ -140,6 +142,47 @@ void FeatureDialog::build() {
     watch(e);
     return e;
   };
+  // M16: a combo with a Pick button beside it.
+  auto with_pick = [&](QComboBox* box, QPushButton* button) {
+    auto* row = new QWidget;
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->addWidget(box, 1);
+    h->addWidget(button);
+    return row;
+  };
+  auto plane_apply = [](RefPicker<PlaneRef>* target) {
+    return [target](const PickResolution& r) {
+      if (!r.plane) return false;
+      target->set(*r.plane);
+      return true;
+    };
+  };
+  auto face_apply = [](RefPicker<FaceRef>* target) {
+    return [target](const PickResolution& r) {
+      if (!r.face) return false;
+      target->set(*r.face);
+      return true;
+    };
+  };
+  auto plane_combo = [&](const QString& label, RefPicker<PlaneRef>* target) {
+    auto* box = new QComboBox;
+    watch(box);
+    f->addRow(label, with_pick(box, pick_button(PickKind::Plane, label, false, plane_apply(target))));
+    return box;
+  };
+  auto page_plane_combo = [&](QFormLayout* pf, const QString& label, RefPicker<PlaneRef>* target) {
+    auto* box = new QComboBox;
+    watch(box);
+    pf->addRow(label, with_pick(box, pick_button(PickKind::Plane, label, false, plane_apply(target))));
+    return box;
+  };
+  auto face_combo = [&](const QString& label, RefPicker<FaceRef>* target) {
+    auto* box = new QComboBox;
+    watch(box);
+    f->addRow(label, with_pick(box, pick_button(PickKind::Face, label, false, face_apply(target))));
+    return box;
+  };
   auto datum_pages = [&] {
     w.kind_of_definition = combo(tr("Defined by"));
     w.pages = new QStackedWidget;
@@ -149,12 +192,12 @@ void FeatureDialog::build() {
 
   switch (original_.kind()) {
     case FeatureKind::Sketch:
-      w.plane = RefPicker<PlaneRef>(combo(tr("Plane")), choices_.planes);
+      w.plane = RefPicker<PlaneRef>(plane_combo(tr("Plane"), &w.plane), choices_.planes);
       break;
     case FeatureKind::DatumPlane: {
       datum_pages();
       auto* a = page(tr("Offset from a plane"));
-      w.plane = RefPicker<PlaneRef>(page_combo(a, tr("Plane")), choices_.planes);
+      w.plane = RefPicker<PlaneRef>(page_plane_combo(a, tr("Plane"), &w.plane), choices_.planes);
       w.p1 = page_param(a, tr("Distance"), ParamUnit::Length);
       auto* b = page(tr("Three points"));
       w.point_a = RefPicker<PointRef>(page_combo(b, tr("Origin")), choices_.points);
@@ -162,7 +205,7 @@ void FeatureDialog::build() {
       w.point_c = RefPicker<PointRef>(page_combo(b, tr("Third point")), choices_.points);
       auto* c = page(tr("Axis and angle"));
       w.page_axis = RefPicker<AxisRef>(page_combo(c, tr("Axis")), choices_.axes);
-      w.page_plane_a = RefPicker<PlaneRef>(page_combo(c, tr("Base plane")), choices_.planes);
+      w.page_plane_a = RefPicker<PlaneRef>(page_plane_combo(c, tr("Base plane"), &w.page_plane_a), choices_.planes);
       w.page_angle = page_param(c, tr("Angle"), ParamUnit::Angle);
       break;
     }
@@ -172,8 +215,8 @@ void FeatureDialog::build() {
       w.point_a = RefPicker<PointRef>(page_combo(a, tr("From")), choices_.points);
       w.point_b = RefPicker<PointRef>(page_combo(a, tr("To")), choices_.points);
       auto* b = page(tr("Where two planes meet"));
-      w.page_plane_a = RefPicker<PlaneRef>(page_combo(b, tr("First plane")), choices_.planes);
-      w.page_plane_b = RefPicker<PlaneRef>(page_combo(b, tr("Second plane")), choices_.planes);
+      w.page_plane_a = RefPicker<PlaneRef>(page_plane_combo(b, tr("First plane"), &w.page_plane_a), choices_.planes);
+      w.page_plane_b = RefPicker<PlaneRef>(page_plane_combo(b, tr("Second plane"), &w.page_plane_b), choices_.planes);
       auto* c = page(tr("Along an existing axis"));
       w.page_axis = RefPicker<AxisRef>(page_combo(c, tr("Axis")), choices_.axes);
       break;
@@ -188,7 +231,7 @@ void FeatureDialog::build() {
       w.page_point = RefPicker<PointRef>(page_combo(b, tr("Point")), choices_.points);
       auto* c = page(tr("Where an axis meets a plane"));
       w.page_axis = RefPicker<AxisRef>(page_combo(c, tr("Axis")), choices_.axes);
-      w.page_plane_a = RefPicker<PlaneRef>(page_combo(c, tr("Plane")), choices_.planes);
+      w.page_plane_a = RefPicker<PlaneRef>(page_plane_combo(c, tr("Plane"), &w.page_plane_a), choices_.planes);
       break;
     }
     case FeatureKind::Extrude:
@@ -200,7 +243,7 @@ void FeatureDialog::build() {
                                    {Extent::UpToPlane, "Up to a plane"},
                                    {Extent::Symmetric, "Symmetric (a depth in total)"}});
       w.p1 = param(tr("Depth"), ParamUnit::Length);
-      w.plane = RefPicker<PlaneRef>(combo(tr("Up to")), choices_.planes);
+      w.plane = RefPicker<PlaneRef>(plane_combo(tr("Up to"), &w.plane), choices_.planes);
       w.p2 = param(tr("Draft"), ParamUnit::Angle);
       w.flag = check(tr("Reverse direction"));
       break;
@@ -226,13 +269,22 @@ void FeatureDialog::build() {
       break;
     case FeatureKind::Shell:
       w.faces = CheckList<FaceRef>(list(tr("Faces to open")), choices_.faces);
+      f->addRow(QString(), pick_button(PickKind::Face, tr("Faces to open"), true, [this](const PickResolution& r) {
+                  if (!r.face) return false;
+                  auto open = w_->faces.get();
+                  if (std::find(open.begin(), open.end(), *r.face) == open.end()) open.push_back(*r.face);
+                  w_->faces.set(open);
+                  emit changed();
+                  return true;
+                }));
       w.p1 = param(tr("Wall thickness"), ParamUnit::Length);
       w.flag = check(tr("Walls grow outwards"));
       break;
     case FeatureKind::Fillet:
     case FeatureKind::Chamfer: {
-      w.edge_face = RefPicker<FaceRef>(combo(tr("Edges of face")), choices_.faces);
-      w.edge_other = RefPicker<FaceRef>(combo(tr("Where it meets")), choices_.faces, true, tr("(every edge of the face)"));
+      w.edge_face = RefPicker<FaceRef>(face_combo(tr("Edges of face"), &w.edge_face), choices_.faces);
+      w.edge_other = RefPicker<FaceRef>(face_combo(tr("Where it meets"), &w.edge_other), choices_.faces, true,
+                                        tr("(every edge of the face)"));
       auto* row = new QWidget;
       auto* h = new QHBoxLayout(row);
       h->setContentsMargins(0, 0, 0, 0);
@@ -241,6 +293,21 @@ void FeatureDialog::build() {
       add->setObjectName(QStringLiteral("add_edges"));
       h->addWidget(add);
       h->addWidget(remove);
+      // Picks edges in the view, each added to the list.
+      QPushButton* pick = pick_button(PickKind::Edge, tr("Edges"), true, [this](const PickResolution& r) {
+        if (!r.edge) return false;
+        auto& ww = *w_;
+        const auto same = [&](const EdgeRef& e) {
+          return (e.face == r.edge->face && e.other == r.edge->other) ||
+                 (e.other && *e.other == r.edge->face && e.face == r.edge->other);
+        };
+        if (std::none_of(ww.edges.begin(), ww.edges.end(), same)) ww.edges.push_back(*r.edge);
+        set_feature(feature());
+        emit changed();
+        return true;
+      });
+      pick->setText(tr("Pick edges in view"));
+      h->addWidget(pick);
       h->addStretch(1);
       f->addRow(QString(), row);
       w.edge_list = new QListWidget;
@@ -498,6 +565,60 @@ Feature FeatureDialog::feature() const {
       },
       out.definition);
   return out;
+}
+
+// --- pick in view (M16) --------------------------------------------------------------------
+
+QPushButton* FeatureDialog::pick_button(PickKind kind, const QString& label, bool multiple,
+                                        std::function<bool(const PickResolution&)> apply) {
+  auto* b = new QPushButton(tr("Pick"));
+  b->setCheckable(true);
+  b->setToolTip(kind == PickKind::Edge ? tr("Pick edges in the viewport") : tr("Pick a face in the viewport"));
+  const int index = static_cast<int>(fields_.size());
+  b->setObjectName(QStringLiteral("pick_%1").arg(index));
+  fields_.push_back({kind, label, multiple, std::move(apply), b});
+  connect(b, &QPushButton::clicked, this, [this, index](bool on) { begin_pick(on ? index : -1); });
+  return b;
+}
+
+void FeatureDialog::begin_pick(int field) {
+  if (field >= pick_field_count()) field = -1;
+  if (field == picking_) return;
+  picking_ = field;
+  for (std::size_t i = 0; i < fields_.size(); ++i) {
+    const QSignalBlocker block(fields_[i].button);
+    fields_[i].button->setChecked(static_cast<int>(i) == field);
+  }
+  if (field >= 0) {
+    const auto k = fields_[static_cast<std::size_t>(field)].kind;
+    set_message(k == PickKind::Edge ? tr("Click edges in the viewport; press Pick again when done.")
+                                    : tr("Click a face in the viewport."),
+                false);
+  } else {
+    set_message({});
+  }
+  emit pickRequested(field);
+}
+
+bool FeatureDialog::apply_pick(const PickResolution& pick) {
+  if (picking_ < 0) return false;
+  const PickField& f = fields_[static_cast<std::size_t>(picking_)];
+  if (!pick.ok()) {
+    set_message(QString::fromStdString(pick.why));
+    return false;
+  }
+  if (!f.apply(pick)) {
+    set_message(f.kind == PickKind::Plane ? tr("%1 isn't a plane; pick a flat face.").arg(qstr(pick.label))
+                                          : tr("That pick doesn't fit %1.").arg(f.label));
+    return false;
+  }
+  set_message(tr("Picked %1").arg(qstr(pick.label)), false);
+  if (!f.multiple) {
+    const QString keep = message();
+    end_pick();
+    set_message(keep, false);
+  }
+  return true;
 }
 
 bool FeatureDialog::complete() const {

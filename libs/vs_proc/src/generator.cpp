@@ -70,7 +70,7 @@ std::vector<model::OutputResult> measure(const model::Volume& volume, const core
 eval::ContentsGenerator::Job ProceduralGenerator::prepare(
     const model::Document& document, const model::DocumentBuild& layout, std::size_t index,
     const core::ProductSettings& settings, eval::ThreadPool& pool,
-    const eval::CancellationToken& /*cancel*/) {
+    const eval::CancellationToken& cancel) {
   const model::Volume& v = document.volumes.at(index);
   const core::SubjectRef self = document.volume_subject(v.id);
   const auto* contents = std::get_if<model::ProceduralContents>(&v.contents);
@@ -118,13 +118,20 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
       mesh::build_seams(document, layout, settings, v.id).seams);
 
   auto volume = std::make_shared<const model::Volume>(v);
-  return [this, graph, inputs, outputs, seams, volume, &pool](eval::GeneratedContents& out) {
+  return [this, graph, inputs, outputs, seams, volume, &pool, cancel](eval::GeneratedContents& out) {
+    // M16: a cancelled evaluation stops the job between its stages (the
+    // graph's nodes, the sampling's slices, before and after meshing).
     EvaluateGraphOptions options;
     options.cache = &cache_;
     options.pool = &pool;
+    options.cancel = &cancel;
     GraphEvaluation ev = evaluate_graph(*graph, *inputs, options, registry_);
     evaluated_ += ev.evaluated;
     hits_ += ev.cache_hits;
+    if (ev.cancelled || cancel.cancelled()) {
+      out.cancelled = true;
+      return;
+    }
     out.outputs = outputs;
     out.diagnostics = ev.diagnostics;
     if (!ev.ok()) {
@@ -144,9 +151,18 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
     }
     auto fc = std::make_shared<FieldContents>();
     fc->field = *ev.contents;
-    fc->samples = sample(*fc->field, *grid, &pool);
+    bool sampling_cancelled = false;
+    fc->samples = sample(*fc->field, *grid, &pool, &cancel, &sampling_cancelled);
+    if (sampling_cancelled || cancel.cancelled()) {
+      out.cancelled = true;
+      return;
+    }
     ContentsMesh cm =
         mesh_contents(fc->samples, *inputs->boundary, *seams, inputs->volume_subject, &pool);
+    if (cancel.cancelled()) {
+      out.cancelled = true;
+      return;
+    }
     out.diagnostics.append(cm.diagnostics);
     fc->stitched = std::move(cm.stitched);
     fc->moved_vertices = cm.moved_vertices;

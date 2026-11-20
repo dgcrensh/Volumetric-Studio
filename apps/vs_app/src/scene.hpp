@@ -64,6 +64,17 @@ struct DisplayMesh {
   // Optional: one colour per position, drawn unlit (node previews' field
   // slices, M15). Empty: the item's colour, shaded.
   std::vector<Rgb> colors;
+  // B-reps only (M16, picking.hpp): each face's triangles, a contiguous
+  // range of `indices` / 3, with the kernel face they came from; and for
+  // each polyline of `edges` the faces on either side (indices into
+  // `faces`, -1 for none; equal for a closed face's seam).
+  struct FacePart {
+    std::uint32_t first = 0;  // first triangle
+    std::uint32_t count = 0;  // triangles
+    kernel::Face face;
+  };
+  std::vector<FacePart> faces;
+  std::vector<std::array<std::int32_t, 2>> edge_faces;
 
   [[nodiscard]] std::size_t triangle_count() const { return indices.size() / 3; }
   [[nodiscard]] bool empty() const { return indices.empty(); }
@@ -105,6 +116,9 @@ struct SceneOptions {
   double deflection = 0.05;  // mm
   double angle = 0.35;       // radians
   double crease_angle = 0.6; // radians: vertices split where faces meet more sharply
+  // Dimension drags (M16): contents shown stale (their volume is changing)
+  // are left out, so affected volumes show their boundary only.
+  bool hide_stale_contents = false;
 };
 
 // The colour volume `index` (in document order) is tinted with.

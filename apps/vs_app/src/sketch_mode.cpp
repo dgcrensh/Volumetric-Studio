@@ -21,6 +21,7 @@
 #include <numbers>
 #include <optional>
 
+#include "dimension_drag.hpp"
 #include "widgets.hpp"
 
 namespace vs::app {
@@ -142,6 +143,13 @@ void SketchView::fit() {
   update();
 }
 
+QRectF SketchView::dimension_label(const Id& constraint) const {
+  for (const auto& [id, box] : labels_) {
+    if (id == constraint) return box;
+  }
+  return {};
+}
+
 void SketchView::resizeEvent(QResizeEvent*) {
   if (!fitted_ && width() > 0) fit();
 }
@@ -227,6 +235,7 @@ void SketchView::paintEvent(QPaintEvent*) {
   font.setPixelSize(11);
   p.setFont(font);
   std::map<std::pair<int, int>, int> stacked;  // keeps labels at one anchor apart
+  labels_.clear();
   for (const auto& c : sk.constraints()) {
     QString text = c.dimension ? dimension_text(c) : glyph(c.kind);
     if (text.isEmpty()) continue;
@@ -245,6 +254,7 @@ void SketchView::paintEvent(QPaintEvent*) {
     const bool bad = editor_.is_conflicting(c.id);
     const bool sel = selected(c.id);
     const QRectF box = p.fontMetrics().boundingRect(text).toRectF().translated(at).adjusted(-3, -1, 3, 1);
+    if (c.dimension) labels_.emplace_back(c.id, box);
     p.setPen(Qt::NoPen);
     p.setBrush(c.dimension ? QColor(255, 255, 255, 230) : QColor(255, 255, 255, 170));
     p.drawRoundedRect(box, 3, 3);
@@ -294,6 +304,29 @@ void SketchView::mousePressEvent(QMouseEvent* event) {
     return;
   }
   if (event->button() != Qt::LeftButton) return;
+  // M16: a press on a dimension's label drags its value.
+  if (editor_.tool() == SketchTool::Select) {
+    for (const auto& [id, box] : labels_) {
+      if (!box.contains(event->position())) continue;
+      const auto* c = editor_.sketch().find_constraint(id);
+      if (c == nullptr || !c->dimension) break;
+      set_selection({id});
+      if (!c->dimension->expression.empty()) {
+        emit message(tr("%1 is driven by \"%2\": change that instead, or type a number to drive it by hand.")
+                         .arg(qstr(editor_.sketch().label(id)), qstr(c->dimension->expression)));
+        return;
+      }
+      if (!sketch_dimension_handle(editor_.sketch(), *c)) {
+        emit message(tr("Type a new value for %1 in the list.").arg(qstr(editor_.sketch().label(id))));
+        return;
+      }
+      dragging_dimension_ = id;
+      dimension_start_ = c->dimension->value;
+      dimension_from_ = event->position();
+      drag_started_ = false;
+      return;
+    }
+  }
   if (editor_.tool() != SketchTool::Select) {
     const Id snap = editor_.nearest_point(at, kSnapPixels * pixel());
     const auto added = editor_.click(at, snap);
@@ -329,6 +362,17 @@ void SketchView::mouseMoveEvent(QMouseEvent* event) {
     const QPoint now = event->position().toPoint();
     origin_ += QPointF(now - pan_from_);
     pan_from_ = now;
+  } else if (!dragging_dimension_.is_null() && (event->buttons() & Qt::LeftButton)) {
+    const auto* c = editor_.sketch().find_constraint(dragging_dimension_);
+    const auto h = c != nullptr ? sketch_dimension_handle(editor_.sketch(), *c) : std::nullopt;
+    if (h) {
+      // The handle's direction as it was at the press: a drag measures
+      // from where it started.
+      const dvec2 moved = to_sketch(event->position()) - to_sketch(dimension_from_);
+      const double value = std::max(0.01, dimension_start_ + h->rate * (moved.x * h->direction.x + moved.y * h->direction.y));
+      editor_.drag_dimension(dragging_dimension_, value, !drag_started_);
+      drag_started_ = true;
+    }
   } else if (!dragging_.is_null() && (event->buttons() & Qt::LeftButton)) {
     editor_.drag(dragging_, to_sketch(event->position()), !drag_started_);
     drag_started_ = true;
@@ -338,6 +382,11 @@ void SketchView::mouseMoveEvent(QMouseEvent* event) {
 
 void SketchView::mouseReleaseEvent(QMouseEvent* event) {
   if (event->button() == Qt::MiddleButton) panning_ = false;
+  if (event->button() == Qt::LeftButton && !dragging_dimension_.is_null()) {
+    if (drag_started_) emit edited();
+    dragging_dimension_ = {};
+    drag_started_ = false;
+  }
   if (event->button() == Qt::LeftButton && !dragging_.is_null()) {
     if (drag_started_) emit edited();
     dragging_ = {};
@@ -479,6 +528,7 @@ SketchMode::SketchMode(std::unique_ptr<SketchEditor> editor, const QString& titl
   connect(cancel, &QPushButton::clicked, this, [this] { finish(false); });
 
   connect(view_, &SketchView::edited, this, &SketchMode::refresh);
+  connect(view_, &SketchView::message, this, [this](const QString& text) { status_->setText(text); });
   connect(view_, &SketchView::selectionChanged, this, [this] {
     update_actions();
     // Select the constraint rows the canvas selected.

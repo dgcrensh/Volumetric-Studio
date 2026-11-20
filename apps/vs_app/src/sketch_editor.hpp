@@ -119,6 +119,12 @@ class SketchEditor {
   // Drags a point towards `target` (drag solving). `record` false merges it
   // into the last step, so one mouse drag is one undo step.
   bool drag(const Id& point, dvec2 target, bool record = true);
+  // Drags a dimension to `value` (M16: dimension dragging in the
+  // sketcher): solved from where the sketch is, so the rest moves as little
+  // as it can. A dimension driven by an expression is refused
+  // (app.sketch.dimension_driven): its variables decide it. `record` as
+  // for drag().
+  core::Diagnostics drag_dimension(const Id& constraint, double value, bool record = true);
 
   [[nodiscard]] bool can_undo() const { return !undo_.empty(); }
   [[nodiscard]] bool can_redo() const { return !redo_.empty(); }

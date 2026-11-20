@@ -73,6 +73,9 @@ struct NodePreviewRequest {
 struct Snapshot {
   std::uint64_t generation = 0;  // which regenerate() request it answers
   bool preview = false;          // the preview tier (see above)
+  // A dimension drag's preview (M16, drag_preview()): the preview tier
+  // only, with volumes being changed shown as their boundary.
+  bool drag = false;
   std::shared_ptr<const model::Project> project;  // the project as evaluated
   eval::Evaluation evaluation;
   Scene scene;
@@ -107,6 +110,14 @@ class Session : public QObject {
   core::Diagnostics save(const std::filesystem::path& path, const model::Project* project = nullptr);
 
   void regenerate();
+  // A dimension drag (M16): shows `project` (the drag's edit applied, not
+  // kept) as the preview tier only: no generation, contents of volumes the
+  // edit changes left out (boundary only), untouched volumes' contents from
+  // the cache. Cancels whatever is running; only the newest request runs,
+  // so a fast drag skips the positions the worker couldn't keep up with.
+  // The project shown stays as it was; regenerate() or update_project()
+  // ends the drag.
+  void drag_preview(std::shared_ptr<const model::Project> project);
   void cancel();
   [[nodiscard]] bool busy() const;
 
@@ -158,7 +169,7 @@ class Session : public QObject {
   void post(std::function<void()> job);
   void worker_loop();
   void evaluate_job(std::uint64_t generation, std::shared_ptr<const model::Project> project,
-                    eval::CancellationToken cancel);
+                    eval::CancellationToken cancel, bool drag = false);
 
   core::ProductSettings settings_ = core::ProductSettings::defaults();
   eval::Engine engine_;
@@ -170,6 +181,7 @@ class Session : public QObject {
 
   // UI thread only.
   std::uint64_t requested_ = 0;
+  std::uint64_t full_requested_ = 0;  // the newest regenerate() (not a drag)
   // Shared with the worker.
   mutable std::mutex mutex_;
   std::condition_variable wake_;
