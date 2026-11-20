@@ -28,6 +28,14 @@
 // volume in the viewport and keeps them from being picked, and the
 // feature dialogs then offer only the volume's boundary, its connection
 // surfaces and its own features as references.
+//
+// Procedural graphs (M15). The Graph dock (node_editor.hpp) edits one
+// procedural volume's graph (Volume > Edit graph, or "Fill by procedure"
+// on a placeholder); every change is a set_graph() Command through the
+// same History. Selecting a node shows its settings in the inspector and
+// draws its output in the viewport (node_preview.hpp). The template
+// library, bake and unbake are in the Volume menu and the volume's
+// context menu.
 
 #include <QMainWindow>
 #include <QPointer>
@@ -43,6 +51,7 @@
 #include "widgets.hpp"
 
 class QAction;
+class QDockWidget;
 class QLabel;
 class QMenu;
 class QStackedWidget;
@@ -58,7 +67,11 @@ class ConnectionDialog;
 class FeatureDialog;
 class KeepOutDialog;
 class LinkDialog;
+class NodeEditor;
+class NodeForm;
 class SketchMode;
+class TemplateDialog;
+struct NodePreviewResult;
 class Viewport;
 class VolumeDialog;
 
@@ -136,11 +149,37 @@ class MainWindow : public QMainWindow {
   // Waits for the open dialog's pending preview to be applied (tests).
   void flush_preview();
 
+  // --- procedural graphs (M15). The node editor (the Graph panel) edits
+  // one procedural volume's graph at a time.
+  // Opens `volume`'s graph in the node editor; a placeholder is first
+  // filled with the starter graph (Boundary -> Output). False for other
+  // contents (a baked volume says to unbake it first).
+  bool edit_graph(const Id& volume);
+  void leave_graph();
+  [[nodiscard]] const Id& graph_volume() const { return graph_volume_; }
+  [[nodiscard]] NodeEditor& node_editor() { return *node_editor_; }
+  [[nodiscard]] NodeForm& node_form() { return *node_form_; }
+  // The template library for `volume` (a placeholder or procedural one):
+  // OK attaches the chosen template's graph, previewed live meanwhile.
+  TemplateDialog* attach_template(const Id& volume);
+  // Bakes a procedural volume's current generated mesh (refused until it
+  // has generated), or unbakes a baked one: one undoable step each.
+  core::Diagnostics bake(const Id& volume);
+  core::Diagnostics unbake(const Id& volume);
+  // Draws `node`'s output (of the graph being edited) in the viewport;
+  // nodePreviewShown() follows when it is on screen. Selecting a node
+  // previews it too.
+  void preview_node(const Id& node, const std::string& port = {});
+  void clear_node_preview();
+  [[nodiscard]] std::shared_ptr<const NodePreviewResult> last_node_preview() const { return last_preview_; }
+
  signals:
   // A full (not preview) evaluation reached the screen.
   void evaluationShown();
   // The history moved (an edit, undo or redo).
   void historyChanged();
+  // A node preview reached the viewport (M15).
+  void nodePreviewShown();
 
  private:
   void build_menus();
@@ -215,6 +254,16 @@ class MainWindow : public QMainWindow {
   std::function<Command()> dialog_command_;
   QTimer* preview_timer_ = nullptr;
   bool previewing_ = false;
+
+  // M15: the node editor, its dock, the node form in the inspector.
+  void refresh_graph();
+  NodeEditor* node_editor_ = nullptr;
+  QDockWidget* graph_dock_ = nullptr;
+  NodeForm* node_form_ = nullptr;
+  QStackedWidget* inspector_stack_ = nullptr;
+  Id graph_volume_;
+  std::string preview_port_;
+  std::shared_ptr<const NodePreviewResult> last_preview_;
 
   SketchMode* sketch_mode_ = nullptr;
   struct SketchSession {

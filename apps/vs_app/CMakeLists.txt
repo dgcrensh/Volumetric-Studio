@@ -18,12 +18,18 @@ add_library(vs_app_lib STATIC
   src/exporter.hpp
   src/feature_dialog.cpp
   src/feature_dialog.hpp
+  src/graph_edit.cpp
+  src/graph_edit.hpp
   src/history.cpp
   src/history.hpp
   src/main_window.cpp
   src/main_window.hpp
   src/model_dialogs.cpp
   src/model_dialogs.hpp
+  src/node_editor.cpp
+  src/node_editor.hpp
+  src/node_preview.cpp
+  src/node_preview.hpp
   src/outline.cpp
   src/outline.hpp
   src/reference_choices.cpp
@@ -78,6 +84,7 @@ if(VS_BUILD_TESTS)
     tests/test_authoring_ui.cpp
     tests/test_export.cpp
     tests/test_history.cpp
+    tests/test_node_editor.cpp
     tests/test_outline.cpp
     tests/test_scene.cpp
     tests/test_session.cpp

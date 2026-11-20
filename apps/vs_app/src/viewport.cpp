@@ -51,6 +51,7 @@ struct PreparedItem {
   Rgb color;
   float transparency = 0.0f;
   bool first_chunk = true;  // the item's first (or only) part
+  bool vertex_colors = false;  // per-vertex colours, drawn unlit
   occ::handle<Graphic3d_ArrayOfTriangles> triangles;  // null when there are none
   occ::handle<Graphic3d_ArrayOfSegments> edges;       // null when there are none
 };
@@ -81,12 +82,18 @@ occ::handle<Graphic3d_ArrayOfTriangles> triangle_chunk(const DisplayMesh& m, std
       used.push_back(v);
     }
   }
+  const bool colored = m.colors.size() == m.positions.size();
   occ::handle<Graphic3d_ArrayOfTriangles> out = new Graphic3d_ArrayOfTriangles(
-      static_cast<int>(used.size()), static_cast<int>(3 * (last - first)), Graphic3d_ArrayFlags_VertexNormal);
+      static_cast<int>(used.size()), static_cast<int>(3 * (last - first)),
+      colored ? Graphic3d_ArrayFlags_VertexNormal | Graphic3d_ArrayFlags_VertexColor : Graphic3d_ArrayFlags_VertexNormal);
   for (const auto v : used) {
     const auto& p = m.positions[v];
     const auto& n = m.normals[v];
-    out->AddVertex(p.x, p.y, p.z, n.x, n.y, n.z);
+    const int at = out->AddVertex(p.x, p.y, p.z, n.x, n.y, n.z);
+    if (colored) {
+      const Rgb& c = m.colors[v];
+      out->SetVertexColor(at, c.r, c.g, c.b);
+    }
   }
   for (std::size_t i = 3 * first; i < 3 * last; ++i) out->AddEdge(remap[m.indices[i]] + 1);
   return out;
@@ -103,6 +110,7 @@ std::vector<PreparedItem> prepare_item(const SceneItem& item) {
   out.color = item.color;
   out.transparency = item.transparency;
   const DisplayMesh& m = item.mesh;
+  out.vertex_colors = !m.colors.empty() && m.colors.size() == m.positions.size();
   for (std::size_t first = 0; first < m.triangle_count(); first += kChunkTriangles) {
     PreparedItem chunk = out;
     chunk.first_chunk = first == 0;
@@ -140,12 +148,19 @@ class MeshObject : public AIS_InteractiveObject {
     fill_->SetFrontMaterial(material);
     fill_->SetBackMaterial(material);
     fill_->SetDistinguishOff();
+    if (item.vertex_colors) fill_->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    if (item.role == ItemRole::NodePreview) {
+      // Previews are drawn just in front of what they lie in or on.
+      fill_->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -1.0f);
+    }
     if (item.role == ItemRole::ConnectionSurface) {
       // The patch lies on boundary faces: draw it just in front of them.
       fill_->SetPolygonOffsets(Aspect_POM_Fill, -2.0f, -2.0f);
     }
     const float edge_scale = item.role == ItemRole::Sketch ? 1.0f : item.role == ItemRole::Contents ? 0.45f : 0.6f;
-    const double width = item.role == ItemRole::Sketch ? 2.0 : item.role == ItemRole::Boundary ? 1.5 : 1.0;
+    const double width = item.role == ItemRole::Sketch || item.role == ItemRole::NodePreview ? 2.0
+                         : item.role == ItemRole::Boundary                                   ? 1.5
+                                                                                             : 1.0;
     line_ = new Graphic3d_AspectLine3d(qcolor(item.color, edge_scale), Aspect_TOL_SOLID, width);
     // Only see-through items go to the transparent pass: an opaque object
     // given SetTransparency(0) would still skip writing depth there.
@@ -339,6 +354,10 @@ struct Viewport::Impl : public AIS_ViewController {
     if (!prepared) return;
     for (const auto& item : prepared->items) {
       if (item.secondary && !highlighted(item.subject)) continue;
+      // A node preview shows in place of its volume's contents.
+      if (item.role == ItemRole::Contents && overlay && !overlay_volume.is_null() && item.volume == overlay_volume) {
+        continue;
+      }
       if (item.first_chunk) {
         display(item);
       } else {
@@ -346,6 +365,18 @@ struct Viewport::Impl : public AIS_ViewController {
       }
     }
     if (!pending.empty()) chunk_timer->start();
+  }
+
+  // The node preview overlay: never pickable, never dimmed.
+  void redisplay_overlay() {
+    for (const auto& obj : overlay_objects) context->Remove(obj, false);
+    overlay_objects.clear();
+    if (!overlay) return;
+    for (const auto& item : overlay->items) {
+      occ::handle<MeshObject> obj = new MeshObject(item);
+      context->Display(obj, 0, -1, false);
+      overlay_objects.push_back(obj);
+    }
   }
 
   Viewport* owner;
@@ -359,6 +390,9 @@ struct Viewport::Impl : public AIS_ViewController {
   occ::handle<AIS_ViewCube> cube;
   std::shared_ptr<const PreparedScene> prepared;
   std::vector<occ::handle<MeshObject>> objects;
+  std::shared_ptr<const PreparedScene> overlay;
+  core::Id overlay_volume;
+  std::vector<occ::handle<MeshObject>> overlay_objects;
   std::vector<core::Id> highlight;
   core::Id context_volume;
   std::vector<core::Id> context_inputs;
@@ -454,6 +488,35 @@ void Viewport::set_context(const core::Id& volume, const std::vector<core::Id>& 
 }
 
 const core::Id& Viewport::context_volume() const { return impl_->context_volume; }
+
+void Viewport::set_overlay(const Scene& scene, std::shared_ptr<const PreparedScene> prepared, const core::Id& volume) {
+  if (!prepared) prepared = prepare(scene);
+  const bool hide_changed = impl_->overlay_volume != volume || !impl_->overlay;
+  impl_->overlay = std::move(prepared);
+  impl_->overlay_volume = volume;
+  if (!impl_->ensure()) return;
+  if (hide_changed) {
+    impl_->redisplay();
+    set_highlight(impl_->highlight);
+  }
+  impl_->redisplay_overlay();
+  update();
+}
+
+void Viewport::clear_overlay() {
+  if (!impl_->overlay) return;
+  impl_->overlay.reset();
+  impl_->overlay_volume = {};
+  if (!impl_->ensure()) return;
+  impl_->redisplay_overlay();
+  impl_->redisplay();
+  set_highlight(impl_->highlight);
+  update();
+}
+
+std::size_t Viewport::overlay_items() const { return impl_->overlay_objects.size(); }
+
+const core::Id& Viewport::overlay_volume() const { return impl_->overlay_volume; }
 
 std::size_t Viewport::dimmed_items() const {
   std::size_t n = 0;

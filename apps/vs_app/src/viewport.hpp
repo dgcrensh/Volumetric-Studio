@@ -57,6 +57,14 @@ class Viewport : public QWidget {
   // inputs is drawn dimmed and can't be picked. A null volume ends it.
   void set_context(const core::Id& volume, const std::vector<core::Id>& inputs);
   [[nodiscard]] const core::Id& context_volume() const;
+  // A node preview (M15, node_preview.hpp) drawn over the scene, never
+  // pickable; the contents of `volume` are hidden while it shows, so the
+  // preview isn't buried in them. `prepared` as for show_scene().
+  void set_overlay(const Scene& scene, std::shared_ptr<const PreparedScene> prepared, const core::Id& volume);
+  void clear_overlay();
+  // Overlay items shown, and the volume whose contents they replace.
+  [[nodiscard]] std::size_t overlay_items() const;
+  [[nodiscard]] const core::Id& overlay_volume() const;
   // Items shown dimmed; items of a role shown (parts of big meshes once).
   [[nodiscard]] std::size_t dimmed_items() const;
   [[nodiscard]] std::size_t shown_items(ItemRole role) const;

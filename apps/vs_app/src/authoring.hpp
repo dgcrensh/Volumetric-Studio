@@ -19,7 +19,9 @@
 #include "history.hpp"
 #include "vs/core/settings.hpp"
 #include "vs/feature/tree.hpp"
+#include "vs/mesh/mesh.hpp"
 #include "vs/model/document.hpp"
+#include "vs/proc/graph.hpp"
 
 namespace vs::app {
 
@@ -74,6 +76,25 @@ Command make_placeholder(Id volume);
 // Imports a file as the volume's static contents (vs_eval import.hpp).
 Command import_contents(Id volume, std::vector<std::byte> file, std::string format,
                         core::ProductSettings settings);
+
+// --- procedural contents (M15) ---------------------------------------------------------------
+
+// A graph that fills the whole boundary: Boundary -> Output. What "Fill by
+// procedure" starts from.
+proc::Graph starter_graph();
+// Fills a placeholder with `graph` (or replaces a procedural volume's
+// graph: attaching a template). Refused for other contents and for graphs
+// with errors other than unfinished ones (check_volume_graph(): a node
+// reading a surface that doesn't join the volume, say).
+Command make_procedural(Id volume, proc::Graph graph, std::string label = "Fill by procedure");
+// Replaces a procedural volume's graph (the node editor's every change).
+Command set_graph(Id volume, proc::Graph graph, std::string label);
+// A procedural volume's graph (empty for an empty one); nullopt when it
+// isn't procedural or its JSON doesn't parse.
+std::optional<proc::Graph> graph_of(const model::Document& document, const Id& volume);
+// proc::bake() with the volume's generated mesh, and proc::unbake().
+Command bake_volume(Id volume, mesh::Mesh mesh);
+Command unbake_volume(Id volume);
 
 // --- connection surfaces, keep-out regions, links -----------------------------------------------
 

@@ -203,8 +203,17 @@ std::vector<FeatureRow> feature_rows(const eval::Evaluation& evaluation, const I
     if (const auto* pc = std::get_if<model::ProceduralContents>(&v->contents)) {
       auto graph = proc::graph_from_json(pc->graph);
       if (!graph) return rows;
+      const eval::VolumeResult* result = evaluation.find(volume);
       for (const auto& n : graph->nodes) {
-        rows.push_back({Selection::of_node(n.id, volume), n.name.empty() ? n.type : n.name, n.type, {}});
+        // M15: a node the last generation stopped at says why.
+        std::string status;
+        if (result != nullptr) {
+          for (const auto& d : result->diagnostics) {
+            if (!d.is_error() || d.subjects.empty() || d.subjects.front().id != n.id) continue;
+            status = d.code == "proc.node.infeasible" ? "infeasible" : "failed";
+          }
+        }
+        rows.push_back({Selection::of_node(n.id, volume), n.name.empty() ? n.type : n.name, n.type, status});
       }
       return rows;
     }
