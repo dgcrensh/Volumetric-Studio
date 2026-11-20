@@ -6,7 +6,8 @@
 # bash 3.2 with its BSD tools.
 #
 #   1. Checks the project's GPU quota (GPUS_ALL_REGIONS and the per-region
-#      virtual workstation GPU quota) and skips regions with none free.
+#      virtual workstation GPU quota). Only GPUS_ALL_REGIONS at 0 stops it;
+#      the regional numbers are reported, since gcloud doesn't always list them.
 #   2. Restricts RDP to this machine's public IP with the firewall rule
 #      vstudio-allow-rdp on the target tag vstudio-dev.
 #   3. Tries each GPU in --gpus (L4 on a G2, then T4 on an N1 by default) in
@@ -132,9 +133,10 @@ gc_change() {
   gc "$@"
 }
 
-# Free quota of METRIC in the "metric,limit,usage" lines on stdin (0 if absent).
+# Free quota of METRIC in the "metric,limit,usage" lines on stdin, or "?" when
+# the metric isn't listed (gcloud's lists don't carry every GPU quota).
 free_quota() {
-  awk -F, -v m="$1" '$1 == m { print int($2 - $3); found = 1; exit } END { if (!found) print 0 }'
+  awk -F, -v m="$1" '$1 == m { print int($2 - $3); found = 1; exit } END { if (!found) print "?" }'
 }
 
 command -v gcloud >/dev/null 2>&1 ||
@@ -162,7 +164,9 @@ gc compute project-info describe --flatten=quotas \
   --format="csv[no-heading](quotas.metric,quotas.limit,quotas.usage)" ||
   die "Could not read the project's quotas:"$'\n'"$err"
 all_regions="$(printf '%s\n' "$out" | free_quota GPUS_ALL_REGIONS)"
-if [ "$all_regions" -lt 1 ]; then
+if [ "$all_regions" = "?" ]; then
+  echo "GPUS_ALL_REGIONS isn't listed for $project; carrying on."
+elif [ "$all_regions" -lt 1 ]; then
   die "GPUS_ALL_REGIONS quota is $all_regions in project $project. If your GPU quota is in" \
     "another project, pass --project <id>. Otherwise request 1 or more at" \
     "https://console.cloud.google.com/iam-admin/quotas?project=$project (filter: GPUs (all regions))." \
@@ -203,6 +207,10 @@ describe_region() {
   printf '%s\n' "$out" >"$work/region-$1"
 }
 
+# The regional quota gcloud reports is only shown, never used to skip a
+# region: the vWS quota can be missing from that list or read 0 while the
+# console still creates the VM. A create refused for quota just moves on to
+# the next zone, like a stockout.
 attempts=""   # words GPU:ZONE, in the order to try
 for gpu in $gpus; do
   accelerator="$(accelerator_of "$gpu")"
@@ -223,19 +231,17 @@ for gpu in $gpus; do
   for region in $ordered; do
     describe_region "$region"
     free="$(free_quota "$quota" <"$work/region-$region")"
-    if [ "$free" -lt 1 ]; then
-      echo "  skip $region: $quota quota has $free free"
-      continue
+    if [ "$free" = "?" ]; then
+      echo "  $region: $quota isn't listed by gcloud; trying it anyway"
+    elif [ "$free" -lt 1 ]; then
+      echo "  $region: $quota reads $free free; trying it anyway"
     fi
     for zone in $(printf '%s\n' "$zones" | grep "^$region-[a-z]\$"); do
       attempts="$attempts $gpu:$zone"
     done
   done
 done
-[ -n "$attempts" ] ||
-  die "No zone has free quota for ${gpus// / or } virtual workstation GPUs." \
-    "Request NVIDIA_L4_VWS_GPUS or NVIDIA_T4_VWS_GPUS in a region at" \
-    "https://console.cloud.google.com/iam-admin/quotas?project=$project."
+[ -n "$attempts" ] || die "No zone offers ${gpus// / or } virtual workstation GPUs in the regions asked for."
 
 # --- create -------------------------------------------------------------------
 
@@ -265,7 +271,8 @@ for attempt in $attempts; do
     die "Create failed for a reason another zone won't fix:"$'\n'"$err"
 done
 [ -n "$created_zone" ] ||
-  die "No zone had capacity. Try again later, or pass --gpus T4 / more --regions."
+  die "No zone had capacity or quota. Try again later, pass --gpus T4 / more --regions, or" \
+    "check NVIDIA_L4_VWS_GPUS / NVIDIA_T4_VWS_GPUS at https://console.cloud.google.com/iam-admin/quotas?project=$project."
 
 if [ $dry_run -eq 1 ]; then
   echo ""

@@ -17,7 +17,10 @@ These can't be scripted:
    *NVIDIA L4 Virtual Workstation GPUs* (`NVIDIA_L4_VWS_GPUS`) or
    *NVIDIA T4 Virtual Workstation GPUs* (`NVIDIA_T4_VWS_GPUS`) in the regions
    you'd use. Requests are usually granted within minutes to a day. The
-   create script checks these and names the one that's missing.
+   create script stops if `GPUS_ALL_REGIONS` is 0. It only reports the
+   regional numbers, since gcloud doesn't always list the vWS quota (or
+   reads 0 where the console still creates the VM); a zone that refuses
+   for quota is skipped like a full one.
 3. **gcloud** on the machine you create the VM from (macOS, Linux or
    Windows): [install it](https://cloud.google.com/sdk/docs/install), then
    `gcloud auth login` and `gcloud config set project <project id>`.
@@ -46,8 +49,8 @@ It restricts RDP to your current public IP (firewall rule
 `vstudio-allow-rdp`, re-pointed on every run, so run it again or pass
 `--allow-rdp-from` / `-AllowRdpFrom` when your IP changes), then tries an L4
 on a `g2-standard-8` and falls back to a T4 on an `n1-standard-8`, zone by
-zone, preferred US regions first, skipping regions without quota and moving
-on when a zone is out of GPUs. The `-vws` GPU types carry the RTX Virtual
+zone, preferred US regions first, moving on when a zone is out of GPUs or
+refuses for quota. The `-vws` GPU types carry the RTX Virtual
 Workstation (GRID) licence. Every L4 region is tried before the first T4,
 including ones outside the US; pass `--only-preferred-regions` to stay in
 the preferred ones.
