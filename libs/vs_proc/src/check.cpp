@@ -1,4 +1,5 @@
 #include "vs/proc/check.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -341,7 +342,7 @@ Diagnostics check_volume_graph(const Graph& graph, const model::Document& docume
       const auto id = text != nullptr ? Id::parse(*text) : std::nullopt;
       if (!id) continue;  // check_graph() reported it
       const model::ConnectionSurface* surface = document.find_connection(*id);
-      if (surface == nullptr || !surface->joins(volume)) {
+      if (surface == nullptr || !model::joins(document, *surface, volume)) {
         out.add(Diagnostic::error(
             "proc.reference.surface",
             fmt::format("'{}' reads connection surface {}, which doesn't join this volume; a graph "

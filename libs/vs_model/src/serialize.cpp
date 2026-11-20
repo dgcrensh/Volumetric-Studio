@@ -72,6 +72,8 @@ ojson volume_json(const Volume& v) {
   ojson j;
   j["id"] = v.id.to_string();
   j["name"] = v.name;
+  // Only children have one (L3), so a flat document's JSON is unchanged.
+  if (!v.parent.is_null()) j["parent"] = v.parent.to_string();
   if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
     j["boundary"] = ojson{{"features", ids_json(fb->features)}};
   } else {
@@ -87,6 +89,15 @@ ojson volume_json(const Volume& v) {
     if (!s->baked_graph.empty()) c["baked_graph"] = s->baked_graph;
   } else if (const auto* p = std::get_if<ParametricContents>(&v.contents)) {
     c["tree"] = tree_json(p->tree);
+  } else if (const auto* comp = std::get_if<CompositeContents>(&v.contents)) {
+    c["layout"] = tree_json(comp->layout);
+    if (!comp->delegations.empty()) {
+      ojson a = ojson::array();
+      for (const auto& d : comp->delegations) {
+        a.push_back(ojson{{"surface", d.surface.to_string()}, {"child", d.child.to_string()}});
+      }
+      c["delegations"] = std::move(a);
+    }
   } else {
     const auto& g = std::get<ProceduralContents>(v.contents);
     if (!g.graph.empty()) c["graph"] = g.graph;
@@ -329,6 +340,7 @@ Volume read_volume(const json& j, const std::string& where) {
   Volume v;
   v.id = read_id(member(j, "id", where), where + ".id");
   v.name = read_optional_string(j, "name", where);
+  if (const json* p = optional_member(j, "parent")) v.parent = read_id(*p, where + ".parent");
   const json& b = member(j, "boundary", where);
   if (b.contains("features")) {
     v.boundary = FeatureBoundary{read_ids(b, "features", where + ".boundary")};
@@ -353,8 +365,22 @@ Volume read_volume(const json& j, const std::string& where) {
     v.contents = ParametricContents{read_tree(member(c, "tree", at), at + ".tree")};
   } else if (kind == "procedural") {
     v.contents = ProceduralContents{read_optional_string(c, "graph", at)};
+  } else if (kind == "composite") {
+    CompositeContents comp;
+    comp.layout = read_tree(member(c, "layout", at), at + ".layout");
+    if (const json* ds = optional_member(c, "delegations")) {
+      if (!ds->is_array()) fail(at + ".delegations", "expected an array");
+      for (std::size_t i = 0; i < ds->size(); ++i) {
+        const std::string dw = fmt::format("{}.delegations[{}]", at, i);
+        const json& d = (*ds)[i];
+        comp.delegations.push_back({read_id(member(d, "surface", dw), dw + ".surface"),
+                                    read_id(member(d, "child", dw), dw + ".child")});
+      }
+    }
+    v.contents = std::move(comp);
   } else {
-    fail(at + ".kind", fmt::format("unknown kind \"{}\" (static, parametric or procedural)", kind));
+    fail(at + ".kind",
+         fmt::format("unknown kind \"{}\" (static, parametric, procedural or composite)", kind));
   }
   if (const json* ps = optional_member(j, "parameters")) {
     if (!ps->is_array()) fail(where + ".parameters", "expected an array");

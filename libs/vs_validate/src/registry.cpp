@@ -1,4 +1,5 @@
 #include "vs/validate/registry.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
 #include <array>
@@ -37,6 +38,8 @@ constexpr std::array kCodes{
              "A bolt hole leaves less than the minimum wall to the flange's edge"},
     CodeInfo{"validate.connection.hole_spacing", Severity::Error, ActOn::ConnectionSurface,
              "Neighbouring bolt holes leave less than the minimum wall between them"},
+    CodeInfo{"validate.nesting.outside", Severity::Error, ActOn::Layout,
+             "A child volume's boundary reaches outside its composite's boundary"},
     CodeInfo{"validate.containment", Severity::Error, ActOn::Contents,
              "Contents cross their volume's boundary by more than the tolerance"},
     CodeInfo{"validate.undecided", Severity::Error, ActOn::Layout,
@@ -46,6 +49,31 @@ constexpr std::array kCodes{
 bool is_feature_kind(SubjectKind kind) {
   return kind == SubjectKind::Feature || kind == SubjectKind::Sketch ||
          kind == SubjectKind::SketchEntity || kind == SubjectKind::Constraint;
+}
+
+// The level a layout-wide subject belongs to (L3): null for the root, else
+// the composite whose layout it is built from.
+Id level_of_subject(const SubjectRef& s, const model::Document& doc) {
+  switch (s.kind) {
+    case SubjectKind::Volume:
+    case SubjectKind::Boundary:
+      if (const auto* v = doc.find_volume(s.id)) return v->parent;
+      break;
+    case SubjectKind::KeepOut:
+      if (const auto* k = doc.find_keep_out(s.id)) return model::level_of(doc, *k);
+      break;
+    case SubjectKind::Link:
+      if (const auto* l = doc.find_link(s.id)) return model::level_of(doc, *l);
+      break;
+    case SubjectKind::Parameter:
+      for (const auto& v : doc.volumes) {
+        if (v.find_parameter(s.id)) return v.parent;
+      }
+      break;
+    default:
+      break;
+  }
+  return {};
 }
 
 }  // namespace
@@ -73,6 +101,7 @@ ActTarget route(const Diagnostic& diagnostic, const model::Document& document) {
       // The volume is the subject itself.
       t.volume = first->kind == SubjectKind::Volume ? first->id : Id{};
     }
+    if (t.on == ActOn::Layout) t.volume = level_of_subject(*first, document);
     return t;
   }
 
@@ -102,6 +131,7 @@ ActTarget route(const Diagnostic& diagnostic, const model::Document& document) {
     t.volume = first->id;
   } else {
     t.on = ActOn::Layout;
+    t.volume = level_of_subject(*first, document);
   }
   return t;
 }

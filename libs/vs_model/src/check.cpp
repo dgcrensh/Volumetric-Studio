@@ -1,12 +1,14 @@
 #include "vs/model/check.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 
 #include <fmt/format.h>
 
 #include "vs/feature/expression.hpp"
 #include "vs/model/dependency.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/model/references.hpp"
 
 namespace vs::model {
@@ -45,6 +47,9 @@ class Checker {
  private:
   const Document& doc_;
   Diagnostics out_;
+  // The level whose layout the references being checked are made from (L3):
+  // the root layout, or a composite's.
+  Scope at_ = Scope::layout();
 
   void error(std::string code, const SubjectRef& by, std::string message,
              std::vector<SubjectRef> more = {}) {
@@ -95,6 +100,66 @@ class Checker {
     for (const auto& l : doc_.links) note(l.id, doc_.link_subject(l.id));
   }
 
+  // A composite's delegations (L3): each passes a surface joining the
+  // composite down to one of its children, once.
+  void composite_structure(const Volume& v) {
+    const SubjectRef self = doc_.volume_subject(v.id);
+    const auto& comp = std::get<CompositeContents>(v.contents);
+    std::set<Id> seen;
+    for (const auto& d : comp.delegations) {
+      const ConnectionSurface* s = doc_.find_connection(d.surface);
+      const Volume* child = doc_.find_volume(d.child);
+      if (s == nullptr || !joins(doc_, *s, v.id)) {
+        error("model.composite.delegation", self,
+              "it passes down a connection surface that doesn't join it",
+              s ? std::vector<SubjectRef>{doc_.connection_subject(s->id)}
+                : std::vector<SubjectRef>{});
+      } else if (!seen.insert(d.surface).second) {
+        error("model.composite.delegation", self,
+              fmt::format("it passes '{}' down twice; one child meets a surface", s->name),
+              {doc_.connection_subject(s->id)});
+      }
+      if (child == nullptr || !(child->parent == v.id)) {
+        error("model.composite.delegation", self,
+              "it passes a connection surface to a volume that isn't one of its children");
+      } else if (child->keep_out) {
+        error("model.composite.delegation", self,
+              fmt::format("it passes a connection surface to '{}', a keep-out volume", child->name),
+              {doc_.volume_subject(child->id)});
+      }
+    }
+    // Seam-bearing surfaces joining it that no child meets: the weld will
+    // refuse them, but a composite is often blocked out before its children.
+    for (const auto& s : doc_.connections) {
+      if (!joins(doc_, s, v.id) || comp.delegation(s.id) != nullptr ||
+          std::holds_alternative<ClearanceParams>(s.params)) {
+        continue;
+      }
+      out_.add(Diagnostic::warning(
+          "model.composite.undelegated",
+          fmt::format("'{}': no child meets the connection surface '{}' that joins it; choose "
+                      "the child lying against it",
+                      self.label, doc_.connection_subject(s.id).label),
+          {self, doc_.connection_subject(s.id)}));
+    }
+  }
+
+  // Volumes a surface, keep-out or link names must be siblings (L3).
+  void same_level(const std::vector<Id>& volumes, const SubjectRef& by) {
+    std::optional<Id> level;
+    for (const Id& id : volumes) {
+      const Volume* v = doc_.find_volume(id);
+      if (v == nullptr) continue;
+      if (level && !(*level == v->parent)) {
+        error("model.level.mixed", by,
+              "the volumes it names have different parents; it may only name volumes of one "
+              "level, and is owned by their parent");
+        return;
+      }
+      level = v->parent;
+    }
+  }
+
   void volume_structure(const Volume& v) {
     const SubjectRef self = doc_.volume_subject(v.id);
     for (const auto& w : doc_.volumes) {
@@ -105,6 +170,23 @@ class Checker {
         break;
       }
     }
+    if (!v.parent.is_null()) {
+      const Volume* p = doc_.find_volume(v.parent);
+      const std::vector<Id> up = ancestors(doc_, v.id);
+      if (p == nullptr || !p->composite()) {
+        error("model.volume.parent", self,
+              p == nullptr ? std::string("its parent volume no longer exists")
+                           : fmt::format("its parent '{}' isn't a composite volume; only a "
+                                         "composite has child volumes",
+                                         p->name),
+              p == nullptr ? std::vector<SubjectRef>{}
+                           : std::vector<SubjectRef>{doc_.volume_subject(p->id)});
+      } else if (!up.empty() && doc_.find_volume(up.back()) != nullptr &&
+                 !doc_.find_volume(up.back())->parent.is_null()) {
+        error("model.volume.parent", self, "its parents form a loop; it is inside itself");
+      }
+    }
+    if (v.composite()) composite_structure(v);
     if (v.keep_out && !v.contents_empty()) {
       error("model.volume.keep_out_contents", self,
             "it is a keep-out volume, which reserves empty space; remove its contents or clear "
@@ -119,7 +201,7 @@ class Checker {
         error("model.volume.bad_parameter", ps, "another parameter of the volume has this name");
       }
       for (const auto& name : expression_names(p.value.expression)) {
-        take(check_variable_name(doc_, Scope::layout(), name, ps));
+        take(check_variable_name(doc_, Scope{v.parent}, name, ps));
       }
     }
     std::set<std::string> outputs;
@@ -130,6 +212,13 @@ class Checker {
       }
       if (o.quantity == OutputQuantity::Mass && !(o.density > 0.0)) {
         error("model.volume.bad_output", os, "a mass needs a positive density");
+      }
+      if (v.composite() && (o.quantity == OutputQuantity::SurfaceArea ||
+                            o.quantity == OutputQuantity::Published)) {
+        error("model.volume.bad_output", os,
+              fmt::format("a composite volume's outputs add up its children's measures; its {} "
+                          "doesn't add up, so publish it from a child",
+                          to_string(o.quantity)));
       }
     }
     if (const auto* s = std::get_if<StaticContents>(&v.contents)) {
@@ -217,6 +306,21 @@ class Checker {
       error("model.link.bad_target", self,
             "its target isn't a layout variable or a volume's parameter");
     }
+    // Inside a composite (L3) the target is a variable of the composite's
+    // layout or a child's parameter; the composite's own parameters are
+    // driven from outside it.
+    const Id level = level_of(doc_, l);
+    if (!level.is_null() && t.owner == level) {
+      const Volume* c = doc_.find_volume(level);
+      const feature::FeatureTree* tree = c != nullptr ? c->tree() : nullptr;
+      if (t.kind == TargetKind::Parameter ||
+          (t.kind == TargetKind::InContents &&
+           (tree == nullptr || tree->variables().find(l.target) == nullptr))) {
+        error("model.link.bad_target", self,
+              "inside a composite, its target must be a variable of the composite's layout or a "
+              "child's parameter");
+      }
+    }
     for (const auto& other : doc_.links) {
       if (&other == &l) break;
       if (other.target == l.target) {
@@ -231,8 +335,14 @@ class Checker {
     unique_ids();
     take(doc_.layout.validate());
     for (const auto& v : doc_.volumes) volume_structure(v);
-    for (const auto& k : doc_.keep_outs) keep_out_structure(k);
-    for (const auto& c : doc_.connections) connection_structure(c);
+    for (const auto& k : doc_.keep_outs) {
+      keep_out_structure(k);
+      same_level(k.volumes, doc_.keep_out_subject(k.id));
+    }
+    for (const auto& c : doc_.connections) {
+      connection_structure(c);
+      same_level(c.volumes, doc_.connection_subject(c.id));
+    }
     for (const auto& l : doc_.links) link_structure(l);
   }
 
@@ -255,11 +365,11 @@ class Checker {
   }
 
   void layout_id(const Id& id, const SubjectRef& by) {
-    take(resolve(doc_, Scope::layout(), id, &by));
+    take(resolve(doc_, at_, id, &by));
   }
   void layout_param(const Param& p, const SubjectRef& by) {
     for (const auto& name : expression_names(p.expression)) {
-      take(check_variable_name(doc_, Scope::layout(), name, by));
+      take(check_variable_name(doc_, at_, name, by));
     }
   }
   void layout_point(const feature::PointRef& ref, const SubjectRef& by) {
@@ -278,17 +388,18 @@ class Checker {
     const SubjectRef by = doc_.boundary_subject(v.id);
     if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
       for (const auto& id : fb->features) {
-        auto r = resolve(doc_, Scope::layout(), id, &by);
+        auto r = resolve(doc_, at_, id, &by);
         if (!r) {
           out_.add(r.error());
           continue;
         }
-        const feature::Feature* f = doc_.layout.find(id);
+        const feature::FeatureTree* layout = level_layout(doc_, at_.volume);
+        const feature::Feature* f = layout != nullptr ? layout->find(id) : nullptr;
         if (!f || !is_solid_feature(*f)) {
           error("model.boundary.not_solid_feature", by,
                 "each boundary feature must be a layout extrude, revolve, sweep or loft that adds "
                 "material",
-                f ? std::vector<SubjectRef>{doc_.layout.subject(id)} : std::vector<SubjectRef>{});
+                f ? std::vector<SubjectRef>{layout->subject(id)} : std::vector<SubjectRef>{});
         }
       }
     } else {
@@ -301,7 +412,7 @@ class Checker {
   void keep_out_references(const KeepOut& k) {
     const SubjectRef by = doc_.keep_out_subject(k.id);
     for (const auto& id : k.cutters) {
-      auto r = resolve(doc_, Scope::layout(), id, &by);
+      auto r = resolve(doc_, at_, id, &by);
       if (!r) {
         out_.add(r.error());
         continue;
@@ -317,7 +428,8 @@ class Checker {
         }
         continue;
       }
-      const feature::Feature* f = doc_.layout.find(id);
+      const feature::FeatureTree* layout = level_layout(doc_, at_.volume);
+      const feature::Feature* f = layout != nullptr ? layout->find(id) : nullptr;
       if (!f || !is_solid_feature(*f)) {
         error("model.keep_out.bad_cutter", by,
               "each cutter must be a layout extrude, revolve, sweep or loft, or a keep-out "
@@ -371,16 +483,24 @@ class Checker {
   void references() {
     tree_references(doc_.layout, Scope::layout());
     for (const auto& v : doc_.volumes) {
+      at_ = Scope{v.parent};
       boundary_references(v);
       if (const auto* t = v.tree()) tree_references(*t, Scope::inside(v.id));
     }
-    for (const auto& k : doc_.keep_outs) keep_out_references(k);
-    for (const auto& c : doc_.connections) connection_references(c);
+    for (const auto& k : doc_.keep_outs) {
+      at_ = Scope{level_of(doc_, k)};
+      keep_out_references(k);
+    }
+    for (const auto& c : doc_.connections) {
+      at_ = Scope{level_of(doc_, c)};
+      connection_references(c);
+    }
     for (const auto& l : doc_.links) {
+      at_ = Scope{level_of(doc_, l)};
       const SubjectRef by = doc_.link_subject(l.id);
-      take(resolve(doc_, Scope::layout(), l.source.volume, &by));
-      take(resolve(doc_, Scope::layout(), l.source.output, &by));
-      take(resolve(doc_, Scope::layout(), l.target, &by));
+      take(resolve(doc_, at_, l.source.volume, &by));
+      take(resolve(doc_, at_, l.source.output, &by));
+      take(resolve(doc_, at_, l.target, &by));
     }
   }
 };

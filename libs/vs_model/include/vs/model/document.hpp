@@ -6,11 +6,14 @@
 //
 //   - the root layout: a feature tree (with the global variables) whose
 //     solid features and datums define boundaries and connection surfaces;
-//   - the volumes directly under the root (the MVP has one level of
-//     nesting; composite volumes are a later milestone);
-//   - the connection surfaces between them, which the root owns because it
-//     is the common parent of every pair of volumes (spec: "owner: always
-//     the common parent ... never one of those volumes");
+//   - the volumes, at every depth (L3): those directly under the root, and
+//     the children of composite volumes, each naming its parent. They are
+//     one flat list; the tree is in the `parent` ids (hierarchy.hpp);
+//   - the connection surfaces between them, each owned by the common parent
+//     of the volumes it joins (spec: "owner: always the common parent ...
+//     never one of those volumes"): the root, or a composite volume from
+//     whose layout its geometry is built. Keep-outs and links likewise
+//     belong to the level of the volumes they name;
 //   - keep-out regions, which cut volumes' boundaries before contents
 //     generate;
 //   - links, through which a volume's published output feeds a layout
@@ -66,7 +69,7 @@ using Boundary = std::variant<FeatureBoundary, BoxBoundary>;
 
 // --- contents -------------------------------------------------------------------
 
-enum class VolumeKind { Static, Parametric, Procedural };
+enum class VolumeKind { Static, Parametric, Procedural, Composite };
 std::string_view to_string(VolumeKind kind);
 
 // Imported or baked geometry, held as a blob of the project (project.hpp).
@@ -97,7 +100,32 @@ struct ProceduralContents {
   friend bool operator==(const ProceduralContents&, const ProceduralContents&) = default;
 };
 
-using Contents = std::variant<StaticContents, ParametricContents, ProceduralContents>;
+// Which child meets a connection surface that joins a composite volume from
+// outside (L3). The surface is a fixed input of the composite, which passes
+// it down to the child lying against it; the child takes it as a fixed
+// input too, and passes it further down if it is a composite itself.
+struct Delegation {
+  Id surface;
+  Id child;
+  friend bool operator==(const Delegation&, const Delegation&) = default;
+};
+
+// Child volumes (L3). The children are the volumes whose `parent` is this
+// one. What the composite holds is its own layout: a feature tree rebuilt
+// as a parametric volume's tree is (its boundary, the connection surfaces
+// joining it and its parameters are its inputs), from which its children's
+// boundaries, the connection surfaces and keep-outs between them and their
+// parameters' expressions are built. It is to its children what the root
+// layout is to the top-level volumes.
+struct CompositeContents {
+  feature::FeatureTree layout;
+  std::vector<Delegation> delegations;
+  [[nodiscard]] const Delegation* delegation(const Id& surface) const;
+  friend bool operator==(const CompositeContents&, const CompositeContents&) = default;
+};
+
+using Contents =
+    std::variant<StaticContents, ParametricContents, ProceduralContents, CompositeContents>;
 
 // --- parameters and published outputs -----------------------------------------------
 
@@ -138,6 +166,10 @@ struct PublishedOutput {
 struct Volume {
   Id id;
   std::string name;
+  // The composite volume this one is a child of; null directly under the
+  // root (L3). Its boundary, and the surfaces, keep-outs and links naming
+  // it, are built from that parent's layout.
+  Id parent;
   Boundary boundary;
   // A keep-out volume reserves its boundary as empty space for its siblings:
   // it never has contents (its contents must be an empty placeholder), and
@@ -149,8 +181,15 @@ struct Volume {
   std::vector<PublishedOutput> outputs;
 
   [[nodiscard]] VolumeKind kind() const { return static_cast<VolumeKind>(contents.index()); }
-  // True for a placeholder: no file, no features, no graph.
+  // True for a placeholder: no file, no features, no graph. A composite is
+  // never a placeholder.
   [[nodiscard]] bool contents_empty() const;
+  [[nodiscard]] bool composite() const {
+    return std::holds_alternative<CompositeContents>(contents);
+  }
+  // The feature tree inside the volume: a parametric volume's tree, or a
+  // composite's layout (L3). Both are private to the volume and rebuilt
+  // with its inputs.
   [[nodiscard]] const feature::FeatureTree* tree() const;
   [[nodiscard]] feature::FeatureTree* tree();
   [[nodiscard]] const VolumeParameter* find_parameter(const Id& id) const;
