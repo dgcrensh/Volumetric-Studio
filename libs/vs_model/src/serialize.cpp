@@ -43,6 +43,16 @@ ojson plane_ref_json(const PlaneRef& ref) {
   return ojson{{"face", ojson{{"feature", face.feature.to_string()}, {"name", face.name}}}};
 }
 
+ojson axis_ref_json(const feature::AxisRef& ref) {
+  if (const auto* p = std::get_if<feature::PrincipalAxis>(&ref)) {
+    return ojson{{"principal", std::string(feature::to_string(*p))}};
+  }
+  if (const auto* f = std::get_if<feature::FeatureRef>(&ref)) {
+    return ojson{{"feature", f->feature.to_string()}};
+  }
+  return entity_ref_json(std::get<feature::SketchEntityRef>(ref));
+}
+
 ojson point_ref_json(const PointRef& ref) {
   if (const auto* f = std::get_if<feature::FeatureRef>(&ref)) {
     return ojson{{"feature", f->feature.to_string()}};
@@ -111,6 +121,13 @@ ojson connection_json(const ConnectionSurface& c) {
   j["volumes"] = ids_json(c.volumes);
   if (const auto* sp = std::get_if<SketchPatch>(&c.geometry)) {
     j["geometry"] = ojson{{"sketch", sp->sketch.to_string()}};
+  } else if (const auto* cp = std::get_if<CylinderPatch>(&c.geometry)) {
+    j["geometry"] = ojson{{"cylinder", ojson{{"axis", axis_ref_json(cp->axis)},
+                                             {"radius", param_json(cp->radius)},
+                                             {"start_angle", param_json(cp->start_angle)},
+                                             {"sweep", param_json(cp->sweep)},
+                                             {"start", param_json(cp->start)},
+                                             {"length", param_json(cp->length)}}}};
   } else {
     const auto& dp = std::get<DatumPatch>(c.geometry);
     j["geometry"] = ojson{{"datum", ojson{{"plane", plane_ref_json(dp.plane)},
@@ -268,6 +285,20 @@ PlaneRef read_plane_ref(const json& j, std::string_view where) {
   fail(where, "expected \"principal\", \"feature\" or \"face\"");
 }
 
+feature::AxisRef read_axis_ref(const json& j, std::string_view where) {
+  if (!j.is_object()) fail(where, "expected an axis reference object");
+  if (const json* p = optional_member(j, "principal")) {
+    const auto s = read_string(*p, where);
+    if (s == "x") return feature::PrincipalAxis::X;
+    if (s == "y") return feature::PrincipalAxis::Y;
+    if (s == "z") return feature::PrincipalAxis::Z;
+    fail(where, fmt::format("unknown principal axis \"{}\" (x, y or z)", s));
+  }
+  if (const json* f = optional_member(j, "feature")) return feature::FeatureRef{read_id(*f, where)};
+  if (const json* e = optional_member(j, "sketch_entity")) return read_entity_ref(*e, where);
+  fail(where, "expected \"principal\", \"feature\" or \"sketch_entity\"");
+}
+
 PointRef read_point_ref(const json& j, std::string_view where) {
   if (!j.is_object()) fail(where, "expected a point reference object");
   if (const json* f = optional_member(j, "feature")) return feature::FeatureRef{read_id(*f, where)};
@@ -375,8 +406,18 @@ ConnectionSurface read_connection(const json& j, const std::string& where) {
     dp.width = read_param_or(*d, "width", dw, dp.width);
     dp.height = read_param_or(*d, "height", dw, dp.height);
     c.geometry = dp;
+  } else if (const json* cy = optional_member(g, "cylinder")) {
+    const std::string cw = gw + ".cylinder";
+    CylinderPatch cp;
+    cp.axis = read_axis_ref(member(*cy, "axis", cw), cw + ".axis");
+    cp.radius = read_param_or(*cy, "radius", cw, cp.radius);
+    cp.start_angle = read_param_or(*cy, "start_angle", cw, cp.start_angle);
+    cp.sweep = read_param_or(*cy, "sweep", cw, cp.sweep);
+    cp.start = read_param_or(*cy, "start", cw, cp.start);
+    cp.length = read_param_or(*cy, "length", cw, cp.length);
+    c.geometry = cp;
   } else {
-    fail(gw, "expected \"sketch\" or \"datum\"");
+    fail(gw, "expected \"sketch\", \"datum\" or \"cylinder\"");
   }
   const auto type = read_string(member(j, "type", where), where + ".type");
   if (type == "bonded") {

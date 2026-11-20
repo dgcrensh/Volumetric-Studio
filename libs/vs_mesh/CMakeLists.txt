@@ -29,6 +29,7 @@ vs_add_library_tests(vs_mesh
   SOURCES
     tests/meshers.cpp
     tests/test_combine.cpp
+    tests/test_curved.cpp
     tests/test_module.cpp
     tests/test_seam.cpp
     tests/test_seam_library.cpp

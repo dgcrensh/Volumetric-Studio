@@ -23,6 +23,7 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRep_Tool.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <Geom_CylindricalSurface.hxx>
 #include <Geom_Plane.hxx>
 #include <Geom_Surface.hxx>
 #include <TopoDS.hxx>
@@ -31,6 +32,7 @@
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
 
 #include "occt.hpp"
@@ -286,6 +288,55 @@ Result<Solid> make_box(const dbox3& box, const ProductSettings& settings) {
     }
     BRepPrimAPI_MakeBox mk(to_occ(box.min), to_occ(box.max));
     return finish_primitive(mk.Solid(), "box", settings);
+  });
+}
+
+Result<Face> make_cylinder_face(const Axis& axis, const dvec3& x_direction, double radius,
+                                double start_angle, double sweep, double start, double length,
+                                const ProductSettings& settings) {
+  return detail::guarded<Result<Face>>("kernel.primitive.failed", "Building a cylinder face",
+                                       [&]() -> Result<Face> {
+    if (auto d = check_axis(axis)) return *d;
+    const dvec3 dir = core::normalize(axis.direction);
+    const dvec3 x = x_direction - dir * core::dot(x_direction, dir);
+    if (!is_finite(x_direction) || core::length(x) < 1e-12 ||
+        !std::isfinite(start_angle) || !std::isfinite(start)) {
+      return Diagnostic::error("kernel.primitive.bad_axis",
+                               "The angle-0 direction must be finite and not along the axis");
+    }
+    if (auto d = check_length("kernel.primitive.invalid_size", "cylinder radius", radius, settings)) {
+      return *d;
+    }
+    if (auto d = check_length("kernel.primitive.invalid_size", "face length", length, settings)) {
+      return *d;
+    }
+    constexpr double kTurn = 2.0 * std::numbers::pi;
+    if (!std::isfinite(sweep) || sweep > kTurn + 1e-12) {
+      return Diagnostic::error("kernel.primitive.invalid_size",
+                               "The face's sweep must be at most a full turn");
+    }
+    if (auto d = check_length("kernel.primitive.invalid_size", "face arc", sweep * radius,
+                              settings)) {
+      return *d;
+    }
+    const dvec3 xn = core::normalize(x);
+    const gp_Ax3 frame(to_occ(axis.origin), gp_Dir(dir.x, dir.y, dir.z), gp_Dir(xn.x, xn.y, xn.z));
+    const occ::handle<Geom_CylindricalSurface> surface = new Geom_CylindricalSurface(frame, radius);
+    const double end_angle = start_angle + std::min(sweep, kTurn);
+    BRepBuilderAPI_MakeFace mk(surface, start_angle, end_angle, start, start + length,
+                               settings.linear_tolerance_mm);
+    if (!mk.IsDone()) {
+      return Diagnostic::error("kernel.primitive.invalid", "The cylinder face couldn't be built");
+    }
+    auto face = Face::from(detail::wrap(mk.Face()));
+    if (!face) return face;
+    const Diagnostics problems = check_validity(*face);
+    if (problems.has_errors()) {
+      return Diagnostic::error("kernel.primitive.invalid",
+                               "The cylinder face is invalid. " + problems[0].message);
+    }
+    if (auto d = check_in_working_space(*face, settings)) return *d;
+    return face;
   });
 }
 

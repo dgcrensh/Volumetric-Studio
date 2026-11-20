@@ -71,6 +71,19 @@ inline Result<Face> make_face(const Loop& outer, const ProductSettings& settings
   return make_face(outer, {}, settings);
 }
 
+// A face on a cylinder (L2's curved connection surfaces). The cylinder has
+// `radius` round `axis`; angle 0 lies along `x_direction` (perpendicular
+// to the axis) and angles run counter-clockwise about the axis's
+// direction. The face spans angles [start_angle, start_angle + sweep] and
+// distances [start, start + length] along the axis from its origin; its
+// normal points away from the axis. A sweep of 2π gives a band, whose
+// surface seam lies at start_angle. Fails with "kernel.primitive.*" codes
+// for a bad axis, a radius, arc or length below the minimum feature size,
+// a sweep over a full turn, or a face outside the working space.
+Result<Face> make_cylinder_face(const Axis& axis, const dvec3& x_direction, double radius,
+                                double start_angle, double sweep, double start, double length,
+                                const ProductSettings& settings);
+
 // --- primitive solids -----------------------------------------------------
 
 // An axis-aligned box.

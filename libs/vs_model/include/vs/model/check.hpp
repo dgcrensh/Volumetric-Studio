@@ -26,6 +26,7 @@
 //                  model.connection.not_volume     a joined id isn't a volume
 //                  model.connection.keep_out       it joins a keep-out volume
 //                  model.connection.unknown_thread the thread isn't an ISO size
+//                  model.connection.curved_flange  a bolted flange on a cylinder patch
 //                  model.link.not_output           the source isn't a published output
 //                  model.link.not_scalar           the source isn't one number
 //                  model.link.bad_target           the target isn't a layout variable or
