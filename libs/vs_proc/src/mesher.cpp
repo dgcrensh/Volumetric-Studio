@@ -318,7 +318,9 @@ std::vector<std::size_t> offsets(eval::ThreadPool* pool, std::size_t n, const Ke
   std::vector<std::size_t> at(chunks + 1, 0);
   in_chunks(pool, n, [&](std::size_t b, std::size_t e) {
     std::size_t c = 0;
-    for (std::size_t i = b; i < e; ++i) c += keep(i) ? 1 : 0;
+    for (std::size_t i = b; i < e; ++i) {
+      if (keep(i)) ++c;
+    }
     at[b / kChunk + 1] = c;
   });
   for (std::size_t c = 0; c < chunks; ++c) at[c + 1] += at[c];
