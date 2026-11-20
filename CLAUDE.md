@@ -84,6 +84,22 @@ can't be added from a cloud session**: land it from a desktop or let CI on
 download, so a small library can be vendored under `third_party/` instead,
 as miniz was (decision 0006).
 
+### Prebuilt dependencies on a second Windows machine (GPU VM)
+
+The desktop publishes its Windows vcpkg archives (OCCT, Qt, ...) to the
+`vcpkg-cache-x64-windows` prerelease with `scripts\vcpkg-cache.ps1 publish`;
+another machine pulls them with `fetch`. They only hit with the exact MSVC
+build pinned in `scripts\windows-toolchain.json` and the same vcpkg
+baseline, so assets are named by that key (`vcpkg-cache.ps1 key`), and
+`build.ps1` warns when the local toolset isn't the pinned one. After a new
+dependency, a baseline bump or a Visual Studio update, rebuild the app
+preset on the desktop and publish again. `scripts\gcp\New-DevVm.ps1`
+(or `scripts/gcp/new-dev-vm.sh` from macOS or Linux: bash 3.2 and BSD
+tools, `--dry-run` to check first) creates a Compute Engine GPU VM whose
+startup script (`scripts\gcp\bootstrap-windows.ps1`) installs everything
+and builds;
+`docs/dev-vm.md` has the manual steps and decision 0019 the reasoning.
+
 ## Layout
 
 ```

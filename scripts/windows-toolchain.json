@@ -1,0 +1,13 @@
+{
+  "comment": "The Windows toolchain every machine builds with, so vcpkg's binary archives (Open CASCADE, Qt) built on one hit on another. vcpkg keys each archive by the exact cl.exe, its own commit (vcpkg.json builtin-baseline) and the triplet. Change this only together with a rebuild and scripts/vcpkg-cache.ps1 publish from the desktop. See docs/decisions/0019-windows-dev-vm-and-shared-cache.md.",
+  "visualStudio": "17.14",
+  "msvc": "14.44.35207",
+  "windowsSdk": "10.0.26100.0",
+  "buildToolsUrl": "https://aka.ms/vs/17/release/vs_buildtools.exe",
+  "components": [
+    "Microsoft.VisualStudio.Workload.VCTools",
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Microsoft.VisualStudio.Component.VC.CMake.Project",
+    "Microsoft.VisualStudio.Component.Windows11SDK.26100"
+  ]
+}
