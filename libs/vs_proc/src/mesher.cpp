@@ -55,6 +55,26 @@ std::shared_ptr<MeshingBackend> meshing_backend() {
   return backend_slot();
 }
 
+const NetTables& net_tables() {
+  static const NetTables tables = [] {
+    NetTables t;
+    for (Index k = 0; k < 6; ++k) {
+      const auto c = tet_corners(k);
+      for (Index i = 0; i < 4; ++i) t.tet_corners[k][i] = static_cast<std::uint32_t>(c[i]);
+    }
+    for (Index d = 0; d < 7; ++d) {
+      t.directions[d] = static_cast<std::uint32_t>(kDirections[d]);
+      for (const auto& [offset, tet] : rounds()[d].tets) {
+        t.rounds[d].push_back({{static_cast<std::int32_t>(offset[0]), static_cast<std::int32_t>(offset[1]),
+                                static_cast<std::int32_t>(offset[2])},
+                               static_cast<std::uint32_t>(tet)});
+      }
+    }
+    return t;
+  }();
+  return tables;
+}
+
 // --- the unmerged net ------------------------------------------------------------------
 //
 // The serial loops of surface_nets_reference(), split by z: each layer of

@@ -46,16 +46,16 @@ SampledField random_grid(std::mt19937_64& rng, std::uint32_t nx, std::uint32_t n
     for (std::uint32_t k = 0; k < nz; ++k) {
       for (std::uint32_t j = 0; j < ny; ++j) {
         for (std::uint32_t i = 0; i < nx; ++i) {
-          const float fx = static_cast<float>(i % c) / c;
-          const float fy = static_cast<float>(j % c) / c;
-          const float fz = static_cast<float>(k % c) / c;
+          const float fx = static_cast<float>(i % c) / static_cast<float>(c);
+          const float fy = static_cast<float>(j % c) / static_cast<float>(c);
+          const float fz = static_cast<float>(k % c) / static_cast<float>(c);
           const std::uint32_t I = i / c;
           const std::uint32_t J = j / c;
           const std::uint32_t K = k / c;
           float v = 0.0f;
-          for (int d = 0; d < 8; ++d) {
+          for (std::uint32_t d = 0; d < 8; ++d) {
             const float w = ((d & 1) ? fx : 1 - fx) * ((d & 2) ? fy : 1 - fy) * ((d & 4) ? fz : 1 - fz);
-            v += w * at(I + (d & 1), J + ((d >> 1) & 1), K + ((d >> 2) & 1));
+            v += w * at(I + (d & 1u), J + ((d >> 1) & 1u), K + ((d >> 2) & 1u));
           }
           s.values[s.grid.index(i, j, k)] = v;
         }

@@ -43,4 +43,9 @@ std::string glsl_double(double x);
 // sin_det/cos_det, ...), for tests that exercise them alone.
 const std::string& prelude();
 
+// The arithmetic alone (next_up, sqrt_rn, mn, mx, cl, dot3, len3, sub3,
+// add3, mul3, nan_d, inf_d), for other shaders; they must `#define P
+// precise` first.
+const std::string& arithmetic_glsl();
+
 }  // namespace vs::gpu

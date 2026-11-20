@@ -61,6 +61,7 @@
 //   proc.mesh.invalid         the mesh isn't closed and manifold (a bug:
 //                             the construction above should never allow it)
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -165,6 +166,23 @@ class MeshingBackend {
   // Fills `net` and returns true, or returns false to leave it to the CPU.
   virtual bool unmerged_net(const SampledField& samples, UnmergedNet& net) = 0;
 };
+// For backends: how surface_nets() splits the grid. Cube corner c sits at
+// (c & 1, (c >> 1) & 1, (c >> 2) & 1); tetrahedron t has corners
+// tet_corners[t], lowest first; grid edges run from a point P to P +
+// direction (corner bits) for the seven directions in order; round d lists
+// the tetrahedra round such an edge in fan order, each by its cube's
+// lowest corner relative to P and its index.
+struct NetTables {
+  struct RoundTet {
+    std::array<std::int32_t, 3> offset;
+    std::uint32_t tet;
+  };
+  std::array<std::array<std::uint32_t, 4>, 6> tet_corners;
+  std::array<std::uint32_t, 7> directions;
+  std::array<std::vector<RoundTet>, 7> rounds;
+};
+const NetTables& net_tables();
+
 // Process-wide; null removes it. Not while meshes are being made.
 void set_meshing_backend(std::shared_ptr<MeshingBackend> backend);
 [[nodiscard]] std::shared_ptr<MeshingBackend> meshing_backend();

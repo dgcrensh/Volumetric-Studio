@@ -72,7 +72,7 @@ class Viewport : public QWidget {
   // Secondary items (sketches a feature uses) are shown only while their
   // subject is highlighted.
   void set_highlight(const std::vector<core::Id>& subjects);
-  // Edit in context (M14): everything but olume's own items (its
+  // Edit in context (M14): everything but `volume`'s own items (its
   // boundary, contents and sketches) and the connection surfaces in
   // inputs is drawn dimmed and can't be picked. A null volume ends it.
   void set_context(const core::Id& volume, const std::vector<core::Id>& inputs);
