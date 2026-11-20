@@ -23,7 +23,8 @@ vs_add_application(vstudio-cli
     vs::vs_validate
     vs::vs_mesh
     vs::vs_eval
-    vs::vs_proc)
+    vs::vs_proc
+    vs::vs_gpu)
 
 if(VS_BUILD_TESTS)
   add_test(NAME "vstudio-cli: --version" COMMAND vstudio-cli --version)
@@ -241,4 +242,13 @@ if(VS_BUILD_TESTS)
     COMMAND vstudio-cli bench-gyroid --size 20 --cell 1)
   set_tests_properties("vstudio-cli: bench-gyroid times a small gyroid" PROPERTIES
     PASS_REGULAR_EXPRESSION "surface nets.*containment.*contained.*engine.*mass")
+endif()
+
+if(VS_BUILD_TESTS)
+  # L1: the same procedural project with fields sampled on the GPU (or, with
+  # no usable GPU, on the CPU, saying why): the same output hash either way.
+  add_test(NAME "vstudio-cli: --gpu samples a procedural volume"
+    COMMAND vstudio-cli --gpu rebuild "${PROJECT_SOURCE_DIR}/libs/vs_proc/tests/data/shell_and_ball.vsproj")
+  set_tests_properties("vstudio-cli: --gpu samples a procedural volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "gpu +(fields sampled on|not used).*Shelled +current +regenerated.*result +ok")
 endif()

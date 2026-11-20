@@ -68,6 +68,7 @@ target_link_libraries(vs_app_lib
     vs::vs_mesh
     vs::vs_eval
     vs::vs_proc
+    vs::vs_gpu
     Qt6::Widgets
   PRIVATE
     # OCCT's visualisation toolkits, for the viewport only; the kernel's

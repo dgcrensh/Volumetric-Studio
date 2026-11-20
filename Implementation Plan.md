@@ -418,7 +418,7 @@ These follow the spec's "Later" list, roughly in order of value. Each will need 
 
 | # | Milestone | Notes |
 | --- | --- | --- |
-| L1 | GPU field evaluation | Compute shaders for field sampling with ordered reductions or quantised hashing; must match CPU hashes or document the quantisation. Plan: `docs/plans/L1-gpu-field-evaluation.md` |
+| L1 | GPU field evaluation | Compute shaders for field sampling with ordered reductions or quantised hashing; must match CPU hashes or document the quantisation. Plan: `docs/plans/L1-gpu-field-evaluation.md`. **Done (#PR):** exact, no quantisation: GLSL FP64 with a correctly rounded sqrt gives the CPU's samples bit for bit; sampling 2.8x faster than 4 CPU threads on the 100 mm gyroid, but meshing now dominates (decision 0018) |
 | L2 | Curved connection surfaces | Authored or derived seam definitions on curved patches (spec open question) |
 | L3 | Composite volumes and deep nesting | Child volumes authored at any depth |
 | L4 | Procedures that emit child volumes | Generated layouts pass the same overlap and containment checks |
