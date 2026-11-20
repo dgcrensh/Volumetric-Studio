@@ -2,8 +2,10 @@
 
 #include <fmt/format.h>
 
+#include <functional>
 #include <variant>
 
+#include "vs/model/hierarchy.hpp"
 #include "vs/proc/graph.hpp"
 
 namespace vs::app {
@@ -126,14 +128,33 @@ std::vector<VolumeRow> volume_rows(const eval::Evaluation& evaluation,
                                    const std::map<Id, model::VolumeStatus>& states) {
   std::vector<VolumeRow> rows;
   const model::Document& doc = evaluation.document;
+  // Depth first, children after their composite (L3); a flat document stays
+  // in document order. Volumes no walk reaches (a broken parent) come last.
+  std::vector<std::pair<std::size_t, std::size_t>> order;  // index, depth
+  std::vector<bool> listed(doc.volumes.size(), false);
+  const std::function<void(const Id&, std::size_t)> walk = [&](const Id& level, std::size_t depth) {
+    for (const std::size_t i : model::children(doc, level)) {
+      if (listed[i]) continue;
+      listed[i] = true;
+      order.emplace_back(i, depth);
+      if (doc.volumes[i].composite()) walk(doc.volumes[i].id, depth + 1);
+    }
+  };
+  walk({}, 0);
   for (std::size_t i = 0; i < doc.volumes.size(); ++i) {
+    if (!listed[i]) order.emplace_back(i, 0);
+  }
+  for (const auto& [i, depth] : order) {
     const model::Volume& v = doc.volumes[i];
     VolumeRow row;
+    row.parent = listed[i] ? v.parent : Id{};
+    row.depth = depth;
     row.id = v.id;
     row.name = v.name.empty() ? fmt::format("Volume {}", i + 1) : v.name;
     row.kind = v.kind();
     row.keep_out = v.keep_out;
     row.placeholder = v.contents_empty();
+    row.generated = v.generated;
     if (const auto* r = evaluation.find(v.id)) {
       row.status = r->status;
       row.stale_contents = r->stale_contents;
@@ -171,13 +192,21 @@ std::vector<SurfaceRow> surface_rows(const eval::Evaluation& evaluation) {
   return rows;
 }
 
+std::string base_kind_label(const VolumeRow& row);
+
 std::string kind_label(const VolumeRow& row) {
+  if (row.generated) return "Generated " + base_kind_label(row);
+  return base_kind_label(row);
+}
+
+std::string base_kind_label(const VolumeRow& row) {
   if (row.keep_out) return "Keep-out";
   if (row.placeholder) return "Placeholder";
   switch (row.kind) {
     case model::VolumeKind::Static: return "Static";
     case model::VolumeKind::Parametric: return "Parametric";
     case model::VolumeKind::Procedural: return "Procedural";
+    case model::VolumeKind::Composite: return "Composite";
   }
   return "?";
 }
@@ -318,7 +347,9 @@ std::vector<Property> inspect(const eval::Evaluation& evaluation, const Selectio
       if (s->volumes.size() == 1) joins += ", outside";
       add("Connection surface", "Joins", joins);
       add("Connection surface", "Patch",
-          std::holds_alternative<model::SketchPatch>(s->geometry) ? "sketch profile" : "datum rectangle");
+          std::holds_alternative<model::SketchPatch>(s->geometry)     ? "sketch profile"
+          : std::holds_alternative<model::CylinderPatch>(s->geometry) ? "cylinder"
+                                                                      : "datum rectangle");
       if (cb != nullptr && cb->ok) add("Connection surface", "Area", number(cb->area) + " mm²");
       add("Connection surface", "Seam spacing",
           s->seam.spacing > 0 ? number(s->seam.spacing) + " mm" : "derived");
@@ -358,8 +389,10 @@ std::vector<Property> inspect(const eval::Evaluation& evaluation, const Selectio
     case Selection::Kind::Node: {
       const model::Volume* v = doc.find_volume(selection.volume);
       const auto* pc = v != nullptr ? std::get_if<model::ProceduralContents>(&v->contents) : nullptr;
-      if (pc == nullptr) break;
-      auto graph = proc::graph_from_json(pc->graph);
+      // L4: or a composite's generator.
+      const auto* cc = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+      if (pc == nullptr && (cc == nullptr || !cc->generates())) break;
+      auto graph = proc::graph_from_json(pc != nullptr ? pc->graph : cc->generator);
       if (!graph) break;
       const proc::Node* n = graph->find_node(selection.id);
       if (n == nullptr) break;

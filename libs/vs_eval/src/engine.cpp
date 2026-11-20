@@ -1,6 +1,9 @@
 #include "vs/eval/engine.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
+#include <set>
+#include <unordered_set>
 #include <utility>
 
 #include <fmt/format.h>
@@ -8,6 +11,7 @@
 #include "vs/eval/measure.hpp"
 #include "vs/core/version.hpp"
 #include "vs/mesh/io.hpp"
+#include "vs/mesh/seam_library.hpp"
 #include "vs/model/check.hpp"
 #include "vs/model/dependency.hpp"
 #include "vs/validate/containment.hpp"
@@ -47,13 +51,45 @@ Hash256 Evaluation::output_hash() const {
 
 namespace {
 
+// L2: per triangle of a volume's mesh, the containment slack its seams
+// allow. Triangles touching a curved seam's vertex are the seam's chords of
+// the shared surface, or meet them, so their centroids may stray outside by
+// the seam's deflection plus the boundary tessellation's; nothing else gets
+// any. Empty when no curved surface joins the volume.
+std::vector<float> curved_seam_slack(const model::Document& document,
+                                     const model::DocumentBuild& layout, const Id& volume,
+                                     const mesh::Mesh& m, const core::ProductSettings& settings) {
+  bool curved = false;
+  for (std::size_t k = 0; k < document.connections.size(); ++k) {
+    if (model::joins(document, document.connections[k], volume) && k < layout.connections.size() &&
+        layout.connections[k].ok && layout.connections[k].cylinder) {
+      curved = true;
+    }
+  }
+  if (!curved) return {};
+  std::unordered_set<Id> ids;
+  for (const mesh::Seam& s : mesh::build_seams(document, layout, settings, volume).seams) {
+    if (!s.curved()) continue;
+    for (const mesh::SeamVertex& v : s.vertices) ids.insert(v.id);
+  }
+  std::vector<float> slack(m.triangle_count(), 0.0f);
+  for (std::size_t t = 0; t < slack.size(); ++t) {
+    for (const std::uint32_t v : m.triangle(t)) {
+      if (!m.seam_vertices[v].is_null() && ids.contains(m.seam_vertices[v])) {
+        slack[t] = static_cast<float>(2.0 * mesh::kSeamDeflection);
+      }
+    }
+  }
+  return slack;
+}
+
 // The document with each link's value written into its target: a layout
 // variable takes it as its expression, a parameter as its value.
 model::Document apply_links(const model::Document& document, const std::map<Id, double>& values) {
   model::Document out = document;
   for (const auto& [target, value] : values) {
+    // The shortest text that reads back as the same double.
     if (out.layout.variables().find(target) != nullptr) {
-      // The shortest text that reads back as the same double.
       (void)out.layout.variables().set_expression(target, fmt::format("{}", value));
       continue;
     }
@@ -61,9 +97,51 @@ model::Document apply_links(const model::Document& document, const std::map<Id, 
       for (auto& p : v.parameters) {
         if (p.id == target) p.value = feature::Param::of(value);
       }
+      // A variable of a composite's layout (L3).
+      if (auto* c = std::get_if<model::CompositeContents>(&v.contents);
+          c != nullptr && c->layout.variables().find(target) != nullptr) {
+        (void)c->layout.variables().set_expression(target, fmt::format("{}", value));
+      }
     }
   }
   return out;
+}
+
+// A volume's contents measured for its composite parent's outputs (L3).
+model::ContentsMeasure measure_contents(const model::Volume& v, const GeneratedContents& c,
+                                        ThreadPool& pool) {
+  if (!c.solid.is_empty()) return model::measure_solid(c.solid);
+  model::ContentsMeasure m;
+  if (!c.mesh || c.mesh->triangle_count() == 0) return m;
+  model::Volume probe;
+  probe.id = v.id;
+  probe.outputs = {{Id::derive(v.id, "volume"), "volume", model::OutputQuantity::Volume, 1.0},
+                   {Id::derive(v.id, "centre"), "centre", model::OutputQuantity::CentreOfGravity,
+                    1.0},
+                   {Id::derive(v.id, "envelope"), "envelope", model::OutputQuantity::Envelope,
+                    1.0}};
+  const auto measured = measure_mesh(probe, *c.mesh, pool);
+  if (measured.size() != 3 || !measured[0].value || !measured[1].value || !measured[2].value) {
+    return m;
+  }
+  m.volume = std::get<double>(*measured[0].value);
+  m.moment = std::get<core::dvec3>(*measured[1].value) * m.volume;
+  m.envelope = std::get<core::dbox3>(*measured[2].value);
+  m.any = true;
+  return m;
+}
+
+// The composite whose generator made `id` (a volume, or a surface joining
+// generated volumes); null for anything authored (L4).
+Id generated_owner(const model::Document& document, const Id& id) {
+  if (const model::Volume* v = document.find_volume(id)) return v->generated ? v->parent : Id{};
+  if (const model::ConnectionSurface* c = document.find_connection(id)) {
+    for (const Id& vid : c->volumes) {
+      const model::Volume* v = document.find_volume(vid);
+      if (v != nullptr && v->generated) return v->parent;
+    }
+  }
+  return {};
 }
 
 // One generation, before containment.
@@ -93,6 +171,7 @@ void Engine::reset() {
   const std::lock_guard lock(state_mutex_);
   states_.clear();
   last_valid_.clear();
+  layouts_.clear();
   cache_.clear_memory();
 }
 
@@ -110,6 +189,87 @@ std::shared_ptr<ContentsGenerator> Engine::generator(model::VolumeKind kind) con
   return it == generators_.end() ? nullptr : it->second;
 }
 
+void Engine::set_layout_generator(std::shared_ptr<LayoutGenerator> generator) {
+  const std::lock_guard eval_lock(evaluate_mutex_);
+  layout_generator_ = std::move(generator);
+  layouts_.clear();
+}
+
+std::shared_ptr<LayoutGenerator> Engine::layout_generator() const { return layout_generator_; }
+
+// The document with every generating composite's children written in (L4),
+// and what happened to the composites that got none.
+struct Engine::Expansion {
+  model::Document document;
+  std::map<Id, Diagnostics> failed;  // generator or expansion failed: Failed
+  std::set<Id> stale;                // no layout generator: Stale
+};
+
+Engine::Expansion Engine::expand_generated(const model::Document& document,
+                                           const CancellationToken& cancel,
+                                           EvaluationStats& stats) {
+  Expansion out;
+  out.document = document;
+  const model::DocumentBuild layout = model::build_layout(document, settings_);
+  ++stats.layout_builds;
+  for (const std::size_t i : model::level_order(document)) {
+    const model::Volume& v = document.volumes[i];
+    const auto* comp = std::get_if<model::CompositeContents>(&v.contents);
+    if (comp == nullptr || !comp->generates()) continue;
+    const SubjectRef self = document.volume_subject(v.id);
+    if (!layout_generator_) {
+      out.stale.insert(v.id);
+      out.failed[v.id].add(Diagnostic::warning(
+          "eval.generated.no_generator",
+          fmt::format("'{}': its children come from a procedure, and none is installed to run it",
+                      self.label),
+          {self}));
+      continue;
+    }
+    // A boundary that failed fails the composite already (finish_composite).
+    const std::optional<Hash256> key = cache_key(document, layout, i);
+    if (!key) continue;
+    std::shared_ptr<const LayoutOutcome> outcome;
+    if (const auto it = layouts_.find(*key); it != layouts_.end()) {
+      outcome = it->second;
+    } else {
+      outcome = std::make_shared<const LayoutOutcome>(
+          layout_generator_->generate(document, layout, i, settings_, pool_, cancel));
+      ++stats.layouts_generated;
+      if (layouts_.size() >= 256) layouts_.clear();
+      layouts_.emplace(*key, outcome);
+    }
+    if (!outcome->layout) {
+      out.failed[v.id] = outcome->diagnostics;
+      if (!out.failed[v.id].has_errors()) {
+        out.failed[v.id].add(Diagnostic::error(
+            "eval.generated.layout",
+            fmt::format("'{}': its procedure made no children", self.label), {self}));
+      }
+      continue;
+    }
+    auto expanded = model::expand(out.document, v.id, *outcome->layout);
+    Diagnostics problems;
+    if (!expanded) {
+      problems.add(expanded.error());
+    } else {
+      for (auto d : model::check(*expanded)) {
+        if (!d.is_error()) continue;
+        if (d.subjects.empty() || !(d.subjects.front().id == v.id)) {
+          d.subjects.insert(d.subjects.begin(), self);
+        }
+        problems.add(std::move(d));
+      }
+    }
+    if (problems.has_errors()) {
+      out.failed[v.id] = std::move(problems);
+      continue;
+    }
+    out.document = std::move(expanded).value();
+  }
+  return out;
+}
+
 Evaluation Engine::preview(const model::Project& project) {
   EvaluateOptions options;
   options.generate = false;
@@ -118,7 +278,22 @@ Evaluation Engine::preview(const model::Project& project) {
 
 Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions& options) {
   const std::lock_guard eval_lock(evaluate_mutex_);
-  const model::Document& doc = project.document;
+
+  // 1. check (below), and generated children (L4) written into the document.
+  Diagnostics checked = model::check(project.document);
+  EvaluationStats early_stats;
+  Expansion expansion;
+  const bool generates = std::any_of(
+      project.document.volumes.begin(), project.document.volumes.end(),
+      [](const model::Volume& v) {
+        const auto* c = std::get_if<model::CompositeContents>(&v.contents);
+        return c != nullptr && c->generates();
+      });
+  if (generates && !checked.has_errors()) {
+    expansion = expand_generated(project.document, options.cancel, early_stats);
+  }
+  const model::Document& doc = generates && !checked.has_errors() ? expansion.document
+                                                                  : project.document;
   const std::size_t n = doc.volumes.size();
 
   std::mutex progress_mutex;
@@ -142,6 +317,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   };
 
   Evaluation ev;
+  ev.stats = early_stats;
   ev.document = doc;
   ev.volumes.resize(n);
   for (std::size_t i = 0; i < n; ++i) {
@@ -168,8 +344,83 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     }
   };
 
+  // A composite (L3) never generates: once its children are done (they are
+  // upstream of it), its status is the worst of theirs, its outputs add
+  // their measures up and its key hashes theirs. `layout` is the current
+  // wave's layout build.
+  model::DocumentBuild layout;
+  // Composites whose generated children fail the current layout's checks.
+  std::set<Id> generated_layout_failed;
+  std::vector<model::ContentsMeasure> measures(n);
+  const bool composite_outputs = std::any_of(
+      doc.volumes.begin(), doc.volumes.end(),
+      [](const model::Volume& v) { return v.composite() && !v.outputs.empty(); });
+  const auto measure_of = [&](std::size_t j) {
+    const VolumeResult& r = ev.volumes[j];
+    if (ev.document.volumes[j].composite()) return measures[j];
+    if (!r.contents || r.status != VolumeStatus::Current) return model::ContentsMeasure{};
+    return measure_contents(ev.document.volumes[j], *r.contents, pool_);
+  };
+  const auto finish_composite = [&](std::size_t i) {
+    const model::Volume& v = ev.document.volumes[i];
+    const model::VolumeBuild& vb = layout.volumes[i];
+    VolumeResult& r = ev.volumes[i];
+    auto c = std::make_shared<GeneratedContents>();
+    c->status = vb.status == VolumeStatus::Failed || vb.boundary.is_empty()
+                    ? VolumeStatus::Failed
+                    : VolumeStatus::Current;
+    c->rebuild = vb.contents_rebuild;
+    Hasher key;
+    key.add(std::string_view("vstudio.eval.composite"));
+    const std::optional<Hash256> own = cache_key(ev.document, layout, i);
+    key.add(own.has_value());
+    if (own) key.add(*own);
+    Hasher out;
+    out.add(std::string_view("vstudio.eval.composite.output"));
+    model::ContentsMeasure total;
+    for (const std::size_t j : model::children(ev.document, v.id)) {
+      const VolumeResult& child = ev.volumes[j];
+      c->status = model::worse(c->status, child.status);
+      key.add(child.volume).add(child.key.has_value());
+      if (child.key) key.add(*child.key);
+      out.add(child.volume).add(child.status).add(child.contents != nullptr);
+      if (child.contents) out.add(child.contents->output_hash);
+      if (composite_outputs) total.add(measure_of(j));
+    }
+    // L4: a generator that failed or isn't installed, or generated children
+    // failing the layout checks.
+    const SubjectRef self = ev.document.volume_subject(v.id);
+    if (const auto it = expansion.failed.find(v.id); it != expansion.failed.end()) {
+      c->diagnostics.append(it->second);
+      c->status = model::worse(c->status, expansion.stale.contains(v.id) ? VolumeStatus::Stale
+                                                                         : VolumeStatus::Failed);
+    }
+    if (generated_layout_failed.contains(v.id)) {
+      c->status = VolumeStatus::Failed;
+      c->diagnostics.add(Diagnostic::error(
+          "eval.generated.layout",
+          fmt::format("'{}': the children its procedure generated fail the layout checks (see "
+                      "the layout's diagnostics); change the procedure or its parameters",
+                      self.label),
+          {self}));
+    }
+    r.diagnostics.append(c->diagnostics);
+    measures[i] = total;
+    c->outputs = model::composite_outputs(v, total);
+    c->key = key.finalize();
+    const Hash256 measured =
+        output_hash(c->status, kernel::Solid{}, nullptr, c->outputs, nullptr);
+    out.add(measured);
+    c->output_hash = out.finalize();
+    r.key = c->key;
+    r.status = c->status;
+    r.contents = std::move(c);
+    r.stale_contents = false;
+    set_state(r.volume, r.status);
+  };
+
   // 1. check
-  ev.diagnostics.append(model::check(doc));
+  ev.diagnostics.append(checked);
   if (ev.diagnostics.has_errors()) {
     for (const auto& r : ev.volumes) set_state(r.volume, r.status);
     notify(ProgressEvent::Kind::Finished, {}, VolumeStatus::Stale);
@@ -198,7 +449,6 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   std::map<Id, double> link_values;
   bool values_changed = true;
   std::vector<bool> done(n, false);
-  model::DocumentBuild layout;
   Diagnostics layout_diagnostics;  // of the last layout build and its checks
 
   for (;;) {
@@ -218,6 +468,14 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       ev.layout = validate::validate_layout(ev.document, layout, settings_);
       layout_diagnostics = layout.diagnostics;
       layout_diagnostics.append(ev.layout.diagnostics);
+      generated_layout_failed.clear();
+      for (const auto& d : layout_diagnostics) {
+        if (!d.is_error()) continue;
+        for (const auto& s : d.subjects) {
+          const Id owner = generated_owner(ev.document, s.id);
+          if (!owner.is_null()) generated_layout_failed.insert(owner);
+        }
+      }
       ++ev.stats.layout_builds;
       values_changed = false;
       notify(ProgressEvent::Kind::LayoutBuilt, {}, VolumeStatus::Stale);
@@ -235,6 +493,10 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       const model::Volume& v = ev.document.volumes[i];
       VolumeResult& r = ev.volumes[i];
       const SubjectRef self = ev.document.volume_subject(v.id);
+      if (v.composite()) {
+        finish_composite(i);
+        continue;
+      }
       const auto blocker = std::find_if(upstream[i].begin(), upstream[i].end(), [&](std::size_t j) {
         return ev.volumes[j].status != VolumeStatus::Current;
       });
@@ -378,8 +640,11 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         if (!c.solid.is_empty()) {
           contained = validate::check_containment(boundary, c.solid, self, settings_);
         } else if (c.mesh) {
+          const std::vector<float> slack =
+              curved_seam_slack(ev.document, layout, v.id, *c.mesh, settings_);
           contained = validate::check_containment(
-              boundary, validate::MeshView{c.mesh->positions, c.mesh->indices}, self, settings_,
+              boundary, validate::MeshView{c.mesh->positions, c.mesh->indices, slack}, self,
+              settings_,
               [this](std::size_t count, const std::function<void(std::size_t)>& task) {
                 pool_.run(count, task);
               });

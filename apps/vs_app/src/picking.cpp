@@ -3,6 +3,7 @@
 #include <cmath>
 #include <variant>
 
+#include "vs/model/hierarchy.hpp"
 #include "vs/kernel/queries.hpp"
 
 namespace vs::app {
@@ -84,7 +85,7 @@ std::vector<std::pair<Id, ItemRole>> pickable_items(const eval::Evaluation& eval
   out.emplace_back(context_volume, ItemRole::Boundary);
   out.emplace_back(context_volume, ItemRole::Contents);
   for (const auto& s : doc.connections) {
-    if (s.joins(context_volume)) out.emplace_back(s.id, ItemRole::ConnectionSurface);
+    if (model::joins(doc, s, context_volume)) out.emplace_back(s.id, ItemRole::ConnectionSurface);
   }
   return out;
 }
@@ -98,6 +99,9 @@ std::optional<NamedSurface> named_surface(const eval::Evaluation& evaluation, co
       NamedSurface s;
       s.plane.origin = cb->frame.origin;
       s.plane.normal = cb->frame.normal();
+      if (cb->cylinder) {  // L2: a curved patch
+        s.cylinder = kernel::Cylinder{{cb->frame.origin, cb->frame.normal()}, cb->cylinder->radius, false};
+      }
       s.patch = true;
       return s;
     }
@@ -125,7 +129,8 @@ bool same_surface(const NamedSurface& a, const NamedSurface& b, double tolerance
     const auto& ca = *a.cylinder;
     const auto& cb = *b.cylinder;
     return parallel(ca.axis.direction, cb.axis.direction) && distance_to_line(cb.axis.origin, ca.axis) < tolerance &&
-           std::abs(ca.radius - cb.radius) < tolerance && ca.inward == cb.inward;
+           std::abs(ca.radius - cb.radius) < tolerance &&
+           (ca.inward == cb.inward || a.patch || b.patch);  // a patch faces both ways
   }
   const dvec3 na = normalize(a.plane.normal), nb = normalize(b.plane.normal);
   const double c = dot(na, nb);

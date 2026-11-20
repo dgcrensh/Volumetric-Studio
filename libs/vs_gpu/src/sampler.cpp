@@ -15,7 +15,10 @@
 #include "device.hpp"
 #include "glsl.hpp"
 #include "vs/core/transform.hpp"
+#include "state.hpp"
+#include "vs/eval/thread_pool.hpp"
 #include "vs/proc/distance.hpp"
+#include "vs/proc/mesher.hpp"
 
 namespace vs::gpu {
 
@@ -49,19 +52,39 @@ Device* device_locked(State& s) {
   return s.device && s.device->ok() ? s.device.get() : nullptr;
 }
 
+// Whether a grid of `samples` points goes to the GPU for a stage.
+bool wanted(bool Status::*stage, std::size_t samples) {
+  std::lock_guard lock(state().mutex);
+  return state().status.*stage && samples >= state().options.min_samples;
+}
+
 class GpuBackend final : public proc::SamplingBackend {
  public:
   bool sample(const proc::FieldExpr& field, const proc::GridSpec& grid, std::vector<float>& values,
               const eval::CancellationToken* cancel, bool* cancelled) override {
-    std::size_t min_samples = 0;
-    {
-      std::lock_guard lock(state().mutex);
-      min_samples = state().options.min_samples;
-    }
-    if (grid.size() < min_samples) return false;
+    if (!wanted(&Status::sampling, grid.size())) return false;
     auto r = sample_gpu(field, grid, nullptr, cancel, cancelled);
     if (!r) return false;
     values = std::move(r->values);
+    return true;
+  }
+};
+
+class GpuMeshingBackend final : public proc::MeshingBackend {
+ public:
+  bool clip(const proc::SampledField& samples, const proc::TriangleDistance& boundary, double inset,
+            std::vector<float>& values) override {
+    if (!wanted(&Status::clip, samples.grid.size())) return false;
+    auto r = clip_gpu(samples, boundary, inset);
+    if (!r) return false;
+    values = std::move(*r);
+    return true;
+  }
+  bool unmerged_net(const proc::SampledField& samples, proc::UnmergedNet& net) override {
+    if (!wanted(&Status::meshing, samples.grid.size())) return false;
+    auto r = unmerged_net_gpu(samples);
+    if (!r) return false;
+    net = std::move(*r);
     return true;
   }
 };
@@ -70,6 +93,14 @@ class GpuBackend final : public proc::SamplingBackend {
 constexpr double kTargetMs = 100.0;
 
 }  // namespace
+
+Device* shared_device(std::string* why) {
+  State& s = state();
+  std::lock_guard lock(s.mutex);
+  Device* d = device_locked(s);
+  if (d == nullptr && why != nullptr) *why = s.status.why;
+  return d;
+}
 
 std::optional<proc::SampledField> sample_gpu(const proc::FieldExpr& field, const proc::GridSpec& grid,
                                              std::string* error, const eval::CancellationToken* cancel,
@@ -290,16 +321,190 @@ std::string self_check() {
   return {};
 }
 
+namespace {
+
+// Grids for the meshing check: noise (every tangled cube), noise with
+// exact zeros, smooth blobs, all of odd sizes.
+proc::SampledField check_grid(std::uint64_t seed, std::uint32_t nx, std::uint32_t ny, std::uint32_t nz, int kind) {
+  proc::SampledField s;
+  s.grid.origin = {-3.25, 1.5, -0.75};
+  s.grid.cell = 0.6;
+  s.grid.nx = nx;
+  s.grid.ny = ny;
+  s.grid.nz = nz;
+  s.values.resize(s.grid.size());
+  std::uint64_t x = seed * 0x9E3779B97F4A7C15ull + 1;
+  const auto next = [&] {
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    return static_cast<float>(static_cast<double>(x >> 11) / 9007199254740992.0 * 2.0 - 1.0);
+  };
+  for (std::uint32_t k = 0; k < nz; ++k) {
+    for (std::uint32_t j = 0; j < ny; ++j) {
+      for (std::uint32_t i = 0; i < nx; ++i) {
+        float v = next();
+        if (kind == 1 && (i + j + k) % 3 == 0) v = 0.0f;
+        if (kind == 2) {
+          const double fx = static_cast<double>(i) * 0.37;
+          const double fy = static_cast<double>(j) * 0.29;
+          const double fz = static_cast<double>(k) * 0.31;
+          v = static_cast<float>(std::sin(fx) * std::cos(fy) + std::sin(fy) * std::cos(fz) +
+                                 std::sin(fz) * std::cos(fx) + 0.05 * v);
+        }
+        s.values[s.grid.index(i, j, k)] = v;
+      }
+    }
+  }
+  return s;
+}
+
+// The first difference between two unmerged nets, in words.
+std::string difference(const proc::UnmergedNet& gpu, const proc::UnmergedNet& cpu) {
+  const auto first = [](const auto& a, const auto& b, const char* what) -> std::string {
+    if (a.size() != b.size()) return fmt::format("{} {} on the GPU, {} on the CPU", a.size(), what, b.size());
+    for (std::size_t i = 0; i < a.size(); ++i) {
+      if (!(a[i] == b[i])) return fmt::format("{} {} differ", what, i);
+    }
+    return {};
+  };
+  for (const std::string& s : {first(gpu.sums, cpu.sums, "vertex sums"), first(gpu.counts, cpu.counts, "counts"),
+                               first(gpu.group_starts, cpu.group_starts, "group starts"),
+                               first(gpu.cubes, cpu.cubes, "cubes")}) {
+    if (!s.empty()) return s;
+  }
+  if (gpu.triangles.size() != cpu.triangles.size()) {
+    return fmt::format("{} triangles on the GPU, {} on the CPU", gpu.triangles.size(), cpu.triangles.size());
+  }
+  for (std::size_t t = 0; t < gpu.triangles.size(); ++t) {
+    const auto& g = gpu.triangles[t];
+    const auto& c = cpu.triangles[t];
+    if (g != c) {
+      return fmt::format("triangle {} is {} {} {} on the GPU, {} {} {} on the CPU", t, g[0], g[1], g[2], c[0], c[1],
+                         c[2]);
+    }
+  }
+  return "nothing differs";
+}
+
+}  // namespace
+
+std::string meshing_self_check() {
+  using namespace proc;
+  // The unmerged net, element for element.
+  const std::uint32_t sizes[][3] = {{7, 5, 6}, {13, 9, 11}, {24, 31, 17}, {40, 33, 29}};
+  int round = 0;
+  for (const auto& n : sizes) {
+    for (int kind = 0; kind < 3; ++kind, ++round) {
+      const SampledField s = check_grid(static_cast<std::uint64_t>(round) + 17, n[0], n[1], n[2], kind);
+      std::string error;
+      const auto gpu = unmerged_net_gpu(s, &error);
+      if (!gpu) return fmt::format("unmerged net {}: {}", round, error);
+      const UnmergedNet cpu = unmerged_net_cpu(s);
+      if (!(*gpu == cpu)) return fmt::format("unmerged net {} ({} x {} x {}): {}", round, n[0], n[1], n[2], difference(*gpu, cpu));
+    }
+  }
+  // A gyroid infill clipped to a ball and a box.
+  const auto ball = std::make_shared<const TriangleDistance>(ball_mesh(9.0, 3), true);
+  const auto box = std::make_shared<const TriangleDistance>(box_mesh({-8, -6, -5}, {8, 6, 5}), true);
+  const Field infill = tpms_field(TpmsSurface::Gyroid, 4.0, {0.3, 0, 0}, 0.7);
+  const auto grid = grid_covering(core::dbox3::from_min_max({-10, -10, -10}, {10, 10, 10}), 0.35);
+  if (!grid) return "the meshing check grid";
+  const SampledField samples = sample_cpu(*infill, *grid);
+  for (const auto& [name, boundary] : {std::pair{"ball", ball}, std::pair{"box", box}}) {
+    std::string error;
+    const auto clipped = clip_gpu(samples, *boundary, kContentsInset, &error);
+    if (!clipped) return fmt::format("clip to the {}: {}", name, error);
+    const SampledField cpu = clip_to_boundary_cpu(samples, *boundary, kContentsInset);
+    for (std::size_t i = 0; i < cpu.values.size(); ++i) {
+      if (std::bit_cast<std::uint32_t>(cpu.values[i]) != std::bit_cast<std::uint32_t>((*clipped)[i])) {
+        return fmt::format("clip to the {}: sample {} is {} on the CPU, {} on the GPU", name, i, cpu.values[i],
+                           (*clipped)[i]);
+      }
+    }
+    const auto gpu_net = unmerged_net_gpu(cpu, &error);
+    if (!gpu_net) return fmt::format("gyroid in the {}: {}", name, error);
+    const UnmergedNet cpu_net = unmerged_net_cpu(cpu);
+    if (!(*gpu_net == cpu_net)) return fmt::format("gyroid in the {}: {}", name, difference(*gpu_net, cpu_net));
+  }
+  return {};
+}
+
+namespace {
+
+double ms_since(std::chrono::steady_clock::time_point t) {
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
+
+// The fastest of a few runs of `f`, in milliseconds.
+template <typename F>
+double best_of(int runs, const F& f) {
+  double best = 1e300;
+  for (int r = 0; r < runs; ++r) {
+    const auto t = std::chrono::steady_clock::now();
+    f();
+    best = std::min(best, ms_since(t));
+  }
+  return best;
+}
+
+struct Calibration {
+  bool sampling = false;
+  bool clip = false;
+  bool meshing = false;
+  std::string text;
+};
+
+// Each stage on a gyroid infill in a ball, half a million samples: on the GPU
+// (the better of two runs, so shader compiles don't count) and on every
+// CPU thread. The GPU takes a stage only when it was faster.
+Calibration calibrate(bool meshing_ok) {
+  using namespace proc;
+  const auto ball = std::make_shared<const TriangleDistance>(ball_mesh(24.0, 3), true);
+  const Field field = intersection_field(shell_field(mesh_signed_field(ball), 1.2),
+                                         tpms_field(TpmsSurface::Gyroid, 6.0, {0, 0, 0}, 0.8));
+  const auto grid = grid_covering(core::dbox3::from_min_max({-25, -25, -25}, {25, 25, 25}), 0.625);
+  Calibration c;
+  if (!grid) return c;
+  eval::ThreadPool pool(0);
+  const auto row = [&](const char* name, double gpu, double cpu) {
+    c.text += fmt::format("{}{} GPU {:.0f} ms, CPU {:.0f} ms", c.text.empty() ? "" : "; ", name, gpu, cpu);
+    return gpu < cpu;
+  };
+  SampledField samples;
+  const double s_gpu = best_of(2, [&] { sample_gpu(*field, *grid); });
+  const double s_cpu = best_of(1, [&] { samples = sample_cpu(*field, *grid, &pool); });
+  c.sampling = row("sampling", s_gpu, s_cpu);
+  if (!meshing_ok) return c;
+  SampledField clipped;
+  const double c_gpu = best_of(2, [&] { clip_gpu(samples, *ball, kContentsInset); });
+  const double c_cpu = best_of(1, [&] { clipped = clip_to_boundary_cpu(samples, *ball, kContentsInset, &pool); });
+  c.clip = row("clip", c_gpu, c_cpu);
+  const double n_gpu = best_of(2, [&] { unmerged_net_gpu(clipped); });
+  const double n_cpu = best_of(1, [&] { unmerged_net_cpu(clipped, &pool); });
+  c.meshing = row("unmerged net", n_gpu, n_cpu);
+  return c;
+}
+
+}  // namespace
+
 Status install(const InstallOptions& options) {
   State& s = state();
   bool run_check = false;
   {
     std::lock_guard lock(s.mutex);
     s.options = options;
-    if (s.status.installed) return s.status;
+    if (s.status.installed) {
+      if (options.force) {
+        s.status.sampling = true;
+        s.status.clip = s.status.meshing = s.status.why.empty();
+      }
+      return s.status;
+    }
     if (device_locked(s) == nullptr) return s.status;
     run_check = options.check;
   }
+  const auto t0 = std::chrono::steady_clock::now();
   if (run_check) {
     const std::string mismatch = self_check();
     if (!mismatch.empty()) {
@@ -308,17 +513,40 @@ Status install(const InstallOptions& options) {
       return s.status;
     }
   }
+  std::string meshing_why;
+  if (run_check) {
+    const std::string mismatch = meshing_self_check();
+    if (!mismatch.empty()) meshing_why = "the GPU's meshes don't match the CPU's (" + mismatch + ")";
+  }
+  Calibration c;
+  if (options.force) {
+    c.sampling = true;
+    c.clip = c.meshing = meshing_why.empty();
+    c.text = "forced";
+  } else {
+    c = calibrate(meshing_why.empty());
+  }
   proc::set_sampling_backend(std::make_shared<GpuBackend>());
+  proc::set_meshing_backend(std::make_shared<GpuMeshingBackend>());
   std::lock_guard lock(s.mutex);
   s.status.installed = true;
-  s.status.why.clear();
+  s.status.why = meshing_why;
+  s.status.sampling = c.sampling;
+  s.status.clip = c.clip;
+  s.status.meshing = c.meshing;
+  s.status.calibration = c.text;
+  s.status.install_ms = ms_since(t0);
   return s.status;
 }
 
 void uninstall() {
   proc::set_sampling_backend(nullptr);
+  proc::set_meshing_backend(nullptr);
   std::lock_guard lock(state().mutex);
   state().status.installed = false;
+  state().status.sampling = false;
+  state().status.clip = false;
+  state().status.meshing = false;
 }
 
 Status status() {

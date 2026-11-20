@@ -22,12 +22,18 @@
 //   kernel.*                        passed through
 //
 // Connection surfaces. A sketch patch is its sketch's one profile (holes
-// allowed); a datum patch is its rectangle. The surface's frame is the
-// sketch's or plane's frame. Bolted flanges also get their hole centres.
+// allowed); a datum patch is its rectangle; a cylinder patch is its part
+// of the cylinder (a band for a full turn). The surface's frame is the
+// sketch's or plane's frame, or the cylinder's (cylinder_frame()). Bolted
+// flanges also get their hole centres.
 //   model.connection.sketch_failed  the sketch failed or isn't a sketch
 //   model.connection.profiles       the sketch has no profile, or several
 //   model.connection.plane_failed   the datum patch's plane can't be found
-//   model.connection.bad_size       a non-positive width or height
+//   model.connection.axis_failed    the cylinder patch's axis can't be found
+//   model.connection.bad_size       a non-positive width or height; a
+//                                   cylinder's radius, arc or length below
+//                                   the minimum feature size, or a sweep
+//                                   over a full turn
 //   model.connection.bad_pattern    a hole pattern count isn't a whole number >= 1
 //   feature.expression.*, feature.variable.*   a parameter's expression
 //
@@ -41,7 +47,9 @@
 //     top of an extruded boundary; for a box boundary, "-x", "+x", "-y",
 //     "+y", "-z", "+z", each facing out;
 //   each connection surface joining the volume (by its id) is a plane: its
-//     frame (FeatureRef) and its face "patch" (FaceRef);
+//     frame (FeatureRef) and its face "patch" (FaceRef); a cylindrical one
+//     is its axis (FeatureRef) and its face "patch", a cylinder whose
+//     normal points away from the axis;
 //   each parameter is a value its expressions can use by name.
 //
 // Static contents read their blob when the build is given the project's
@@ -103,11 +111,33 @@ struct VolumeBuild {
   Diagnostics diagnostics;
 };
 
+// A cylindrical patch, evaluated (CylinderPatch). The cylinder's axis is
+// the surface frame's origin and normal; angles are measured from its x
+// axis, counter-clockwise about the normal.
+struct CylinderBuild {
+  double radius = 0.0;       // mm
+  double start_angle = 0.0;  // radians
+  double sweep = 0.0;        // radians, (0, 2π]
+  double start = 0.0;        // mm along the axis
+  double length = 0.0;       // mm
+  // A full turn: a ring round the axis with no ends round it.
+  [[nodiscard]] bool band() const;
+};
+
+// The frame of a cylinder round `axis`: origin at the axis's origin,
+// normal along its direction, and an x axis (angle 0) that depends on the
+// direction alone: the principal axis least aligned with it, made
+// perpendicular.
+sketch::SketchPlane cylinder_frame(const kernel::Axis& axis);
+
 struct ConnectionBuild {
   Id surface;
   bool ok = false;
   kernel::Face patch;
-  sketch::SketchPlane frame;  // the patch's plane; normal = frame.normal()
+  // A planar patch's plane (normal = frame.normal()), or a cylindrical
+  // patch's frame (cylinder_frame() of its axis).
+  sketch::SketchPlane frame;
+  std::optional<CylinderBuild> cylinder;  // set for a cylindrical patch
   double area = 0.0;          // mm²
   std::vector<dvec3> hole_centres;  // bolted flanges
   std::optional<double> gap;        // clearance: the evaluated gap, mm
@@ -153,6 +183,39 @@ ContentsBuild build_contents(const Document& document, const DocumentBuild& layo
 // diagnostics after the volume's own. (The document's `diagnostics` list
 // isn't updated.)
 void apply_contents(VolumeBuild& volume, ContentsBuild contents);
+
+// --- composite volumes (L3) -------------------------------------------------------
+//
+// A composite's contents are its children. build_layout() rebuilds its
+// layout (with its inputs, as a parametric tree is: `contents_rebuild`,
+// its diagnostics on the composite, Failed when it has errors) and builds
+// its children from it, level by level. build_contents() makes no solid
+// for it; its status and outputs come from its children: the worst of
+// their statuses (Failed, then Stale, then Current; Current with no
+// children), and outputs that add their measures up.
+
+// What a composite's outputs add up: siblings never overlap, so volumes
+// add, centres average by volume and envelopes unite.
+struct ContentsMeasure {
+  double volume = 0.0;  // mm³
+  dvec3 moment{};       // Σ volume · centre, mm⁴
+  dbox3 envelope = dbox3::empty();
+  bool any = false;     // false: nothing measured yet
+
+  void add(const ContentsMeasure& other);
+};
+
+// A solid's measure (nothing for an empty solid).
+ContentsMeasure measure_solid(const kernel::Solid& solid);
+
+// A composite's outputs from its children's measures added up (no values
+// when nothing was measured). Volume, Mass, Centre of gravity and Envelope;
+// check() refuses the others on a composite.
+std::vector<OutputResult> composite_outputs(const Volume& composite,
+                                            const ContentsMeasure& total);
+
+// The worst of two statuses, for a composite's status from its children's.
+VolumeStatus worse(VolumeStatus a, VolumeStatus b);
 
 // `blobs` holds static contents' files; without it static contents aren't
 // read and stay Stale.

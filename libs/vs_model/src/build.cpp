@@ -15,6 +15,7 @@
 #include "vs/kernel/operations.hpp"
 #include "vs/kernel/primitives.hpp"
 #include "vs/kernel/queries.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/sketch/profile.hpp"
 
 namespace vs::model {
@@ -34,6 +35,22 @@ std::string_view to_string(VolumeStatus status) {
     case VolumeStatus::Failed: return "failed";
   }
   return "stale";
+}
+
+bool CylinderBuild::band() const { return sweep >= 2.0 * std::numbers::pi; }
+
+SketchPlane cylinder_frame(const kernel::Axis& axis) {
+  const core::dvec3 n = core::normalize(axis.direction);
+  // The principal axis least aligned with the direction (the first such,
+  // in x, y, z order), made perpendicular to it.
+  const std::array<core::dvec3, 3> principal{core::dvec3{1, 0, 0}, core::dvec3{0, 1, 0},
+                                             core::dvec3{0, 0, 1}};
+  std::size_t best = 0;
+  for (std::size_t i = 1; i < 3; ++i) {
+    if (std::abs(core::dot(principal[i], n)) < std::abs(core::dot(principal[best], n))) best = i;
+  }
+  const core::dvec3 x = core::normalize(principal[best] - n * core::dot(principal[best], n));
+  return SketchPlane{axis.origin, x, core::cross(n, x)};
 }
 
 const VolumeBuild* DocumentBuild::find_volume(const Id& volume) const {
@@ -76,7 +93,8 @@ class DocumentBuilder {
                   const DocumentBuild& layout)
       : doc_(doc), settings_(settings), blobs_(blobs), in_(layout), out_(nullptr) {}
 
-  // The layout, boundaries, connection surfaces and parameters.
+  // The layout, boundaries, connection surfaces and parameters, level by
+  // level (L3): the root's, then each composite's, parents first.
   void run_layout() {
     out_->layout = feature::rebuild(doc_.layout, settings_);
 
@@ -84,18 +102,15 @@ class DocumentBuilder {
     out_->volumes.resize(doc_.volumes.size());
     for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
       out_->volumes[i].volume = doc_.volumes[i].id;
-      raw_[i] = raw_boundary(doc_.volumes[i], out_->volumes[i].diagnostics);
+      // Volumes no level reaches (a missing or non-composite parent:
+      // check() reports it) stay failed, with no boundary.
+      out_->volumes[i].status = VolumeStatus::Failed;
     }
-    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
-      cut_keep_outs(i);
-      VolumeBuild& vb = out_->volumes[i];
-      if (!vb.boundary.is_empty()) vb.boundary_faces = boundary_faces(doc_.volumes[i], vb.boundary);
+    out_->connections.resize(doc_.connections.size());
+    for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
+      out_->connections[k].surface = doc_.connections[k].id;
     }
-
-    out_->connections.reserve(doc_.connections.size());
-    for (const auto& c : doc_.connections) out_->connections.push_back(connection(c));
-
-    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) parameters(i);
+    build_level({});
   }
 
   // The layout's diagnostics, then each volume's, then each surface's.
@@ -112,8 +127,115 @@ class DocumentBuilder {
   const DocumentBuild& in_;  // what the builder reads
   DocumentBuild* out_;       // what it writes: null when building contents
   std::vector<Solid> raw_;  // boundaries before keep-outs
+  // The level being built (L3): null for the root layout, else a composite
+  // volume, whose layout rebuild and inputs the lookups below use.
+  Id level_;
+  std::map<Id, feature::ExternalInputs> level_inputs_;
 
   kernel::BooleanOptions fuzzy() const { return {settings_.linear_tolerance_mm}; }
+
+  std::size_t index_of(const Id& volume) const {
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
+      if (doc_.volumes[i].id == volume) return i;
+    }
+    return doc_.volumes.size();
+  }
+
+  // --- levels (L3) ------------------------------------------------------------------
+
+  void build_level(const Id& level) {
+    level_ = level;
+    const std::vector<std::size_t> kids = children(doc_, level);
+    for (const std::size_t i : kids) {
+      raw_[i] = raw_boundary(doc_.volumes[i], out_->volumes[i].diagnostics);
+    }
+    for (const std::size_t i : kids) {
+      cut_keep_outs(i);
+      VolumeBuild& vb = out_->volumes[i];
+      if (!vb.boundary.is_empty()) vb.boundary_faces = boundary_faces(doc_.volumes[i], vb.boundary);
+    }
+    for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
+      const ConnectionSurface& c = doc_.connections[k];
+      if (!c.volumes.empty() && doc_.find_volume(c.volumes.front()) != nullptr &&
+          level_of(doc_, c) == level) {
+        out_->connections[k] = connection(c);
+      }
+    }
+    for (const std::size_t i : kids) parameters(i);
+
+    for (const std::size_t i : kids) {
+      if (!doc_.volumes[i].composite()) continue;
+      composite_layout(i);
+      build_level(doc_.volumes[i].id);
+      level_ = level;
+    }
+  }
+
+  // A composite's layout, rebuilt with its inputs (as a parametric tree is);
+  // its children are built from it.
+  void composite_layout(std::size_t i) {
+    const Volume& v = doc_.volumes[i];
+    VolumeBuild& vb = out_->volumes[i];
+    if (vb.boundary.is_empty()) return;  // failed already; its children fail with it
+    feature::ExternalInputs& inputs = level_inputs_[v.id];
+    inputs = inputs_for(v, vb);
+    feature::RebuildOptions options;
+    options.inputs = &inputs;
+    vb.contents_rebuild =
+        feature::rebuild(std::get<CompositeContents>(v.contents).layout, settings_, options);
+    const auto& r = *vb.contents_rebuild;
+    if (!r.ok()) {
+      vb.diagnostics.add(error(doc_.volume_subject(v.id), "model.contents.failed",
+                               "its layout didn't rebuild cleanly"));
+      vb.status = VolumeStatus::Failed;
+    }
+    vb.diagnostics.append(r.diagnostics);
+  }
+
+  // What a volume's tree sees: its boundary's named faces, the connection
+  // surfaces joining it (delegated ones included) and its parameters.
+  feature::ExternalInputs inputs_for(const Volume& v, const VolumeBuild& layout) const {
+    feature::ExternalInputs inputs;
+    {
+      feature::ExternalInput boundary;
+      boundary.subject = doc_.boundary_subject(v.id);
+      boundary.result.faces = layout.boundary_faces;
+      inputs.references.push_back(std::move(boundary));
+    }
+    for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
+      const ConnectionSurface& c = doc_.connections[k];
+      if (!joins(doc_, c, v.id) || !in_.connections[k].ok) continue;
+      const ConnectionBuild& cb = in_.connections[k];
+      feature::ExternalInput in;
+      in.subject = doc_.connection_subject(c.id);
+      if (cb.cylinder) {
+        const kernel::Axis axis{cb.frame.origin, cb.frame.normal()};
+        in.result.axis = axis;
+        in.result.faces.push_back(
+            {"patch", {cb.frame.origin, cb.frame.normal()},
+             kernel::Cylinder{axis, cb.cylinder->radius, /*inward=*/false}});
+      } else {
+        in.result.plane = cb.frame;
+        in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
+      }
+      inputs.references.push_back(std::move(in));
+    }
+    for (const auto& [name, value] : layout.parameters) inputs.values.emplace(name, value);
+    return inputs;
+  }
+
+  // The level's rebuilt layout, and its tree for subjects.
+  const feature::RebuildResult* level_rebuild() const {
+    if (level_.is_null()) return &in_.layout;
+    const std::size_t i = index_of(level_);
+    if (i >= in_.volumes.size() || !in_.volumes[i].contents_rebuild) return nullptr;
+    return &*in_.volumes[i].contents_rebuild;
+  }
+  const feature::FeatureTree& level_tree() const {
+    static const feature::FeatureTree kEmpty;
+    const feature::FeatureTree* t = level_layout(doc_, level_);
+    return t != nullptr ? *t : kEmpty;
+  }
 
   // --- layout lookups ------------------------------------------------------------
 
@@ -125,7 +247,23 @@ class DocumentBuilder {
       }
       return p.value;
     }
-    auto v = feature::evaluate_expression(p.expression, in_.layout.variables.lookup());
+    // The level's variables; inside a composite, then its parameters.
+    const feature::RebuildResult* r = level_rebuild();
+    const feature::Expression::Lookup variables =
+        r != nullptr ? r->variables.lookup() : feature::Expression::Lookup{};
+    const VolumeBuild* composite =
+        level_.is_null() ? nullptr : &in_.volumes[index_of(level_)];
+    const auto lookup = [&](std::string_view name) -> std::optional<double> {
+      if (variables) {
+        if (auto value = variables(name)) return value;
+      }
+      if (composite != nullptr) {
+        const auto it = composite->parameters.find(name);
+        if (it != composite->parameters.end()) return it->second;
+      }
+      return std::nullopt;
+    };
+    auto v = feature::evaluate_expression(p.expression, lookup);
     if (!v) {
       Diagnostic d = v.error();
       d.message = fmt::format("the {}: {}", what, d.message);
@@ -134,11 +272,20 @@ class DocumentBuilder {
     return *v;
   }
 
-  // A layout feature's result, if it built.
+  // A feature of the level's layout, if it built. Inside a composite, the
+  // composite's inputs (its boundary's faces, the surfaces joining it) can
+  // be used as they can by its own features.
   Result<const FeatureResult*> layout_result(const Id& id, const SubjectRef& by,
                                              std::string_view code) const {
-    const FeatureResult* r = in_.layout.find(id);
-    const SubjectRef other = doc_.layout.subject(id);
+    const feature::RebuildResult* level = level_rebuild();
+    const FeatureResult* r = level != nullptr ? level->find(id) : nullptr;
+    if (r == nullptr && !level_.is_null()) {
+      const auto it = level_inputs_.find(level_);
+      if (it != level_inputs_.end()) {
+        if (const feature::ExternalInput* in = it->second.find(id)) return &in->result;
+      }
+    }
+    const SubjectRef other = level_tree().subject(id);
     if (!r) {
       return error(by, std::string(code), "a layout feature it uses no longer exists");
     }
@@ -159,7 +306,7 @@ class DocumentBuilder {
       if (!r) return r.error();
       if (!(*r)->point) {
         return error(by, "model.boundary.point_failed",
-                     fmt::format("'{}' is not a point", doc_.layout.subject(f->feature).label));
+                     fmt::format("'{}' is not a point", level_tree().subject(f->feature).label));
       }
       return *(*r)->point;
     }
@@ -171,7 +318,7 @@ class DocumentBuilder {
     if (!p) {
       return error(by, "model.boundary.point_failed",
                    fmt::format("the sketch point it uses isn't in '{}'",
-                               doc_.layout.subject(e.sketch).label));
+                               level_tree().subject(e.sketch).label));
     }
     return sk->plane().to_model(*p);
   }
@@ -188,7 +335,7 @@ class DocumentBuilder {
     if (std::holds_alternative<feature::FeatureRef>(ref)) {
       if (!(*r)->plane) {
         return error(by, "model.connection.plane_failed",
-                     fmt::format("'{}' is not a plane or a sketch", doc_.layout.subject(id).label));
+                     fmt::format("'{}' is not a plane or a sketch", level_tree().subject(id).label));
       }
       return *(*r)->plane;
     }
@@ -197,8 +344,43 @@ class DocumentBuilder {
       if (n.name == face.name && !n.cylinder) return feature::frame_for(n.plane);
     }
     return error(by, "model.connection.plane_failed",
-                 fmt::format("'{}' has no flat face '{}'", doc_.layout.subject(id).label,
+                 fmt::format("'{}' has no flat face '{}'", level_tree().subject(id).label,
                              face.name));
+  }
+
+  Result<kernel::Axis> axis_of(const feature::AxisRef& ref, const SubjectRef& by) const {
+    if (const auto* p = std::get_if<feature::PrincipalAxis>(&ref)) {
+      switch (*p) {
+        case feature::PrincipalAxis::X: return kernel::Axis{{0, 0, 0}, {1, 0, 0}};
+        case feature::PrincipalAxis::Y: return kernel::Axis{{0, 0, 0}, {0, 1, 0}};
+        case feature::PrincipalAxis::Z: return kernel::Axis{{0, 0, 0}, {0, 0, 1}};
+      }
+    }
+    if (const auto* f = std::get_if<feature::FeatureRef>(&ref)) {
+      auto r = layout_result(f->feature, by, "model.connection.axis_failed");
+      if (!r) return r.error();
+      if (!(*r)->axis) {
+        return error(by, "model.connection.axis_failed",
+                     fmt::format("'{}' is not an axis", level_tree().subject(f->feature).label));
+      }
+      return *(*r)->axis;
+    }
+    const auto& e = std::get<feature::SketchEntityRef>(ref);
+    auto r = layout_result(e.sketch, by, "model.connection.axis_failed");
+    if (!r) return r.error();
+    const sketch::Sketch* sk = (*r)->sketch.get();
+    const auto line = sk ? sketch::line_geometry(*sk, e.entity) : std::nullopt;
+    if (!line) {
+      return error(by, "model.connection.axis_failed",
+                   fmt::format("the sketch line it uses as an axis isn't a line in '{}'",
+                               level_tree().subject(e.sketch).label));
+    }
+    const dvec3 a = sk->plane().to_model(line->start);
+    const dvec3 b = sk->plane().to_model(line->end);
+    if (core::length(b - a) < settings_.min_feature_size_mm()) {
+      return error(by, "model.connection.axis_failed", "its axis line is too short");
+    }
+    return kernel::Axis{a, core::normalize(b - a)};
   }
 
   // --- boundaries ------------------------------------------------------------------
@@ -215,8 +397,8 @@ class DocumentBuilder {
         }
         if ((*r)->tool.is_empty()) {
           diags.add(error(by, "model.boundary.feature_failed",
-                          fmt::format("'{}' makes no solid", doc_.layout.subject(id).label),
-                          {doc_.layout.subject(id)}));
+                          fmt::format("'{}' makes no solid", level_tree().subject(id).label),
+                          {level_tree().subject(id)}));
           return {};
         }
         tools.push_back((*r)->tool);
@@ -309,7 +491,7 @@ class DocumentBuilder {
     std::vector<NamedFace> faces;
     if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
       for (const auto& id : fb->features) {
-        const FeatureResult* r = in_.layout.find(id);
+        const FeatureResult* r = level_rebuild() != nullptr ? level_rebuild()->find(id) : nullptr;
         if (!r) continue;
         for (const auto& n : r->faces) {
           NamedFace copy = n;
@@ -347,7 +529,7 @@ class DocumentBuilder {
       const sketch::Sketch* sk = (*r)->sketch.get();
       if (!sk) {
         return fail(error(by, "model.connection.sketch_failed",
-                          fmt::format("'{}' is not a sketch", doc_.layout.subject(sp->sketch).label)));
+                          fmt::format("'{}' is not a sketch", level_tree().subject(sp->sketch).label)));
       }
       auto profiles = sketch::extract_profiles(*sk, settings_);
       if (!profiles) return fail(about(by, profiles.error()));
@@ -355,14 +537,44 @@ class DocumentBuilder {
         return fail(error(by, "model.connection.profiles",
                           fmt::format("its sketch '{}' has {} closed profiles; a connection "
                                       "surface needs exactly one",
-                                      doc_.layout.subject(sp->sketch).label, profiles->size()),
-                          {doc_.layout.subject(sp->sketch)}));
+                                      level_tree().subject(sp->sketch).label, profiles->size()),
+                          {level_tree().subject(sp->sketch)}));
       }
       auto face = sketch::make_face(*sk, profiles->front(), settings_);
       if (!face) return fail(about(by, face.error()));
       cb.patch = *face;
       cb.frame = sk->plane();
       cb.area = profiles->front().area();
+    } else if (const auto* cp = std::get_if<CylinderPatch>(&c.geometry)) {
+      auto axis = axis_of(cp->axis, by);
+      if (!axis) return fail(axis.error());
+      auto r = eval(cp->radius, by, "radius");
+      auto a0 = eval(cp->start_angle, by, "start angle");
+      auto sweep = eval(cp->sweep, by, "sweep");
+      auto t0 = eval(cp->start, by, "start along the axis");
+      auto len = eval(cp->length, by, "length");
+      for (const auto* x : {&r, &a0, &sweep, &t0, &len}) {
+        if (!*x) return fail(x->error());
+      }
+      constexpr double kTurn = 2.0 * std::numbers::pi;
+      const double min = settings_.min_feature_size_mm();
+      if (*r < min || *len < min || !(*sweep > 0.0) || *sweep * *r < min ||
+          *sweep > kTurn + 1e-9) {
+        return fail(error(by, "model.connection.bad_size",
+                          fmt::format("its cylinder has radius {} mm, sweep {} rad and length {} "
+                                      "mm; the radius, the arc and the length must be at least {} "
+                                      "mm, and the sweep at most a full turn",
+                                      *r, *sweep, *len, min)));
+      }
+      CylinderBuild cyl{*r, *a0, std::abs(*sweep - kTurn) <= 1e-9 ? kTurn : *sweep, *t0, *len};
+      cb.frame = cylinder_frame(*axis);
+      auto face = kernel::make_cylinder_face({cb.frame.origin, cb.frame.normal()}, cb.frame.x_axis,
+                                             cyl.radius, cyl.start_angle, cyl.sweep, cyl.start,
+                                             cyl.length, settings_);
+      if (!face) return fail(about(by, face.error()));
+      cb.patch = *face;
+      cb.cylinder = cyl;
+      cb.area = cyl.radius * cyl.sweep * cyl.length;
     } else {
       const auto& dp = std::get<DatumPatch>(c.geometry);
       auto frame = plane_of(dp.plane, by);
@@ -399,6 +611,11 @@ class DocumentBuilder {
       cb.gap = *gap;
     }
     if (const auto* b = std::get_if<BoltedFlangeParams>(&c.params)) {
+      if (cb.cylinder) {
+        return fail(error(by, "model.connection.curved_flange",
+                          "a bolted flange must be planar; use a sketch profile or a datum "
+                          "rectangle, or make the surface bonded"));
+      }
       auto wall = eval(b->min_wall, by, "minimum wall");
       if (!wall) return fail(wall.error());
       cb.min_wall = *wall;
@@ -495,6 +712,13 @@ class DocumentBuilder {
       return cb;
     }
 
+    if (v.composite()) {
+      // Its layout rebuilt with the layout half; its children are its
+      // contents, and build() or the engine adds their measures up.
+      cb.contents_rebuild = vb.contents_rebuild;
+      cb.status = VolumeStatus::Current;
+      return cb;
+    }
     if (const auto* sc = std::get_if<StaticContents>(&v.contents)) {
       import_static(v, *sc, cb);
     } else if (const auto* pc = std::get_if<ParametricContents>(&v.contents)) {
@@ -556,29 +780,40 @@ class DocumentBuilder {
   void parametric(const Volume& v, const feature::FeatureTree& tree, const VolumeBuild& layout,
                   ContentsBuild& vb) const {
     const SubjectRef self = doc_.volume_subject(v.id);
-    feature::ExternalInputs inputs;
-    {
-      feature::ExternalInput boundary;
-      boundary.subject = doc_.boundary_subject(v.id);
-      boundary.result.faces = layout.boundary_faces;
-      inputs.references.push_back(std::move(boundary));
+    feature::ExternalInputs inputs = inputs_for(v, layout);
+    // A template's copy (L4): rebuilt where the template was authored, then
+    // moved into place.
+    const core::dvec3 offset = v.contents_offset;
+    const bool moved = !(offset == core::dvec3{});
+    if (moved) {
+      for (auto& in : inputs.references) {
+        feature::FeatureResult& r = in.result;
+        if (r.plane) r.plane->origin = r.plane->origin - offset;
+        if (r.axis) r.axis->origin = r.axis->origin - offset;
+        if (r.point) *r.point = *r.point - offset;
+        for (auto& f : r.faces) {
+          f.plane.origin = f.plane.origin - offset;
+          if (f.cylinder) f.cylinder->axis.origin = f.cylinder->axis.origin - offset;
+        }
+      }
     }
-    for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
-      const ConnectionSurface& c = doc_.connections[k];
-      if (!c.joins(v.id) || !in_.connections[k].ok) continue;
-      const ConnectionBuild& cb = in_.connections[k];
-      feature::ExternalInput in;
-      in.subject = doc_.connection_subject(c.id);
-      in.result.plane = cb.frame;
-      in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
-      inputs.references.push_back(std::move(in));
-    }
-    for (const auto& [name, value] : layout.parameters) inputs.values.emplace(name, value);
 
     feature::RebuildOptions options;
     options.inputs = &inputs;
     vb.contents_rebuild = feature::rebuild(tree, settings_, options);
     const auto& r = *vb.contents_rebuild;
+    if (moved && r.ok() && !r.body.is_empty()) {
+      auto placed = kernel::transformed(r.body, core::dtransform::translate(offset));
+      if (!placed) {
+        vb.diagnostics.add(placed.error());
+        vb.status = VolumeStatus::Failed;
+        return;
+      }
+      vb.contents = *placed;
+      vb.diagnostics.append(r.diagnostics);  // warnings
+      vb.status = VolumeStatus::Current;
+      return;
+    }
     if (!r.ok()) {
       vb.diagnostics.add(error(self, "model.contents.failed",
                                "its contents' feature tree didn't rebuild cleanly"));
@@ -647,6 +882,63 @@ void apply_contents(VolumeBuild& volume, ContentsBuild contents) {
   volume.diagnostics.append(contents.diagnostics);
 }
 
+// --- composite volumes ---------------------------------------------------------------
+
+void ContentsMeasure::add(const ContentsMeasure& other) {
+  if (!other.any) return;
+  volume += other.volume;
+  moment = moment + other.moment;
+  envelope.expand(other.envelope);
+  any = true;
+}
+
+ContentsMeasure measure_solid(const kernel::Solid& solid) {
+  ContentsMeasure m;
+  if (solid.is_empty()) return m;
+  const auto mass = kernel::mass_properties(solid);
+  if (!mass) return m;
+  m.volume = mass->volume;
+  m.moment = mass->center_of_mass * mass->volume;
+  m.envelope = kernel::bounding_box(solid);
+  m.any = true;
+  return m;
+}
+
+std::vector<OutputResult> composite_outputs(const Volume& composite,
+                                            const ContentsMeasure& total) {
+  std::vector<OutputResult> out;
+  for (const auto& o : composite.outputs) {
+    OutputResult res{o.id, std::nullopt};
+    if (total.any) {
+      switch (o.quantity) {
+        case OutputQuantity::Volume: res.value = total.volume; break;
+        case OutputQuantity::Mass: res.value = total.volume * 1e-3 * o.density; break;
+        case OutputQuantity::CentreOfGravity:
+          if (total.volume > 0.0) res.value = total.moment * (1.0 / total.volume);
+          break;
+        case OutputQuantity::Envelope: res.value = total.envelope; break;
+        case OutputQuantity::SurfaceArea:
+        case OutputQuantity::Published: break;  // don't add up (check() refuses them)
+      }
+    }
+    out.push_back(res);
+  }
+  return out;
+}
+
+VolumeStatus worse(VolumeStatus a, VolumeStatus b) {
+  const auto rank = [](VolumeStatus s) {
+    switch (s) {
+      case VolumeStatus::Current: return 0;
+      case VolumeStatus::Regenerating: return 1;
+      case VolumeStatus::Stale: return 2;
+      case VolumeStatus::Failed: return 3;
+    }
+    return 3;
+  };
+  return rank(a) >= rank(b) ? a : b;
+}
+
 DocumentBuild build(const Document& document, const ProductSettings& settings,
                     const BlobStore* blobs) {
   DocumentBuild out;
@@ -658,6 +950,24 @@ DocumentBuild build(const Document& document, const ProductSettings& settings,
   for (std::size_t i = 0; i < document.volumes.size(); ++i) built.push_back(contents.contents(i));
   for (std::size_t i = 0; i < document.volumes.size(); ++i) {
     apply_contents(out.volumes[i], std::move(built[i]));
+  }
+  // Composites, deepest first: their status and outputs from their
+  // children's (L3).
+  std::vector<ContentsMeasure> measures(document.volumes.size());
+  const std::vector<std::size_t> order = level_order(document);
+  for (auto it = order.rbegin(); it != order.rend(); ++it) {
+    const std::size_t i = *it;
+    const Volume& v = document.volumes[i];
+    VolumeBuild& vb = out.volumes[i];
+    if (!v.composite()) {
+      measures[i] = measure_solid(vb.contents);
+      continue;
+    }
+    for (const std::size_t c : children(document, v.id)) {
+      measures[i].add(measures[c]);
+      vb.status = worse(vb.status, out.volumes[c].status);
+    }
+    vb.outputs = composite_outputs(v, measures[i]);
   }
   layout.collect_diagnostics();
   return out;

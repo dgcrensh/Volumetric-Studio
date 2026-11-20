@@ -34,7 +34,10 @@
 //      replaced by the seam's own triangulation plus its hole fills (the
 //      contents have no bolt holes), and the rim they leave is stitched to
 //      the seam's outer loop by a strip that walks both loops together by
-//      arc length;
+//      arc length. On a curved seam (L2) "on the patch" is along the
+//      surface's normal at each point and inside its unrolled outline; a
+//      band's removal leaves two rims, each stitched to the seam loop at
+//      its height;
 //   4. containment: vertices (never seam vertices) move inward, against
 //      the boundary's gradient, until every vertex and every triangle's
 //      centroid is inside the boundary by the inset (on it, for triangles
@@ -61,7 +64,10 @@
 //   proc.mesh.invalid         the mesh isn't closed and manifold (a bug:
 //                             the construction above should never allow it)
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -84,8 +90,52 @@ struct FieldMesh {
   [[nodiscard]] bool empty() const { return triangles.empty(); }
 };
 
-// The surface of {samples < 0}.
-FieldMesh surface_nets(const SampledField& samples);
+// The surface of {samples < 0}. With a pool, the passes run on it (L1b);
+// the mesh is the same, bit for bit, on any number of threads.
+FieldMesh surface_nets(const SampledField& samples, eval::ThreadPool* pool = nullptr);
+
+// --- surface nets in two steps (L1b; decision 0019) ------------------------------------
+//
+// The unmerged net is one vertex per crossed tetrahedron and the fanned
+// polygon round each crossed grid edge, before any cube's vertices are
+// merged. Every cube and every grid point is independent there, so it is
+// made in z slabs on a pool, or by a MeshingBackend (the GPU), and laid
+// out in grid order exactly as the serial loop lays it out.
+//
+// The merge is not independent: whether a collapse in one cube passes the
+// link condition depends on collapses already made in the cubes round it.
+// But only on those: a triangle's vertices lie in cubes sharing a grid
+// edge. So merge_net() visits the cubes in waves, cube (i, j, k) in wave
+// i + 3j + 9k: every neighbour that the serial order visits first is in an
+// earlier wave, and two cubes of one wave are at least three apart, so
+// they touch nothing in common and run in parallel without locks. The
+// result is the serial merge's, bit for bit.
+struct UnmergedNet {
+  std::vector<dvec3> sums;             // per vertex: the sum of its crossing points
+  std::vector<std::uint8_t> counts;    // per vertex: how many (the vertex is sum / count)
+  // Crossed cube c's vertices are [group_starts[c], group_starts[c + 1]);
+  // one more entry than cubes.
+  std::vector<std::uint32_t> group_starts;
+  // Crossed cube c's index among the cubes of the grid padded by one
+  // sample all round (x fastest), in increasing order.
+  std::vector<std::uint64_t> cubes;
+  std::vector<mesh::Triangle> triangles;  // counter-clockwise seen from outside
+
+  friend bool operator==(const UnmergedNet&, const UnmergedNet&) = default;
+};
+
+// The unmerged net of {samples < 0}: the installed MeshingBackend's when
+// it takes the grid, else unmerged_net_cpu().
+UnmergedNet unmerged_net(const SampledField& samples, eval::ThreadPool* pool = nullptr);
+UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool = nullptr);
+
+// Merges each cube's vertices (see surface_nets() above) and compacts.
+// `grid` is the grid the net was made on.
+FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool = nullptr);
+
+// M11's serial surface nets, unchanged: what surface_nets() must give.
+// For tests and self-checks.
+FieldMesh surface_nets_reference(const SampledField& samples);
 
 // The mesh rounded to FP32, every triangle in `volume`.
 mesh::Mesh to_mesh(const FieldMesh& field_mesh, const core::Id& volume);
@@ -95,10 +145,57 @@ mesh::Mesh to_mesh(const FieldMesh& field_mesh, const core::Id& volume);
 // far outside the exact surface, can't take the contents out with it.
 inline constexpr double kContentsInset = kInputDeflection;
 
-// max(samples, boundary's signed distance + inset) at every grid point, z
-// slices on `pool` when given.
+// max(samples, float(boundary's signed distance + inset)) at every grid
+// point: the installed MeshingBackend's when it takes the grid, else
+// clip_to_boundary_cpu() (z slices on `pool` when given).
 SampledField clip_to_boundary(const SampledField& samples, const TriangleDistance& boundary,
                               double inset = 0.0, eval::ThreadPool* pool = nullptr);
+SampledField clip_to_boundary_cpu(const SampledField& samples, const TriangleDistance& boundary,
+                                  double inset = 0.0, eval::ThreadPool* pool = nullptr);
+
+// --- meshing backends (L1b) ------------------------------------------------------------
+//
+// Something that does the clip or the unmerged net faster than the CPU
+// and gives exactly the CPU's result, bit for bit (vs_gpu installs one).
+// Each is offered every grid first; what it declines, the CPU does, so
+// results never depend on which one ran. Called from any thread.
+class MeshingBackend {
+ public:
+  virtual ~MeshingBackend() = default;
+  // Fills `values` (samples.grid.size() of them) and returns true, or
+  // returns false to leave the clip to the CPU.
+  virtual bool clip(const SampledField& samples, const TriangleDistance& boundary, double inset,
+                    std::vector<float>& values) = 0;
+  // Fills `net` and returns true, or returns false to leave it to the CPU.
+  virtual bool unmerged_net(const SampledField& samples, UnmergedNet& net) = 0;
+};
+// For backends: how surface_nets() splits the grid. Cube corner c sits at
+// (c & 1, (c >> 1) & 1, (c >> 2) & 1); tetrahedron t has corners
+// tet_corners[t], lowest first; grid edges run from a point P to P +
+// direction (corner bits) for the seven directions in order; round d lists
+// the tetrahedra round such an edge in fan order, each by its cube's
+// lowest corner relative to P and its index.
+struct NetTables {
+  struct RoundTet {
+    std::array<std::int32_t, 3> offset;
+    std::uint32_t tet;
+  };
+  std::array<std::array<std::uint32_t, 4>, 6> tet_corners;
+  std::array<std::uint32_t, 7> directions;
+  std::array<std::vector<RoundTet>, 7> rounds;
+};
+const NetTables& net_tables();
+
+// Process-wide; null removes it. Not while meshes are being made.
+void set_meshing_backend(std::shared_ptr<MeshingBackend> backend);
+[[nodiscard]] std::shared_ptr<MeshingBackend> meshing_backend();
+
+// True only if `mesh` is closed and manifold as mesh::analyse() judges it
+// (no degenerate triangle; every half-edge once and its reverse once;
+// every vertex's link one cycle), checked per vertex on `pool` (L1b:
+// analyse() is serial). False means "look closer": analyse() says what's
+// wrong, or that nothing is.
+bool closed_manifold(const mesh::Mesh& mesh, eval::ThreadPool* pool = nullptr);
 
 struct ContentsMesh {
   mesh::Mesh mesh;

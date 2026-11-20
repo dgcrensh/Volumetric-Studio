@@ -27,6 +27,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 #include <fmt/format.h>
@@ -46,6 +47,8 @@
 #include "vs/core/version.hpp"
 #include "vs/eval/import.hpp"
 #include "vs/gpu/gpu.hpp"
+#include "vs/kernel/queries.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/proc/bake.hpp"
 #include "vs/proc/generator.hpp"
 #include "vs/validate/validate.hpp"
@@ -103,6 +106,28 @@ QIcon dot(const QColor& c) {
   return QIcon(pm);
 }
 
+// What a volume edited in context sees (M14), and for a composite (L3) the
+// surfaces of its own level and below.
+std::vector<Id> context_inputs(const model::Document& doc, const Id& volume) {
+  std::vector<Id> out;
+  for (const auto& s : doc.connections) {
+    const Id level = model::level_of(doc, s);
+    if (model::joins(doc, s, volume) || (!level.is_null() && (level == volume || model::is_within(doc, level, volume)))) {
+      out.push_back(s.id);
+    }
+  }
+  return out;
+}
+
+// A composite's descendants, shown undimmed while its layout is edited (L3).
+std::vector<Id> context_inside(const model::Document& doc, const Id& volume) {
+  std::vector<Id> out;
+  for (const auto& v : doc.volumes) {
+    if (model::is_within(doc, v.id, volume)) out.push_back(v.id);
+  }
+  return out;
+}
+
 QIcon kind_icon(const VolumeRow& row, std::size_t index) {
   const QColor c = row.keep_out ? QColor(217, 64, 64) : qcolor(volume_color(index));
   if (row.keep_out) return swatch(c, QChar('K'), true);
@@ -111,6 +136,7 @@ QIcon kind_icon(const VolumeRow& row, std::size_t index) {
     case model::VolumeKind::Static: return swatch(c, QChar('S'));
     case model::VolumeKind::Parametric: return swatch(c, QChar('P'));
     case model::VolumeKind::Procedural: return swatch(c, QChar('G'));
+    case model::VolumeKind::Composite: return swatch(c, QChar('C'));
   }
   return {};
 }
@@ -417,9 +443,18 @@ void MainWindow::build_menus() {
   help->addAction(tr("&About"), this, [this] {
     const auto v = core::version_string();
     const gpu::Status g = gpu::status();
-    const QString fields = g.installed ? tr("Procedural fields are sampled on %1.").arg(qstr(g.device))
-                           : g.why.empty() ? tr("Procedural fields are sampled on the CPU.")
-                                           : tr("Procedural fields are sampled on the CPU: %1.").arg(qstr(g.why));
+    QString fields;
+    if (g.installed) {
+      const auto where = [&](bool gpu) { return gpu ? tr("the GPU") : tr("the CPU"); };
+      fields = tr("GPU: %1. Sampling runs on %2, the boundary clip on %3 and surface nets on %4 (the "
+                  "GPU takes a stage only when it matches the CPU exactly and was faster here).")
+                   .arg(qstr(g.device), where(g.sampling), where(g.clip), where(g.meshing));
+      if (!g.calibration.empty()) fields += tr("\nCalibration: %1.").arg(qstr(g.calibration));
+      if (!g.why.empty()) fields += tr("\n%1.").arg(qstr(g.why));
+    } else {
+      fields = g.why.empty() ? tr("Procedural fields are sampled and meshed on the CPU.")
+                             : tr("Procedural fields are sampled and meshed on the CPU: %1.").arg(qstr(g.why));
+    }
     QMessageBox::about(this, tr("Volumetric CAD Studio"),
                        tr("Volumetric CAD Studio %1\n\nEvery design is a tree of volumes.\n\n%2").arg(qstr(v), fields));
   });
@@ -754,11 +789,8 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
     if (doc.find_volume(editing_volume_) == nullptr || tree_of(doc, editing_volume_) == nullptr) {
       leave_context();
     } else {
-      std::vector<Id> inputs;
-      for (const auto& s : doc.connections) {
-        if (s.joins(editing_volume_)) inputs.push_back(s.id);
-      }
-      viewport_->set_context(editing_volume_, inputs);
+      viewport_->set_context(editing_volume_, context_inputs(doc, editing_volume_),
+                             context_inside(doc, editing_volume_));
     }
   }
   refresh_volume_tree();
@@ -802,14 +834,20 @@ void MainWindow::refresh_volume_tree() {
   const SnapshotPtr s = session_->latest();
   syncing_ = true;
   volumes_->clear();
+  volume_items_.clear();
   if (s) {
     const auto& ev = s->evaluation;
     auto* vols = new QTreeWidgetItem(volumes_, {tr("Volumes")});
     vols->setFlags(Qt::ItemIsEnabled);
     const auto rows = volume_rows(ev, last_states_);
+    volume_items_.clear();
+    std::map<Id, QTreeWidgetItem*> by_id;  // L3: children under their composite
     for (std::size_t i = 0; i < rows.size(); ++i) {
       const VolumeRow& r = rows[i];
-      auto* item = new QTreeWidgetItem(vols);
+      const auto parent = by_id.find(r.parent);
+      auto* item = new QTreeWidgetItem(parent != by_id.end() ? parent->second : vols);
+      by_id.emplace(r.id, item);
+      volume_items_.push_back(item);
       item->setText(0, qstr(r.name));
       item->setIcon(0, kind_icon(r, i));
       item->setText(1, qstr(kind_label(r)));
@@ -825,7 +863,7 @@ void MainWindow::refresh_volume_tree() {
         QFont f = item->font(0);
         f.setBold(true);
         item->setFont(0, f);
-      } else if (!editing_volume_.is_null()) {
+      } else if (!editing_volume_.is_null() && !model::is_within(ev.document, r.id, editing_volume_)) {
         for (int c = 0; c < 3; ++c) item->setForeground(c, QColor(150, 150, 155));
       }
     }
@@ -858,12 +896,10 @@ void MainWindow::refresh_states() {
   if (states == last_states_) return;
   last_states_ = std::move(states);
   const auto rows = volume_rows(s->evaluation, last_states_);
-  QTreeWidgetItem* vols = volumes_->topLevelItemCount() > 0 ? volumes_->topLevelItem(0) : nullptr;
-  if (vols == nullptr) return;
-  for (int i = 0; i < vols->childCount() && i < static_cast<int>(rows.size()); ++i) {
-    const auto& r = rows[static_cast<std::size_t>(i)];
-    vols->child(i)->setText(2, qstr(status_label(r.status)));
-    vols->child(i)->setIcon(2, dot(status_color(r.status)));
+  for (std::size_t i = 0; i < volume_items_.size() && i < rows.size(); ++i) {
+    const auto& r = rows[i];
+    volume_items_[i]->setText(2, qstr(status_label(r.status)));
+    volume_items_[i]->setIcon(2, dot(status_color(r.status)));
   }
 }
 
@@ -990,13 +1026,11 @@ void MainWindow::sync_tree_selection() {
   const core::Id subject = viewport_subject(selection_);
   if (!subject.is_null()) {
     const QString id = qstr(subject.to_string());
-    for (int g = 0; g < volumes_->topLevelItemCount(); ++g) {
-      QTreeWidgetItem* group = volumes_->topLevelItem(g);
-      for (int i = 0; i < group->childCount(); ++i) {
-        if (group->child(i)->data(0, kRoleId).toString() == id) {
-          group->child(i)->setSelected(true);
-          volumes_->scrollToItem(group->child(i));
-        }
+    // Every row, children of composites included (L3).
+    for (QTreeWidgetItemIterator it(volumes_); *it != nullptr; ++it) {
+      if ((*it)->parent() != nullptr && (*it)->data(0, kRoleId).toString() == id) {
+        (*it)->setSelected(true);
+        volumes_->scrollToItem(*it);
       }
     }
   }
@@ -1087,15 +1121,63 @@ void MainWindow::volume_context_menu(const QPoint& pos) {
   const Id vid = *id;
   if (item->data(0, kRoleKind).toInt() == 1) {
     menu.addAction(tr("Edit…"), this, [this, vid] { edit_connection(vid); });
+    // L3: each composite it joins passes it down to one of its children.
+    const auto& doc = history_.project().document;
+    if (const model::ConnectionSurface* surface = doc.find_connection(vid)) {
+      for (const auto& v : doc.volumes) {
+        const auto* comp = std::get_if<model::CompositeContents>(&v.contents);
+        if (comp == nullptr || !model::joins(doc, *surface, v.id)) continue;
+        QMenu* met = menu.addMenu(tr("Met inside %1 by").arg(qstr(v.name)));
+        const Id composite = v.id;
+        const auto* d = comp->delegation(vid);
+        QAction* none = met->addAction(tr("(no child)"), this, [this, composite, vid] { set_met_by(composite, vid, {}); });
+        none->setCheckable(true);
+        none->setChecked(d == nullptr);
+        for (const std::size_t i : model::children(doc, v.id)) {
+          const model::Volume& child = doc.volumes[i];
+          if (child.keep_out) continue;
+          const Id cid = child.id;
+          QAction* a = met->addAction(qstr(child.name), this, [this, composite, vid, cid] { set_met_by(composite, vid, cid); });
+          a->setCheckable(true);
+          a->setChecked(d != nullptr && d->child == cid);
+        }
+      }
+    }
     menu.addAction(tr("Delete"), this, [this, vid] { apply(remove_connection(vid)); });
     menu.exec(volumes_->viewport()->mapToGlobal(pos));
     return;
   }
   const model::Volume* v = history_.project().document.find_volume(vid);
-  if (v == nullptr) return;
+  if (v == nullptr) {
+    // L4: a generated child, read-only: change its composite's procedure.
+    const SnapshotPtr s = session_->latest();
+    const model::Volume* g = s ? s->evaluation.document.find_volume(vid) : nullptr;
+    if (g == nullptr || !g->generated) return;
+    const model::Volume* parent = s->evaluation.document.find_volume(g->parent);
+    QAction* info = menu.addAction(tr("Generated by %1's procedure").arg(qstr(parent ? parent->name : "?")));
+    info->setEnabled(false);
+    const Id composite = g->parent;
+    menu.addAction(tr("Edit generator"), this, [this, composite] { edit_graph(composite); });
+    menu.exec(volumes_->viewport()->mapToGlobal(pos));
+    return;
+  }
   menu.addAction(tr("Properties…"), this, [this, vid] { edit_volume(vid); });
   if (!v->keep_out) {
-    if (v->tree() != nullptr || v->contents_empty()) {
+    if (v->composite()) {
+      menu.addAction(tr("Edit layout in context"), this, [this, vid] { edit_in_context(vid); });
+      // L4: children from a procedure.
+      const auto& comp = std::get<model::CompositeContents>(v->contents);
+      menu.addAction(comp.generates() ? tr("Edit generator") : tr("Generate children"), this,
+                     [this, vid] { edit_graph(vid); });
+      if (comp.generates()) {
+        menu.addAction(tr("Stop generating children"), this, [this, vid] { apply(clear_generator(vid)); });
+      }
+    }
+    if (const model::Volume* parent = history_.project().document.find_volume(v->parent);
+        parent != nullptr && parent->composite() && !v->composite()) {
+      menu.addAction(tr("Make template of %1").arg(qstr(parent->name)), this, [this, vid] { make_template_of(vid); });
+    }
+    if (!v->composite() && (v->tree() != nullptr || v->contents_empty())) {
       menu.addAction(v->tree() != nullptr ? tr("Edit contents in context") : tr("Fill by modelling"), this,
                      [this, vid] { edit_in_context(vid); });
     }
@@ -1124,7 +1206,8 @@ void MainWindow::volume_context_menu(const QPoint& pos) {
     const std::pair<ContentsKind, const char*> kinds[] = {{ContentsKind::Placeholder, "Placeholder"},
                                                           {ContentsKind::Parametric, "Modelled"},
                                                           {ContentsKind::Procedural, "Procedural"},
-                                                          {ContentsKind::Baked, "Baked"}};
+                                                          {ContentsKind::Baked, "Baked"},
+                                                          {ContentsKind::Composite, "Composite"}};
     for (const auto& [k, label] : kinds) {
       const ContentsKind target = k;
       QAction* a = swap->addAction(tr(label), this, [this, vid, target] { swap_contents(vid, target); });
@@ -1149,6 +1232,10 @@ void MainWindow::volume_context_menu(const QPoint& pos) {
 
 bool MainWindow::edit_in_context(const Id& volume) {
   const model::Volume* v = history_.project().document.find_volume(volume);
+  if (v == nullptr && is_generated(volume)) {
+    status_label_->setText(tr("A generated volume is read-only: change its composite's procedure or template"));
+    return false;
+  }
   if (v == nullptr || v->keep_out) return false;
   if (v->tree() == nullptr) {
     if (!v->contents_empty()) {
@@ -1161,19 +1248,52 @@ bool MainWindow::edit_in_context(const Id& volume) {
   }
   close_dialog();
   editing_volume_ = volume;
-  std::vector<Id> inputs;
-  for (const auto& s : history_.project().document.connections) {
-    if (s.joins(volume)) inputs.push_back(s.id);
+  const auto& doc = history_.project().document;
+  viewport_->set_context(volume, context_inputs(doc, volume), context_inside(doc, volume));
+  if (v->composite()) {
+    // L3: a composite's layout, where its children and the surfaces and
+    // keep-outs between them are added.
+    context_label_->setText(tr("Editing the layout of %1: add child volumes and the surfaces between them; only "
+                               "its boundary and connection surfaces can be referenced")
+                                .arg(qstr(v->name)));
+  } else {
+    context_label_->setText(tr("Editing the contents of %1: only its boundary and connection surfaces can be "
+                               "referenced")
+                                .arg(qstr(v->name)));
   }
-  viewport_->set_context(volume, inputs);
-  context_label_->setText(tr("Editing the contents of %1: only its boundary and connection surfaces can be "
-                             "referenced")
-                              .arg(qstr(v->name)));
   context_bar_->setVisible(true);
   leave_context_action_->setEnabled(true);
   select(Selection::of_volume(volume));
   refresh_volume_tree();
   return true;
+}
+
+bool MainWindow::is_generated(const Id& volume) const {
+  const SnapshotPtr s = session_->latest();
+  const model::Volume* v = s ? s->evaluation.document.find_volume(volume) : nullptr;
+  return v != nullptr && v->generated;
+}
+
+core::Diagnostics MainWindow::make_template_of(const Id& child) {
+  // The template's origin: the min corner of the child's built boundary.
+  core::dvec3 origin{};
+  const SnapshotPtr s = session_->latest();
+  if (const model::VolumeBuild* vb = s ? s->evaluation.build.find_volume(child) : nullptr;
+      vb != nullptr && !vb->boundary.is_empty()) {
+    origin = kernel::bounding_box(vb->boundary).min;
+  }
+  const core::Diagnostics d = apply(make_template(child, origin));
+  if (!d.has_errors()) status_label_->setText(tr("Made a template; a generator can now fill children from it"));
+  return d;
+}
+
+Id MainWindow::authoring_level() const {
+  const model::Volume* v = history_.project().document.find_volume(editing_volume_);
+  return v != nullptr && v->composite() ? editing_volume_ : Id{};
+}
+
+bool MainWindow::set_met_by(const Id& composite, const Id& surface, const Id& child) {
+  return !apply(set_delegation(composite, surface, child)).has_errors();
 }
 
 void MainWindow::leave_context() {
@@ -1348,9 +1468,10 @@ VolumeDialog* MainWindow::new_volume() {
   if (!s) return nullptr;
   std::vector<std::string> taken;
   for (const auto& v : history_.project().document.volumes) taken.push_back(v.name);
-  model::Volume v = volume_from_features(unique_name("Volume", taken), {});
+  const Id level = authoring_level();
+  model::Volume v = volume_from_features(unique_name("Volume", taken), {}, level);
   // A layout solid that is selected is the likely boundary.
-  if (selection_.kind == Selection::Kind::Feature && selection_.volume.is_null()) {
+  if (selection_.kind == Selection::Kind::Feature && selection_.volume == level) {
     std::get<model::FeatureBoundary>(v.boundary).features.push_back(selection_.id);
   }
   auto* d = new VolumeDialog(v, s->evaluation, this);
@@ -1376,7 +1497,7 @@ ConnectionDialog* MainWindow::new_connection() {
   c.id = Id::random();
   c.name = unique_name("Surface", taken);
   c.geometry = model::SketchPatch{};
-  auto* d = new ConnectionDialog(c, s->evaluation, this);
+  auto* d = new ConnectionDialog(c, s->evaluation, authoring_level(), this);
   start_dialog(d, [d] { return add_connection(d->value()); });
   return d;
 }
@@ -1385,7 +1506,7 @@ ConnectionDialog* MainWindow::edit_connection(const Id& surface) {
   const SnapshotPtr s = session_->latest();
   const model::ConnectionSurface* c = history_.project().document.find_connection(surface);
   if (!s || c == nullptr) return nullptr;
-  auto* d = new ConnectionDialog(*c, s->evaluation, this);
+  auto* d = new ConnectionDialog(*c, s->evaluation, model::level_of(history_.project().document, *c), this);
   start_dialog(d, [d] { return update_connection(d->value()); });
   return d;
 }
@@ -1398,7 +1519,7 @@ KeepOutDialog* MainWindow::new_keep_out() {
   model::KeepOut k;
   k.id = Id::random();
   k.name = unique_name("Keep-out", taken);
-  auto* d = new KeepOutDialog(k, s->evaluation, this);
+  auto* d = new KeepOutDialog(k, s->evaluation, authoring_level(), this);
   start_dialog(d, [d] { return add_keep_out(d->value()); });
   return d;
 }
@@ -1408,7 +1529,7 @@ LinkDialog* MainWindow::new_link() {
   if (!s) return nullptr;
   model::Link l;
   l.id = Id::random();
-  auto* d = new LinkDialog(l, s->evaluation, this);
+  auto* d = new LinkDialog(l, s->evaluation, authoring_level(), this);
   start_dialog(d, [d] { return add_link(d->value()); });
   return d;
 }
@@ -1422,7 +1543,13 @@ bool MainWindow::edit_graph(const Id& volume) {
     status_label_->setText(tr("%1 is baked; unbake it to edit its graph").arg(qstr(v->name)));
     return false;
   }
-  if (v->kind() != model::VolumeKind::Procedural) {
+  if (const auto* comp = std::get_if<model::CompositeContents>(&v->contents)) {
+    // L4: a composite's graph is its generator; start one from a grid.
+    if (!comp->generates()) {
+      const std::string first = comp->templates.empty() ? std::string() : comp->templates.front().name;
+      if (apply(set_graph(volume, starter_generator(first), "Generate children")).has_errors()) return false;
+    }
+  } else if (v->kind() != model::VolumeKind::Procedural) {
     if (!v->contents_empty()) {
       status_label_->setText(tr("%1 has %2 contents; clear them to fill it by procedure")
                                  .arg(qstr(v->name), qstr(model::to_string(v->kind())).toLower()));

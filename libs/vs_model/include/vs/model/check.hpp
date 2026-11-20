@@ -26,6 +26,18 @@
 //                  model.connection.not_volume     a joined id isn't a volume
 //                  model.connection.keep_out       it joins a keep-out volume
 //                  model.connection.unknown_thread the thread isn't an ISO size
+//                  model.connection.curved_flange  a bolted flange on a cylinder patch
+//                  model.volume.parent             (L3) the parent is missing or isn't a
+//                                                  composite, or the parents loop
+//                  model.composite.delegation      a delegation names a surface not joining
+//                                                  the composite, a volume not its child,
+//                                                  or a surface twice
+//                  model.composite.undelegated     (warning) a bonded or bolted surface joins
+//                                                  a composite and no child meets it
+//                  model.composite.template        (L4) a template has no name, shares one,
+//                                                  or has an illegal or repeated parameter
+//                  model.level.mixed               a surface or keep-out names volumes of
+//                                                  different levels
 //                  model.link.not_output           the source isn't a published output
 //                  model.link.not_scalar           the source isn't one number
 //                  model.link.bad_target           the target isn't a layout variable or
@@ -39,6 +51,11 @@
 //                                                  surfaces, parameters, links, and
 //                                                  every feature inside each volume
 //   dependencies   model.dependency.loop           (dependency.hpp)
+//                  model.composite.generated_link  (L4) a link feeds the inputs of a composite
+//                                                  with a generator, from outside it
+//
+// Generated volumes (L4, generated.hpp) are checked like authored ones,
+// except that their names (and their surfaces') needn't be distinct.
 //
 // A diagnostic names the thing to change first: the feature, volume,
 // connection surface, keep-out, parameter or link holding the reference.

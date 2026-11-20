@@ -20,8 +20,10 @@ vs_add_library(vs_proc
     src/inspect.cpp
     src/mesh_boolean.cpp
     src/mesher.cpp
+    src/surface_nets_reference.cpp
     src/module.cpp
     src/nodes.cpp
+    src/nodes_children.cpp
     src/nodes_frames.cpp
     src/nodes_infill.cpp
     src/nodes_mesh.cpp
@@ -45,6 +47,12 @@ vs_add_library_tests(vs_proc
     tests/scenes.cpp
     tests/test_acceptance.cpp
     tests/test_check.cpp
+    tests/test_curved.cpp
+    tests/test_nested.cpp
+    tests/test_children.cpp
+    ../vs_model/tests/rack.cpp
+    ../vs_model/tests/curved.cpp
+    ../vs_model/tests/nested.cpp
     tests/test_data.cpp
     tests/test_distance.cpp
     tests/test_engine.cpp
@@ -52,6 +60,7 @@ vs_add_library_tests(vs_proc
     tests/test_graph.cpp
     tests/test_mesh_acceptance.cpp
     tests/test_mesher.cpp
+    tests/test_parallel_mesher.cpp
     tests/test_module.cpp
     tests/test_nodes.cpp
     tests/test_templates.cpp
@@ -62,6 +71,8 @@ vs_add_library_tests(vs_proc
     tests/test_mvp_workflows.cpp)
 
 if(VS_BUILD_TESTS)
+  target_include_directories(vs_proc_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../vs_model/tests)
   target_compile_definitions(vs_proc_tests PRIVATE
     VS_PROC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 endif()

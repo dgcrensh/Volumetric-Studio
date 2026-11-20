@@ -1,6 +1,7 @@
 #include "model_commands.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,7 @@
 #include "vs/kernel/queries.hpp"
 #include "vs/model/build.hpp"
 #include "vs/model/dependency.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/model/project.hpp"
 
 namespace vs::cli {
@@ -38,14 +40,27 @@ std::string join(const std::vector<std::string>& items, std::string_view sep = "
 std::string boundary_text(const Document& doc, const Volume& v) {
   if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
     std::vector<std::string> names;
-    for (const auto& id : fb->features) names.push_back(doc.layout.label(id));
+    const feature::FeatureTree* layout = model::level_layout(doc, v.parent);
+    for (const auto& id : fb->features) {
+      names.push_back(layout != nullptr ? layout->label(id) : id.to_string());
+    }
     return "features " + join(names);
   }
   return "box between two points";
 }
 
-std::string contents_text(const Volume& v) {
+std::string contents_text(const Document& doc, const Volume& v) {
   if (v.keep_out) return "keep-out (stays empty)";
+  if (const auto* comp = std::get_if<CompositeContents>(&v.contents)) {
+    std::string text = fmt::format("{} child volumes; layout: {} features, {} variables",
+                                   model::children(doc, v.id).size(), comp->layout.features().size(),
+                                   comp->layout.variables().variables().size());
+    for (const auto& d : comp->delegations) {
+      text += fmt::format("; passes '{}' to '{}'", doc.connection_subject(d.surface).label,
+                          doc.volume_subject(d.child).label);
+    }
+    return text;
+  }
   if (v.contents_empty()) return "placeholder";
   if (const auto* s = std::get_if<StaticContents>(&v.contents)) {
     return fmt::format("file {} ({})", s->blob, s->format);
@@ -59,7 +74,12 @@ std::string contents_text(const Volume& v) {
 
 std::string geometry_text(const Document& doc, const ConnectionSurface& c) {
   if (const auto* sp = std::get_if<SketchPatch>(&c.geometry)) {
-    return fmt::format("sketch '{}'", doc.layout.label(sp->sketch));
+    const feature::FeatureTree* layout = model::level_layout(doc, model::level_of(doc, c));
+    return fmt::format("sketch '{}'", layout != nullptr ? layout->label(sp->sketch) : "?");
+  }
+  if (const auto* cp = std::get_if<CylinderPatch>(&c.geometry)) {
+    return fmt::format("cylinder of radius {}, sweep {} rad, length {}", param_text(cp->radius),
+                       param_text(cp->sweep), param_text(cp->length));
   }
   const auto& dp = std::get<DatumPatch>(c.geometry);
   return fmt::format("{} x {} rectangle on a plane", param_text(dp.width), param_text(dp.height));
@@ -128,10 +148,24 @@ int run_info(std::span<const std::string_view> args, std::ostream& out, std::ost
   out << fmt::format("blobs       {}\n", project.blobs.size());
 
   out << fmt::format("volumes ({})\n", doc.volumes.size());
-  for (const auto& v : doc.volumes) {
-    out << fmt::format("  {:<14} {:<11} boundary: {}\n", v.name, to_string(v.kind()),
-                       boundary_text(doc, v));
-    out << fmt::format("  {:<14} {:<11} contents: {}\n", "", "", contents_text(v));
+  // Children under their composite, indented (L3); a flat document lists in
+  // document order.
+  std::vector<std::pair<std::size_t, std::size_t>> listed;  // index, depth
+  const std::function<void(const core::Id&, std::size_t)> walk = [&](const core::Id& level,
+                                                                    std::size_t depth) {
+    for (const std::size_t i : model::children(doc, level)) {
+      listed.emplace_back(i, depth);
+      if (doc.volumes[i].composite() && depth < doc.volumes.size()) {
+        walk(doc.volumes[i].id, depth + 1);
+      }
+    }
+  };
+  walk({}, 0);
+  for (const auto& [index, depth] : listed) {
+    const Volume& v = doc.volumes[index];
+    out << fmt::format("  {:<14} {:<11} boundary: {}\n", std::string(2 * depth, ' ') + v.name,
+                       to_string(v.kind()), boundary_text(doc, v));
+    out << fmt::format("  {:<14} {:<11} contents: {}\n", "", "", contents_text(doc, v));
     if (!v.parameters.empty()) {
       std::vector<std::string> ps;
       for (const auto& p : v.parameters) {

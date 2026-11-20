@@ -95,6 +95,10 @@ if(VS_BUILD_TESTS)
     tests/test_history.cpp
     tests/test_interactive.cpp
     tests/test_interactive_ui.cpp
+    tests/test_nested.cpp
+    ../../libs/vs_model/tests/nested.cpp
+    ../../libs/vs_model/tests/rack.cpp
+    tests/test_generated.cpp
     tests/test_node_editor.cpp
     tests/test_outline.cpp
     tests/test_scene.cpp
@@ -103,6 +107,7 @@ if(VS_BUILD_TESTS)
     tests/test_sketch_editor.cpp
     tests/test_window.cpp)
   target_link_libraries(vs_app_tests PRIVATE vs_app_lib Catch2::Catch2)
+  target_include_directories(vs_app_tests PRIVATE ${PROJECT_SOURCE_DIR}/libs/vs_model/tests)
   target_compile_definitions(vs_app_tests PRIVATE
     VS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
   vs_set_compile_options(vs_app_tests)

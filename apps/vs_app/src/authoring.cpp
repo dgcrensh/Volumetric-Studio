@@ -7,6 +7,7 @@
 
 #include "reference_choices.hpp"
 #include "vs/eval/import.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/proc/bake.hpp"
 #include "vs/proc/check.hpp"
 
@@ -39,6 +40,25 @@ bool erase_if_any(std::vector<T>& v, Pred pred) {
   const auto before = v.size();
   v.erase(std::remove_if(v.begin(), v.end(), pred), v.end());
   return v.size() != before;
+}
+
+// Delegations whose surface or child is gone, or whose surface no longer
+// joins the composite (L3).
+// A surface passed elsewhere no longer reaches the composites below, so
+// theirs go too, level by level.
+void drop_stale_delegations(model::Document& doc) {
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (auto& v : doc.volumes) {
+      auto* c = std::get_if<model::CompositeContents>(&v.contents);
+      if (c == nullptr) continue;
+      changed |= erase_if_any(c->delegations, [&](const model::Delegation& d) {
+        const model::Volume* child = doc.find_volume(d.child);
+        const model::ConnectionSurface* s = doc.find_connection(d.surface);
+        return child == nullptr || !(child->parent == v.id) || s == nullptr || !model::joins(doc, *s, v.id);
+      });
+    }
+  }
 }
 
 }  // namespace
@@ -220,19 +240,21 @@ Command remove_variable(Id volume, Id variable) {
 
 // --- volumes -------------------------------------------------------------------------
 
-model::Volume volume_from_features(std::string name, std::vector<Id> features) {
+model::Volume volume_from_features(std::string name, std::vector<Id> features, Id parent) {
   model::Volume v;
   v.id = Id::random();
   v.name = std::move(name);
+  v.parent = parent;
   v.boundary = model::FeatureBoundary{std::move(features)};
   v.contents = model::StaticContents{};
   return v;
 }
 
-model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max) {
+model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max, Id parent) {
   model::Volume v;
   v.id = Id::random();
   v.name = std::move(name);
+  v.parent = parent;
   v.boundary = model::BoxBoundary{std::move(min), std::move(max)};
   v.contents = model::StaticContents{};
   return v;
@@ -259,26 +281,36 @@ Command update_volume(model::Volume volume) {
 Command remove_volume(Id volume) {
   return {"Delete volume", [volume](model::Project& p) -> Diagnostics {
             model::Document& doc = p.document;
-            if (!erase_if_any(doc.volumes, [&](const model::Volume& v) { return v.id == volume; })) {
+            if (doc.find_volume(volume) == nullptr) {
               return error("app.edit.no_volume", "That volume is no longer there.");
             }
+            // A composite goes with everything inside it (L3).
+            std::vector<Id> gone{volume};
+            for (const auto& v : doc.volumes) {
+              if (model::is_within(doc, v.id, volume) && !(v.id == volume)) gone.push_back(v.id);
+            }
+            const auto is_gone = [&](const Id& id) { return std::find(gone.begin(), gone.end(), id) != gone.end(); };
+            erase_if_any(doc.volumes, [&](const model::Volume& v) { return is_gone(v.id); });
             erase_if_any(doc.links, [&](const model::Link& l) {
-              if (l.source.volume == volume) return true;
+              if (is_gone(l.source.volume)) return true;
               // A link driving one of its parameters.
               return std::none_of(doc.volumes.begin(), doc.volumes.end(),
-                                  [&](const model::Volume& v) { return v.find_parameter(l.target) != nullptr; }) &&
+                                  [&](const model::Volume& v) {
+                                    const auto* t = v.composite() ? v.tree() : nullptr;  // L3
+                                    return v.find_parameter(l.target) != nullptr ||
+                                           (t != nullptr && t->variables().find(l.target) != nullptr);
+                                  }) &&
                      doc.layout.variables().find(l.target) == nullptr;
             });
-            for (auto& s : doc.connections) {
-              erase_if_any(s.volumes, [&](const Id& v) { return v == volume; });
-            }
+            for (auto& s : doc.connections) erase_if_any(s.volumes, is_gone);
             erase_if_any(doc.connections, [](const model::ConnectionSurface& s) { return s.volumes.empty(); });
             for (auto& k : doc.keep_outs) {
-              erase_if_any(k.volumes, [&](const Id& v) { return v == volume; });
-              erase_if_any(k.cutters, [&](const Id& v) { return v == volume; });
+              erase_if_any(k.volumes, is_gone);
+              erase_if_any(k.cutters, is_gone);
             }
             erase_if_any(doc.keep_outs,
                          [](const model::KeepOut& k) { return k.volumes.empty() || k.cutters.empty(); });
+            drop_stale_delegations(doc);
             return {};
           }};
 }
@@ -296,7 +328,7 @@ Command set_keep_out(Id volume, bool keep_out) {
             if (keep_out) {
               // Keep-outs join no connection surface.
               for (auto& s : p.document.connections) {
-                if (s.joins(volume)) {
+                if (model::joins(p.document, s, volume)) {
                   return error("app.edit.keep_out_connected",
                                fmt::format("{} is joined by {}; remove the surface first.", v->name, s.name));
                 }
@@ -355,6 +387,16 @@ proc::Graph starter_graph() {
   return g;
 }
 
+proc::Graph starter_generator(const std::string& template_name) {
+  proc::Graph g;
+  const Id grid = g.add("children.grid", "Grid",
+                        {{"count", proc::Setting(core::dvec3{2, 1, 1})},
+                         {"template", proc::Setting(template_name)}});
+  const Id output = g.add("output.children", "Children");
+  g.link(grid, "children", output, "children");
+  return g;
+}
+
 namespace {
 
 // Errors check_volume_graph() finds in `graph` for `volume`, but the ones
@@ -391,10 +433,13 @@ Command set_graph(Id volume, proc::Graph graph, std::string label) {
             model::Volume* v = p.document.find_volume(volume);
             if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
             auto* pc = std::get_if<model::ProceduralContents>(&v->contents);
-            if (pc == nullptr) return error("app.edit.no_graph", "That volume has no graph to edit.");
+            auto* cc = std::get_if<model::CompositeContents>(&v->contents);  // L4: its generator
+            if (pc == nullptr && cc == nullptr) {
+              return error("app.edit.no_graph", "That volume has no graph to edit.");
+            }
             Diagnostics errors = graph_errors(graph, p.document, volume);
             if (errors.has_errors()) return errors;
-            pc->graph = proc::to_json(graph);
+            (pc != nullptr ? pc->graph : cc->generator) = proc::to_json(graph);
             return {};
           }};
 }
@@ -402,9 +447,11 @@ Command set_graph(Id volume, proc::Graph graph, std::string label) {
 std::optional<proc::Graph> graph_of(const model::Document& document, const Id& volume) {
   const model::Volume* v = document.find_volume(volume);
   const auto* pc = v != nullptr ? std::get_if<model::ProceduralContents>(&v->contents) : nullptr;
-  if (pc == nullptr) return std::nullopt;
-  if (pc->graph.empty()) return proc::Graph{};
-  auto g = proc::graph_from_json(pc->graph);
+  const auto* cc = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+  if (pc == nullptr && (cc == nullptr || !cc->generates())) return std::nullopt;
+  const std::string& text = pc != nullptr ? pc->graph : cc->generator;
+  if (text.empty()) return proc::Graph{};
+  auto g = proc::graph_from_json(text);
   if (!g) return std::nullopt;
   return std::move(g).value();
 }
@@ -427,12 +474,14 @@ std::string_view to_string(ContentsKind kind) {
     case ContentsKind::Parametric: return "modelled";
     case ContentsKind::Procedural: return "procedural";
     case ContentsKind::Baked: return "baked";
+    case ContentsKind::Composite: return "composite";
   }
   return "?";
 }
 
 std::optional<ContentsKind> contents_kind(const model::Volume& v) {
   if (v.keep_out) return std::nullopt;
+  if (v.composite()) return ContentsKind::Composite;
   if (proc::is_baked(v)) return ContentsKind::Baked;
   if (v.tree() != nullptr) return ContentsKind::Parametric;
   if (v.kind() == model::VolumeKind::Procedural) return ContentsKind::Procedural;
@@ -448,7 +497,12 @@ Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> ba
             if (v->keep_out) return error("app.edit.keep_out_contents", "A keep-out has no contents.");
             const auto now = contents_kind(*v);
             if (now == kind) return {};
+            if (now == ContentsKind::Composite && !model::children(p.document, volume).empty()) {
+              return error("app.swap.has_children",
+                           fmt::format("'{}' has child volumes; delete them before swapping its contents.", v->name));
+            }
             switch (kind) {
+              case ContentsKind::Composite: v->contents = model::CompositeContents{}; return {};
               case ContentsKind::Placeholder: v->contents = model::StaticContents{}; return {};
               case ContentsKind::Parametric: v->contents = model::ParametricContents{}; return {};
               case ContentsKind::Procedural:
@@ -470,7 +524,94 @@ Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> ba
           }};
 }
 
+// --- generated children (L4) -------------------------------------------------------------------
+
+Command make_template(Id child, core::dvec3 origin) {
+  return {"Make template", [child, origin](model::Project& p) -> Diagnostics {
+            model::Document& doc = p.document;
+            const model::Volume* v = doc.find_volume(child);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            model::Volume* parent = doc.find_volume(v->parent);
+            auto* comp = parent != nullptr ? std::get_if<model::CompositeContents>(&parent->contents) : nullptr;
+            if (comp == nullptr) {
+              return error("app.template.no_composite",
+                           fmt::format("'{}' isn't inside a composite, so there's nothing to make it a template of.",
+                                       v->name));
+            }
+            const auto contents = model::as_template_contents(v->contents);
+            if (!contents || v->keep_out) {
+              return error("app.template.kind",
+                           fmt::format("'{}' is a {}; a template's contents are static, modelled or procedural.",
+                                       v->name, v->keep_out ? "keep-out" : "composite"));
+            }
+            std::vector<std::string> taken;
+            for (const auto& t : comp->templates) taken.push_back(t.name);
+            model::ChildTemplate t;
+            t.id = v->id;  // its tree refers to its boundary by this id
+            t.name = unique_name(v->name.empty() ? std::string("Template") : v->name, taken);
+            t.contents = *contents;
+            t.parameters = v->parameters;
+            t.outputs = v->outputs;
+            t.origin = origin;
+            comp->templates.push_back(std::move(t));
+            // The volume goes, as Delete would take it.
+            return remove_volume(child).change(p);
+          }};
+}
+
+Command set_template_name(Id composite, Id template_id, std::string name) {
+  return {"Rename template", [composite, template_id, name = std::move(name)](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(composite);
+            auto* comp = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+            if (comp == nullptr) return error("app.edit.not_composite", "That volume isn't a composite.");
+            for (auto& t : comp->templates) {
+              if (t.id == template_id) {
+                t.name = name;
+                return {};
+              }
+            }
+            return error("app.template.missing", "That template is no longer there.");
+          }};
+}
+
+Command remove_template(Id composite, Id template_id) {
+  return {"Delete template", [composite, template_id](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(composite);
+            auto* comp = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+            if (comp == nullptr) return error("app.edit.not_composite", "That volume isn't a composite.");
+            erase_if_any(comp->templates, [&](const model::ChildTemplate& t) { return t.id == template_id; });
+            return {};
+          }};
+}
+
+Command clear_generator(Id composite) {
+  return {"Stop generating children", [composite](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(composite);
+            auto* comp = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+            if (comp == nullptr) return error("app.edit.not_composite", "That volume isn't a composite.");
+            comp->generator.clear();
+            return {};
+          }};
+}
+
 // --- connection surfaces, keep-outs, links --------------------------------------------------
+
+Command set_delegation(Id composite, Id surface, Id child) {
+  return {child.is_null() ? "Stop passing a surface down" : "Pass a surface down",
+          [composite, surface, child](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(composite);
+            auto* c = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+            if (c == nullptr) return error("app.edit.not_composite", "That volume isn't a composite.");
+            const model::ConnectionSurface* s = p.document.find_connection(surface);
+            if (s == nullptr || !model::joins(p.document, *s, composite)) {
+              return error("app.edit.no_connection", "That connection surface doesn't join the composite.");
+            }
+            erase_if_any(c->delegations, [&](const model::Delegation& d) { return d.surface == surface; });
+            if (!child.is_null()) c->delegations.push_back({surface, child});
+            drop_stale_delegations(p.document);  // the old route's onward passes
+            return {};
+          }};
+}
 
 Command add_connection(model::ConnectionSurface surface) {
   std::string label = "Add connection surface " + surface.name;
@@ -496,6 +637,7 @@ Command remove_connection(Id surface) {
                               [&](const model::ConnectionSurface& s) { return s.id == surface; })) {
               return error("app.edit.no_connection", "That connection surface is no longer there.");
             }
+            drop_stale_delegations(p.document);
             return {};
           }};
 }

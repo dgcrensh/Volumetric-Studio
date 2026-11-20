@@ -28,6 +28,19 @@
 // link values found so far (only when they changed). A target whose source
 // has no value yet keeps its own expression, as in vs_model.
 //
+// Generated children (L4). When a composite has a generator, after step 1
+// the engine builds the layout once and asks the layout generator
+// (set_layout_generator(); vs_proc's install()) for each such composite's
+// children, cached by the composite's key, and expands them into the
+// evaluated document (model::expand()), which is check()ed again. From
+// then on generated children are volumes like any other: they appear in
+// Evaluation::document and ::volumes (after the authored volumes), are
+// validated with their siblings, generate in waves and weld. A composite
+// whose generator fails, whose expansion check() refuses, or whose
+// generated children fail a layout check (eval.generated.layout) is
+// Failed; with no layout generator installed it is Stale. Documents
+// without a generator take exactly the M9 path.
+//
 // Volume states (model::VolumeStatus), on each VolumeResult:
 //
 //   Current       its contents match its current inputs (generated now, or
@@ -66,6 +79,11 @@
 //   eval.blocked            (warning) not regenerated: a volume upstream failed
 //   eval.nondeterministic   regenerating twice gave different contents
 //   eval.cancelled          (info) the evaluation was cancelled
+//   eval.generated.layout   (L4) a composite's generated children fail the
+//                           layout checks (the checks' own diagnostics are
+//                           on Evaluation::layout)
+//   eval.generated.no_generator  (L4, warning) a composite has a generator
+//                           but no layout generator is installed
 //   model.contents.missing_blob, mesh.io.*   a static mesh file
 //   validate.containment, validate.undecided  containment
 //   everything model::check(), build_layout(), build_contents() and
@@ -103,7 +121,7 @@ struct EngineOptions {
   // Generate every regenerating volume twice and compare (debug).
   bool check_determinism = false;
   // Where to keep the on-disk cache; empty: memory only.
-  std::filesystem::path disk_cache;
+  std::filesystem::path disk_cache{};
 };
 
 struct EvaluateOptions {
@@ -137,6 +155,7 @@ struct EvaluationStats {
   std::size_t blocked = 0;
   std::size_t waves = 0;
   std::size_t layout_builds = 0;
+  std::size_t layouts_generated = 0;  // L4: generators run (not cached)
 };
 
 struct Evaluation {
@@ -193,6 +212,12 @@ class Engine {
   void set_generator(model::VolumeKind kind, std::shared_ptr<ContentsGenerator> generator);
   [[nodiscard]] std::shared_ptr<ContentsGenerator> generator(model::VolumeKind kind) const;
 
+  // Makes composites' generated children with `generator` from now on (L4);
+  // null removes it, and such composites are then Stale. Not while an
+  // evaluation runs.
+  void set_layout_generator(std::shared_ptr<LayoutGenerator> generator);
+  [[nodiscard]] std::shared_ptr<LayoutGenerator> layout_generator() const;
+
  private:
   ProductSettings settings_;
   EngineOptions options_;
@@ -203,6 +228,13 @@ class Engine {
   std::map<Id, VolumeStatus> states_;
   std::map<Id, ContentsPtr> last_valid_;
   std::map<model::VolumeKind, std::shared_ptr<ContentsGenerator>> generators_;
+  std::shared_ptr<LayoutGenerator> layout_generator_;
+  // Generated layouts by their composite's key (L4).
+  std::map<Hash256, std::shared_ptr<const LayoutOutcome>> layouts_;
+
+  struct Expansion;
+  Expansion expand_generated(const model::Document& document, const CancellationToken& cancel,
+                             EvaluationStats& stats);
 };
 
 // A project's caches (M17, model::CacheFiles): the files of every volume's

@@ -1,4 +1,5 @@
 #include "vs/eval/cache.hpp"
+#include "vs/model/hierarchy.hpp"
 
 #include <bit>
 #include <cstring>
@@ -63,6 +64,33 @@ std::optional<Hash256> cache_key(const model::Document& document,
     h.add(sc->blob).add(sc->format);
   } else if (const auto* pc = std::get_if<model::ParametricContents>(&v.contents)) {
     h.add(feature::to_json(pc->tree));
+    // L4: a template copy's offset, only when set so other keys don't change.
+    if (!(v.contents_offset == core::dvec3{})) h.add(v.contents_offset);
+  } else if (const auto* cc = std::get_if<model::CompositeContents>(&v.contents)) {
+    // A composite's own part (L3); the engine adds its children's keys.
+    h.add(feature::to_json(cc->layout));
+    h.add(static_cast<std::uint64_t>(cc->delegations.size()));
+    for (const auto& d : cc->delegations) h.add(d.surface).add(d.child);
+    // L4: added only when set, so L3 composites keep their keys.
+    if (cc->generates() || !cc->templates.empty()) {
+      h.add(std::string_view("generator")).add(cc->generator);
+      h.add(static_cast<std::uint64_t>(cc->templates.size()));
+      for (const auto& t : cc->templates) {
+        h.add(t.id).add(t.name).add(t.origin).add(static_cast<std::uint64_t>(t.contents.index()));
+        if (const auto* tp = std::get_if<model::ParametricContents>(&t.contents)) {
+          h.add(feature::to_json(tp->tree));
+        } else if (const auto* tg = std::get_if<model::ProceduralContents>(&t.contents)) {
+          h.add(tg->graph);
+        } else {
+          const auto& ts = std::get<model::StaticContents>(t.contents);
+          h.add(ts.blob).add(ts.format);
+        }
+        for (const auto& p : t.parameters) {
+          h.add(p.id).add(p.name).add(p.value.value).add(p.value.expression);
+        }
+        for (const auto& o : t.outputs) h.add(o.id).add(o.name).add(o.quantity).add(o.density);
+      }
+    }
   } else {
     h.add(std::get<model::ProceduralContents>(v.contents).graph);
   }
@@ -74,7 +102,7 @@ std::optional<Hash256> cache_key(const model::Document& document,
   // The connection surfaces joining it.
   for (std::size_t k = 0; k < document.connections.size(); ++k) {
     const model::ConnectionSurface& c = document.connections[k];
-    if (!c.joins(v.id)) continue;
+    if (!model::joins(document, c, v.id)) continue;
     const model::ConnectionBuild& cb = layout.connections[k];
     h.add(c.id).add(c.type()).add(cb.ok);
     if (!cb.ok) continue;

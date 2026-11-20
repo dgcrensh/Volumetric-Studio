@@ -263,8 +263,8 @@ so they are registered. A new library must also be added to
 ## vs_model essentials
 
 - **Document.** `Document` holds the layout (a `FeatureTree`), the volumes
-  under it (one level), and the connection surfaces, keep-outs and links the
-  root owns. Ids are unique across the whole document, contents included.
+  (every depth, one flat list), and the connection surfaces, keep-outs and
+  links. Ids are unique across the whole document, contents included.
   A `Volume` has a boundary (layout solid features' tools, or a box between
   two layout points), a keep-out flag, contents (static file, parametric
   tree, procedural graph JSON), parameters, a seed and published outputs.
@@ -279,7 +279,8 @@ so they are registered. A new library must also be added to
 - **Contents see inputs, nothing else.** A parametric tree is rebuilt with
   `feature::ExternalInputs`: the boundary by the volume's id (faces
   `<layout feature id>:<name>`, or `-x`..`+z` for a box), each joining
-  connection surface by its id (a plane, face `patch`), and parameters as
+  connection surface by its id (a plane, face `patch`; a curved one is
+  its axis and a cylindrical `patch`), and parameters as
   values. Published outputs reach anything only through a `Link` to a layout
   variable or parameter.
 - **Build.** `build(doc, settings, &blobs)` rebuilds the layout, boundaries
@@ -296,8 +297,42 @@ so they are registered. A new library must also be added to
   blob hashes and runs `check()` (`load_project(path, false)` skips it, for
   validation). `content_hash()` hashes the document's
   JSON plus the blobs. `vstudio-cli info <project> [--build]` prints one.
-  `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the sample
-  with `vs_model_tests "[.generate]"`.
+  `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the samples
+  (`bracket.vsproj`, `nested.vsproj`) with `vs_model_tests "[.generate]"`.
+- **Composites** (L3, decision 0021, `hierarchy.hpp`): `Volume::parent`
+  names a composite (null at the root; written to JSON only when set, so
+  flat documents and their hashes are what they were). A **level** is the
+  root or a composite; `CompositeContents` is its layout (a `FeatureTree`,
+  rebuilt with the composite's inputs like a parametric tree, and what
+  `Volume::tree()` returns) plus `delegations` (`{surface, child}`: which
+  child meets a surface joining the composite). Children's boundaries,
+  and the surfaces, keep-outs and links of a level, are built from its
+  layout (`model.level.mixed` when one names volumes of two levels);
+  `build_layout()` goes level by level, parents first (`level_order()`).
+  `resolve()` treats "inside a composite" as its level: children's
+  boundaries, parameters and outputs yes, anything deeper
+  `model.reference.contents`, anything around it `.parent`. Use
+  `model::joins(doc, surface, volume)` (names it, or delegated down to
+  it), never `ConnectionSurface::joins()`, for a volume's inputs;
+  `seam_sides()` gives the leaves that meet a surface. Composite outputs
+  add children's `ContentsMeasure`s up (Volume, Mass, Centre of gravity,
+  Envelope only). Tests: `tests/nested.*` (root → Housing → Left → Core
+  and Cap, plus Right and Base), shared by every suite.
+- **Generated children** (L4, decision 0022, `generated.hpp`): a
+  composite may have a `generator` (vs_proc graph JSON) and `templates`
+  (`ChildTemplate`: static, parametric or procedural contents, parameters,
+  outputs, `origin`), both written to JSON only when set. A
+  `GeneratedLayout` (boxes, joins on axis-aligned planes, delegations) is
+  written into a copy of the document by `expand()`: datum points and
+  planes in the composite's layout, children with `Volume::generated`
+  appended after every authored volume, ids derived from the composite
+  and the generator's keys. A copy of a parametric template carries
+  `contents_offset` (box min minus `origin`): `build_contents()` rebuilds
+  it with inputs moved back and moves the result. Generated volumes live
+  only in evaluated documents; their names needn't be distinct.
+  `model.composite.generated_link` refuses links from outside into a
+  generating composite's inputs. Tests: `tests/rack.*` (Base and a Rack
+  with a Cell template and a Seat), shared by the suites.
 
 ## vs_validate essentials
 
@@ -307,8 +342,11 @@ so they are registered. A new library must also be added to
   tolerance), undeclared contact (`validate.contact` per pair of faces
   lying against each other, named from `VolumeBuild::boundary_faces`;
   `validate.contact.edge` for an edge or point touch), skipped for pairs
-  sharing a connection surface or involving a keep-out. Connection rules
-  (`validate.connection.*`): patch on each joined boundary, clearance gap
+  sharing a connection surface or involving a keep-out, and between
+  siblings only (L3); `validate.nesting.outside` is a child reaching out
+  of its composite. Connection rules
+  (`validate.connection.*`): patch on each joined boundary (and each child
+  it is delegated to), clearance gap
   and flange wall at least the minimum feature size, ISO 273 holes clear of
   the patch edge and each other by the minimum wall.
 - **Containment** (`containment.hpp`): `check_containment(boundary, solid
@@ -369,6 +407,18 @@ so they are registered. A new library must also be added to
   one per volume with its id) and in (our own writer and XML reader,
   zipped with miniz), OBJ in. `import.hpp` adds a
   mesh file as a static volume boxed by its bounds.
+- **Curved seams** (L2, decision 0020): a `CylinderPatch` (vs_model: a
+  layout axis, radius, start angle, sweep, start and length; a full turn
+  is a band) gets a seam in unrolled coordinates (`Seam::curved()`,
+  `band`, `to_uv()` / `to_model()` / `offset()` / `normal_at()`,
+  `triangle_uv()` across a band's cut); derived spacing keeps chords
+  within `kSeamDeflection`. B-rep volumes conform by imprinting the patch
+  (`kernel::tessellate(..., imprints)`) and replacing its pieces with the
+  seam; procedural ones through the same stitch (vs_proc), a band's two
+  rims each to its loop. The engine gives triangles touching a curved
+  seam a containment slack (`MeshView::centroid_slack`). Bolted flanges
+  stay planar (`model.connection.curved_flange`). Planar seams, meshes
+  and hashes are exactly what they were; keep it that way.
 - **Tests** mesh volumes with small meshers in `libs/vs_mesh/tests/meshers.*`
   (prisms, pyramids, a box round a patch) and weld random outlines;
   `test_tessellate.cpp` welds B-rep pairs (cylinders, cones, domes, fillets,
@@ -386,6 +436,20 @@ so they are registered. A new library must also be added to
   optional weld. Volumes downstream of others through links run in later
   waves, the layout rebuilt with the link values. `preview()` is the same
   without generating. The engine keeps each volume's last valid contents.
+  A composite (L3) is never generated or cached: after its children (they
+  are upstream of it) it takes the worst of their statuses, a key hashing
+  its definition and their keys, and outputs adding their measures up.
+  `combine()`, 3MF and STEP take leaves only; STEP parts of children are
+  named by path ("Housing / Left / Core").
+- **Generated children** (L4): when a composite has a generator,
+  `evaluate()` builds the layout once after `check()`, asks the
+  `LayoutGenerator` (`set_layout_generator()`; `proc::install()` sets it)
+  per generating composite, caches the outcome by the composite's key,
+  `model::expand()`s and re-`check()`s, then runs as L3 on the expanded
+  document (`Evaluation::document` and `volumes` include the children). A
+  failed generator or refused expansion fails the composite (Stale with no
+  generator installed); children failing a layout check fail it too
+  (`eval.generated.layout`). `stats.layouts_generated` counts runs.
 - **States.** Current; Failed (generation or containment failed, or the
   boundary or a parameter: shows its last valid contents as
   `stale_contents`, blocks only its dependants, which get `eval.blocked`);
@@ -467,6 +531,17 @@ so they are registered. A new library must also be added to
   vertex and centroid is contained. `convert.field_to_mesh` (with its
   `samples` cost) and `convert.mesh_to_field` convert inside graphs.
   `mesh::combine()` takes generated meshes from the engine. Decision 0011.
+- **Parallel surface nets** (L1b, decision 0019): `surface_nets(samples,
+  pool)` is `unmerged_net()` (vertex and polygon passes in z layers,
+  joined in grid order; a `MeshingBackend` may take it) then
+  `merge_net()` (cubes in waves `i + 3j + 9k`: earlier neighbours always
+  in earlier waves, cubes of a wave three apart). The mesh is
+  `surface_nets_reference()`'s (M11's serial code, kept in
+  `src/surface_nets_reference.cpp`) bit for bit on any thread count;
+  `test_parallel_mesher.cpp` compares them element by element. **Change
+  the meshing in both, or the tests fail.** `clip_to_boundary()` also
+  offers the clip to the backend; `closed_manifold()` is the parallel
+  stand-in for `mesh::analyse()` that `mesh_contents()` runs first.
 - **Node library** (M12, decision 0012): `field.lattice` (cubic, BCC,
   octet struts) and `field.tpms` (gyroid, Schwarz P, diamond) with cell
   and thickness, gradable by a field; `field.thicken`, `.clamp`,
@@ -481,6 +556,17 @@ so they are registered. A new library must also be added to
 - **Outputs**: the generator measures the mesh (`eval::measure_mesh()`)
   and fills `Published` outputs from `output.publish` nodes
   (`proc.output.unpublished` when missing).
+- **Children** (L4, decision 0022, `src/nodes_children.cpp`): port type
+  `Children` (a `model::GeneratedLayout`); `children.grid` (the boundary
+  box in cells, neighbours joined bonded / clearance / none, patches inset
+  by `margin`), `children.at_frames` (boxes at frames), `children.merge`,
+  `children.delegate` (a joining surface to the child with a face on it),
+  each child from a `template` property and optionally `values` for a
+  template `parameter`; `output.children` ends a composite's generator.
+  `check_volume_graph()` adds `proc.graph.output_kind` (the wrong output
+  for the volume) and `proc.reference.template`. `ProceduralGenerator` is
+  also the engine's `LayoutGenerator`. `test_children.cpp` covers nodes,
+  checks, the engine, failures and welds.
 - **Inspection** (`inspect.hpp`): `inspect_node()` / `inspect_volume_node()`
   evaluate one node and its ancestors (`EvaluateGraphOptions::only_for`),
   so unfinished graphs inspect; `preview()` makes a coarse mesh, points
@@ -502,7 +588,7 @@ so they are registered. A new library must also be added to
   CPU baseline) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
   block out, fill, iterate, swap and ship end to end.
 
-## vs_gpu essentials (L1)
+## vs_gpu essentials (L1, L1b)
 
 - **What.** Procedural fields sampled on the GPU with exactly the CPU's
   values (decision 0018, plan `docs/plans/L1-gpu-field-evaluation.md`).
@@ -520,8 +606,22 @@ so they are registered. A new library must also be added to
   **Any change to `FieldExpr::eval()`, `TriangleDistance` or the
   infill maths must be mirrored in `glsl.cpp`**; `vs_gpu_tests` catches
   a mismatch on a machine with a GPU.
-- **Where.** The app installs it at start (`--cpu` skips; About says
-  which device); `vstudio-cli --gpu <command>`.
+- **Meshing (L1b, decision 0019).** `src/meshing.cpp`: `clip_gpu()` (the
+  boundary distance through the field shader) and `unmerged_net_gpu()`
+  (four passes: tetrahedron masks, vertices, triangle counts, triangles;
+  outputs placed by exclusive sums in grid order), equal to
+  `unmerged_net_cpu()` element for element; `meshing_self_check()`
+  guards them. **Any change to `unmerged_net_cpu()` must be mirrored
+  there.** NVIDIA's compiler loses exactness on local arrays of doubles
+  indexed at run time: recompute instead (decision 0019).
+- **Calibration.** After the checks, `install()` times sampling, clip and
+  unmerged net on a half-million-sample grid on the GPU and on every CPU
+  thread, and gives the GPU only the stages it won (`Status::sampling`,
+  `.clip`, `.meshing`, `.calibration`); about 3 s on the RTX 2070 Super
+  desktop. `InstallOptions::force` (tests, `--gpu=force`) skips it.
+- **Where.** The app installs it at start on a background thread (`--cpu`
+  skips; About says which stage runs where); `vstudio-cli --gpu <command>`
+  or `--gpu=force <command>`.
 
 ## vs_app essentials
 
@@ -582,6 +682,25 @@ so they are registered. A new library must also be added to
   set_pick_mode()`, `pick_at()` (clicking again in place picks what's
   behind), `project()` and `look_along()`; feature dialogs' Pick buttons
   (`FeatureDialog::begin_pick()`, `apply_pick()`).
+- **Composites** (L3, decision 0021): the volume tree nests children
+  under their composite (`VolumeRow::parent`, `depth`); swap offers
+  Composite; edit in context on a composite edits its layout and makes it
+  `MainWindow::authoring_level()`, where new volumes, surfaces, keep-outs
+  and links go (their dialogs take the level and list only its layout's
+  features and volumes; descendants stay undimmed through
+  `Viewport::set_context(..., inside)`). `set_delegation()` /
+  `MainWindow::set_met_by()` is the surface menu's "Met inside ... by";
+  deleting a composite deletes everything inside it.
+- **Generated children** (L4, decision 0022): rows from the evaluated
+  document, so generated children nest under their composite
+  (`VolumeRow::generated`, "Generated Parametric"); they are read-only
+  (`MainWindow::is_generated()`, edit in context refused; their menu opens
+  the composite's generator). `set_graph()` / `graph_of()` work on a
+  composite's generator (`starter_generator()`, Generate children / Edit
+  generator / Stop generating children), the node form lists the
+  composite's templates, a Children value previews as boxes, and
+  `make_template()` / `MainWindow::make_template_of()` turns an authored
+  child into a template (keeping its id; origin from its built box).
 - **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
   `check_for_export()`: `validate()`, the shown evaluation's volume
   diagnostics, volumes not current, and the weld; Model > Validate and every

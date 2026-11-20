@@ -196,6 +196,9 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const MeshVie
   if (mesh.indices.size() % 3 != 0) {
     return undecided(volume, "the mesh's index count isn't a multiple of three");
   }
+  if (!mesh.centroid_slack.empty() && mesh.centroid_slack.size() != mesh.indices.size() / 3) {
+    return undecided(volume, "the mesh's centroid slack doesn't have one value per triangle");
+  }
   for (const auto i : mesh.indices) {
     if (i >= mesh.positions.size()) {
       return undecided(volume, fmt::format("the mesh refers to vertex {}, but has only {}", i,
@@ -214,7 +217,9 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const MeshVie
     const dvec3 a = core::to_fp64(mesh.positions[mesh.indices[t]]);
     const dvec3 b = core::to_fp64(mesh.positions[mesh.indices[t + 1]]);
     const dvec3 c = core::to_fp64(mesh.positions[mesh.indices[t + 2]]);
-    samples.push_back({(a + b + c) / 3.0, std::max({fp32_slack(a), fp32_slack(b), fp32_slack(c)})});
+    const double extra = mesh.centroid_slack.empty() ? 0.0 : mesh.centroid_slack[t / 3];
+    samples.push_back(
+        {(a + b + c) / 3.0, std::max({fp32_slack(a), fp32_slack(b), fp32_slack(c)}) + extra});
   }
 
   const double tol = settings.linear_tolerance_mm;

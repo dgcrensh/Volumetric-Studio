@@ -38,6 +38,7 @@ struct Installed {
   explicit Installed(std::size_t min_samples = 0) {
     gpu::InstallOptions o;
     o.min_samples = min_samples;
+    o.force = true;  // exactness, not speed: every stage on the GPU
     status = gpu::install(o);
   }
   ~Installed() { gpu::uninstall(); }

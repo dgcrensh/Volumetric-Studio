@@ -8,8 +8,9 @@
 // constraint, a link...), while the studio has only a few places to send
 // the user. route() maps every diagnostic to exactly one of them:
 //
-//   Layout             the root layout: its features as a whole, boundaries,
-//                      keep-outs, variables, volume parameters, links
+//   Layout             a layout: its features as a whole, boundaries,
+//                      keep-outs, variables, volume parameters, links. The
+//                      root's, or (L3) a composite's, when `volume` names it
 //   ConnectionSurface  one connection surface's properties
 //   Feature            one feature, in the layout or in one volume's
 //                      parametric contents (then `volume` says which)
@@ -75,7 +76,8 @@ struct ActTarget {
   // layout as a whole, an empty Layout subject).
   SubjectRef subject;
   // The volume whose contents hold the target, for Feature, Node and
-  // Contents targets inside a volume; empty for the layout.
+  // Contents targets inside a volume; for a Layout target, the composite
+  // whose layout it is (L3), empty for the root layout.
   Id volume;
 
   friend bool operator==(const ActTarget&, const ActTarget&) = default;

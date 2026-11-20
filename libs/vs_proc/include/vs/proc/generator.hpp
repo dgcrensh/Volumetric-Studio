@@ -61,13 +61,20 @@ struct FieldContents final : eval::ExtraContents {
   [[nodiscard]] Hash256 hash() const override;
 };
 
-class ProceduralGenerator final : public eval::ContentsGenerator {
+// Also the layout generator (L4): a composite's generator graph runs here,
+// with the same node cache, and its output.children is the layout.
+class ProceduralGenerator final : public eval::ContentsGenerator, public eval::LayoutGenerator {
  public:
   explicit ProceduralGenerator(const NodeRegistry& registry = library());
 
   Job prepare(const model::Document& document, const model::DocumentBuild& layout,
               std::size_t index, const core::ProductSettings& settings, eval::ThreadPool& pool,
               const eval::CancellationToken& cancel) override;
+
+  eval::LayoutOutcome generate(const model::Document& document,
+                               const model::DocumentBuild& layout, std::size_t index,
+                               const core::ProductSettings& settings, eval::ThreadPool& pool,
+                               const eval::CancellationToken& cancel) override;
 
   [[nodiscard]] NodeCache& cache() { return cache_; }
   // Node evaluate() calls and cache hits across every job so far.
@@ -88,7 +95,8 @@ std::vector<model::OutputResult> measure(const model::Volume& volume, const core
                                          const std::map<std::string, double, std::less<>>& published,
                                          eval::ThreadPool& pool, core::Diagnostics& diagnostics);
 
-// Creates a generator and installs it on `engine` for procedural volumes.
+// Creates a generator and installs it on `engine` for procedural volumes and,
+// as its layout generator, for composites' generated children (L4).
 std::shared_ptr<ProceduralGenerator> install(eval::Engine& engine);
 
 // The field contents a volume shows, if it has any.

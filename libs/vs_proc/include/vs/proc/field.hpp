@@ -223,8 +223,8 @@ SampledField sample(const FieldExpr& field, const GridSpec& grid, eval::ThreadPo
 class SamplingBackend {
  public:
   virtual ~SamplingBackend() = default;
-  // Fills alues (grid.size() of them) and returns true, or returns false
-  // to leave the grid to the CPU (alues is then ignored). With a
+  // Fills `values` (grid.size() of them) and returns true, or returns false
+  // to leave the grid to the CPU (`values` is then ignored). With a
   // cancelled token it may stop early, set cancelled and return true.
   // Called from any thread.
   virtual bool sample(const FieldExpr& field, const GridSpec& grid, std::vector<float>& values,

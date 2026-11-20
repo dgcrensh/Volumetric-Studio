@@ -116,6 +116,12 @@ Scene preview_scene(const proc::Preview& preview, const Id& volume, const Id& no
     case proc::PortType::Mesh:
       if (preview.mesh) item.mesh = display_mesh(*preview.mesh);
       break;
+    case proc::PortType::Children:  // L4: the children's boxes
+      if (preview.mesh) {
+        item.mesh = display_mesh(*preview.mesh);
+        item.transparency = 0.4f;
+      }
+      break;
     case proc::PortType::Frames:
     case proc::PortType::Curves: {
       const fvec3 d = bounds.is_empty() ? fvec3{10, 10, 10} : bounds.max - bounds.min;

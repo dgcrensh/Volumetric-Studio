@@ -1377,6 +1377,13 @@ void NodeForm::show_node(const proc::Graph& graph, const Id& id, const GraphCont
         w = combo(p.name, items, current, qstr(p.doc));
         break;
       }
+      case proc::PropertyKind::Template: {
+        // L4: the composite's templates; empty makes placeholders.
+        QStringList items{QString()};
+        for (const auto& t : context.templates) items << qstr(t);
+        w = combo(p.name, items, current, qstr(p.doc));
+        break;
+      }
       default: w = line(p.name, current, qstr(p.doc)); break;
     }
     form_->addRow(qstr(p.name), w);

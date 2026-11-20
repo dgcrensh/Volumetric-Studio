@@ -87,6 +87,9 @@ const List& NodeContext::list(std::string_view port) const { return std::get<Lis
 const MeshValue& NodeContext::mesh(std::string_view port) const {
   return std::get<MeshValue>(input(port));
 }
+const Children& NodeContext::children(std::string_view port) const {
+  return std::get<Children>(input(port));
+}
 const Frames& NodeContext::frames(std::string_view port) const {
   return std::get<Frames>(input(port));
 }
@@ -563,7 +566,7 @@ void add_conversions(NodeRegistry& r) {
           return;
         }
         const SampledField samples = sample(*ctx.field("field"), *grid, ctx.pool());
-        auto m = std::make_shared<mesh::Mesh>(to_mesh(surface_nets(samples), ctx.inputs().volume));
+        auto m = std::make_shared<mesh::Mesh>(to_mesh(surface_nets(samples, ctx.pool()), ctx.inputs().volume));
         const auto triangles = static_cast<double>(m->triangle_count());
         ctx.set("mesh", MeshValue(std::move(m)));
         ctx.set("samples", static_cast<double>(grid->size()));
@@ -612,6 +615,7 @@ NodeRegistry make_library() {
   add_infill_nodes(r);
   add_frame_nodes(r);
   add_mesh_nodes(r);
+  add_children_nodes(r);
   add_output(r);
   return r;
 }

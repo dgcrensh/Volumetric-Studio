@@ -119,7 +119,7 @@ TEST_CASE("GPU double arithmetic matches the CPU bit for bit", "[gpu][arithmetic
     const double x = a[i], y = b[i];
     const double expect[8] = {x + y, x - y, x * y, x / y, std::sqrt(std::abs(x)), std::floor(x),
                               x * y + x, 1.0 / y};
-    for (int k = 0; k < 8; ++k) {
+    for (std::uint32_t k = 0; k < 8; ++k) {
       if (std::bit_cast<std::uint64_t>(expect[k]) != std::bit_cast<std::uint64_t>(out[8 * i + k])) {
         ++mismatches[k];
       }

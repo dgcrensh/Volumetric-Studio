@@ -246,8 +246,12 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
       proc::clip_to_boundary(samples, *inputs->boundary, proc::kContentsInset, &pool);
   out << fmt::format("  clip          {:9.1f} ms\n", ms_since(t));
   t = std::chrono::steady_clock::now();
-  const proc::FieldMesh nets = proc::surface_nets(clipped);
-  out << fmt::format("  surface nets  {:9.1f} ms  ({} triangles)\n", ms_since(t),
+  proc::UnmergedNet unmerged = proc::unmerged_net(clipped, &pool);
+  out << fmt::format("  unmerged net  {:9.1f} ms  ({} triangles)\n", ms_since(t),
+                     unmerged.triangles.size());
+  t = std::chrono::steady_clock::now();
+  const proc::FieldMesh nets = proc::merge_net(std::move(unmerged), clipped.grid, &pool);
+  out << fmt::format("  merge         {:9.1f} ms  ({} triangles)\n", ms_since(t),
                      nets.triangles.size());
   t = std::chrono::steady_clock::now();
   const proc::ContentsMesh cm = proc::mesh_contents(samples, *inputs->boundary, {},
@@ -257,7 +261,7 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
                      ms_since(t), cm.mesh.triangle_count(), cm.moved_vertices);
   t = std::chrono::steady_clock::now();
   const auto contained = validate::check_containment(
-      layout.volumes[0].boundary, validate::MeshView{cm.mesh.positions, cm.mesh.indices},
+      layout.volumes[0].boundary, validate::MeshView{cm.mesh.positions, cm.mesh.indices, {}},
       doc.volume_subject(v.id), settings,
       [&pool](std::size_t n, const std::function<void(std::size_t)>& task) { pool.run(n, task); });
   out << fmt::format("  containment   {:9.1f} ms  ({})\n", ms_since(t),

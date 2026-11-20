@@ -58,9 +58,11 @@ Command remove_variable(Id volume, Id variable);
 // --- volumes ------------------------------------------------------------------------------
 
 // A new volume (placeholder contents) bounded by layout solid features.
-model::Volume volume_from_features(std::string name, std::vector<Id> features);
+// `parent`: the composite it goes in (L3), null at the root; the features or
+// points are then of that composite's layout.
+model::Volume volume_from_features(std::string name, std::vector<Id> features, Id parent = {});
 // A new volume bounded by the box between two layout points.
-model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max);
+model::Volume volume_from_box(std::string name, feature::PointRef min, feature::PointRef max, Id parent = {});
 
 Command add_volume(model::Volume volume);
 // Replaces the volume with the same id: name, boundary, keep-out flag,
@@ -91,9 +93,11 @@ proc::Graph starter_graph();
 // with errors other than unfinished ones (check_volume_graph(): a node
 // reading a surface that doesn't join the volume, say).
 Command make_procedural(Id volume, proc::Graph graph, std::string label = "Fill by procedure");
-// Replaces a procedural volume's graph (the node editor's every change).
+// Replaces a procedural volume's graph, or a composite's generator (L4): the
+// node editor's every change.
 Command set_graph(Id volume, proc::Graph graph, std::string label);
-// A procedural volume's graph (empty for an empty one); nullopt when it
+// A procedural volume's graph (empty for an empty one), or a generating
+// composite's generator (L4); nullopt when it
 // isn't procedural or its JSON doesn't parse.
 std::optional<proc::Graph> graph_of(const model::Document& document, const Id& volume);
 // proc::bake() with the volume's generated mesh, and proc::unbake().
@@ -103,7 +107,7 @@ Command unbake_volume(Id volume);
 // --- swapping contents (M16) -------------------------------------------------------------------
 
 // What a volume's contents can be swapped to.
-enum class ContentsKind { Placeholder, Parametric, Procedural, Baked };
+enum class ContentsKind { Placeholder, Parametric, Procedural, Baked, Composite };
 std::string_view to_string(ContentsKind kind);
 // The kind a volume's contents are now (nullopt: a keep-out, or imported
 // static contents, which aren't any of these).
@@ -114,7 +118,27 @@ std::optional<ContentsKind> contents_kind(const model::Volume& volume);
 // mesh, required). Swapping to the kind it already is changes nothing.
 Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> baked_mesh = std::nullopt);
 
+// --- generated children (L4) ---------------------------------------------------------------------
+
+// A composite's generator to start from: a children.grid of two cells from
+// `template_name` (empty: placeholders), to output.children. set_graph()
+// on a composite sets its generator; graph_of() reads it.
+proc::Graph starter_generator(const std::string& template_name);
+// Turns `child`, an authored child of a composite, into a template of that
+// composite and deletes it (as remove_volume() would). The template keeps
+// the child's id, so its tree's references to its boundary stay valid, and
+// `origin` is the min corner of the child's box (from the layout build).
+Command make_template(Id child, core::dvec3 origin);
+Command set_template_name(Id composite, Id template_id, std::string name);
+Command remove_template(Id composite, Id template_id);
+// The composite keeps its templates and authored children.
+Command clear_generator(Id composite);
+
 // --- connection surfaces, keep-out regions, links -----------------------------------------------
+
+// L3: which child of `composite` meets `surface`, a surface joining the
+// composite from outside (null child: none; the surface stops there).
+Command set_delegation(Id composite, Id surface, Id child);
 
 Command add_connection(model::ConnectionSurface surface);
 Command update_connection(model::ConnectionSurface surface);

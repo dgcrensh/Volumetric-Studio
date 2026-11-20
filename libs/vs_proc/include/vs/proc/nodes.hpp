@@ -55,6 +55,10 @@
 //   mesh.box, mesh.cylinder, mesh.instances, mesh.measure    meshes
 //   mesh.union, mesh.difference, mesh.intersection           booleans (Manifold)
 //   output.publish                                           published numbers
+//   L4 (a composite's generator, nodes_children.cpp):
+//   children.grid, children.at_frames, children.merge,
+//   children.delegate                                        child volumes
+//   output.children                                          the generated layout
 //   output                                                   the contents
 //
 // Input and query nodes read the volume's inputs; they are cheap and never
@@ -93,6 +97,8 @@ enum class PropertyKind {
   Surface,    // a connection surface's id (32 hex digits) joining the volume
   Parameter,  // the name of one of the graph's parameters
   Name,       // a legal variable name the node introduces (output.publish)
+  Template,   // L4: the name of one of the composite's templates (empty: placeholders)
+  TemplateParameter,  // L4: a parameter name of that template (empty: none)
 };
 
 struct PropertySpec {
@@ -156,6 +162,7 @@ class NodeContext {
   [[nodiscard]] const List& list(std::string_view port) const;
   [[nodiscard]] const MeshValue& mesh(std::string_view port) const;
   [[nodiscard]] const Frames& frames(std::string_view port) const;
+  [[nodiscard]] const Children& children(std::string_view port) const;  // L4
   // False for an optional input left unconnected.
   [[nodiscard]] bool has(std::string_view port) const;
 
