@@ -235,18 +235,23 @@ core::Diagnostics Session::open(const std::filesystem::path& path) {
     d.add(loaded.error());
     return d;
   }
-  set_project(std::move(loaded).value(), path);
+  // Caches saved with the project (M17) seed the engine, so contents whose
+  // keys still match aren't regenerated; stale ones are never looked up.
+  set_project(std::move(loaded).value(), path, model::load_project_cache(path));
   return d;
 }
 
-void Session::set_project(model::Project project, std::filesystem::path path) {
+void Session::set_project(model::Project project, std::filesystem::path path, model::CacheFiles cache) {
   cancel();
   project_ = std::make_shared<const model::Project>(std::move(project));
   has_project_ = true;
   path_ = std::move(path);
   latest_.reset();
   // A new project shares nothing with the last one worth keeping on screen.
-  post([this] { engine_.reset(); });
+  post([this, cache = std::make_shared<const model::CacheFiles>(std::move(cache))] {
+    engine_.reset();
+    cache_entries_loaded_ = engine_.cache().insert_files(*cache);
+  });
   emit projectChanged();
   regenerate();
 }
@@ -258,10 +263,12 @@ void Session::update_project(std::shared_ptr<const model::Project> project) {
   regenerate();
 }
 
-core::Diagnostics Session::save(const std::filesystem::path& path, const model::Project* project) {
+core::Diagnostics Session::save(const std::filesystem::path& path, const model::Project* project,
+                                const model::CacheFiles* cache) {
   const auto layout =
       std::filesystem::is_directory(path) ? model::ProjectLayout::Folder : model::ProjectLayout::Zip;
-  core::Diagnostics d = model::save_project(project != nullptr ? *project : *project_, path, layout);
+  core::Diagnostics d =
+      model::save_project(project != nullptr ? *project : *project_, path, layout, cache);
   if (!d.has_errors()) path_ = path;
   return d;
 }

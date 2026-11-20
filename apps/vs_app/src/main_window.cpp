@@ -2,6 +2,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -16,6 +19,7 @@
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -308,7 +312,23 @@ void MainWindow::build_menus() {
   file->addSeparator();
   file->addAction(tr("&Save"), QKeySequence::Save, this, &MainWindow::save);
   file->addAction(tr("Save &As…"), QKeySequence::SaveAs, this, &MainWindow::save_as);
+  save_caches_action_ = file->addAction(tr("Save &Caches With Project"));
+  save_caches_action_->setCheckable(true);
+  save_caches_action_->setToolTip(tr("Store generated contents in the project, so reopening it skips "
+                                     "regenerating what hasn't changed"));
+  save_caches_action_->setChecked(
+      QSettings(QStringLiteral("Volumetric Studio"), QStringLiteral("vs_app"))
+          .value(QStringLiteral("save_caches"), true)
+          .toBool());
+  connect(save_caches_action_, &QAction::toggled, this, [](bool on) {
+    QSettings(QStringLiteral("Volumetric Studio"), QStringLiteral("vs_app"))
+        .setValue(QStringLiteral("save_caches"), on);
+  });
   file->addSeparator();
+  file->addAction(tr("&Import as New Volume…"), QKeySequence(Qt::CTRL | Qt::Key_I), this,
+                  &MainWindow::import_dialog);
+  file->addSeparator();
+  file->addAction(tr("Export S&TEP…"), this, &MainWindow::export_step_dialog);
   file->addAction(tr("Export &STL…"), this, [this] { export_dialog(ExportFormat::Stl); });
   file->addAction(tr("Export &3MF…"), this, [this] { export_dialog(ExportFormat::ThreeMf); });
   file->addSeparator();
@@ -376,7 +396,7 @@ void MainWindow::build_menus() {
   model->addAction(tr("&Regenerate"), QKeySequence(Qt::Key_F5), session_, &Session::regenerate);
   cancel_action_ = model->addAction(tr("&Cancel"), QKeySequence(Qt::Key_Escape), session_, &Session::cancel);
   cancel_action_->setEnabled(false);
-  model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::validate);
+  model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, [this] { validate(); });
 
   QMenu* view = menuBar()->addMenu(tr("V&iew"));
   view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
@@ -1751,12 +1771,30 @@ void MainWindow::open_dialog_box() {
   open_project(fspath(path));
 }
 
+bool MainWindow::save_caches() const { return save_caches_action_ != nullptr && save_caches_action_->isChecked(); }
+
+void MainWindow::set_save_caches(bool on) {
+  if (save_caches_action_ != nullptr) save_caches_action_->setChecked(on);
+}
+
+core::Diagnostics MainWindow::save_to(const std::filesystem::path& path) {
+  // Caches come from the evaluation on screen: keys name exactly the inputs
+  // each entry was made from, so entries never go wrong, at worst unused.
+  // With the option off, saving removes any the project had.
+  model::CacheFiles cache;
+  if (save_caches()) {
+    if (const SnapshotPtr s = session_->latest()) cache = eval::project_cache_files(s->evaluation);
+  }
+  const auto d = session_->save(path, &history_.project(), &cache);
+  if (!d.has_errors()) history_.mark_saved();
+  update_title();
+  return d;
+}
+
 void MainWindow::save() {
   if (!session_->has_project()) return;
   if (session_->path().empty()) return save_as();
-  const auto d = session_->save(session_->path(), &history_.project());
-  if (!d.has_errors()) history_.mark_saved();
-  update_title();
+  const auto d = save_to(session_->path());
   report(d, tr("Saved %1").arg(qpath(session_->path())));
 }
 
@@ -1764,21 +1802,123 @@ void MainWindow::save_as() {
   if (!session_->has_project()) return;
   const QString path = QFileDialog::getSaveFileName(this, tr("Save project as"), QString(), tr("Project (*.vsproj)"));
   if (path.isEmpty()) return;
-  const auto d = session_->save(fspath(path), &history_.project());
-  if (!d.has_errors()) {
-    add_recent(fspath(path));
-    history_.mark_saved();
-  }
-  update_title();
+  const auto d = save_to(fspath(path));
+  if (!d.has_errors()) add_recent(fspath(path));
   report(d, tr("Saved %1").arg(path));
+}
+
+core::Diagnostics MainWindow::import_file(const std::filesystem::path& path) {
+  core::Diagnostics d;
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    d.add(core::Diagnostic::error("app.import.io", "Can't read " + sstr(qpath(path))));
+    show_diagnostics(d, tr("Import"));
+    return d;
+  }
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  std::vector<std::byte> bytes(text.size());
+  std::transform(text.begin(), text.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+  const QFileInfo info(qpath(path));
+  const std::string format(eval::import_format(sstr(info.suffix())));
+  std::vector<std::string> taken;
+  for (const auto& v : history_.project().document.volumes) taken.push_back(v.name);
+  const std::string name = unique_name(sstr(info.completeBaseName()), taken);
+  return apply(app::import_volume(std::move(bytes), format, name, session_->settings()));
+}
+
+void MainWindow::import_dialog() {
+  const QString path = QFileDialog::getOpenFileName(
+      this, tr("Import as new volume"), QString(),
+      tr("Geometry (*.step *.stp *.iges *.igs *.stl *.3mf *.obj);;All files (*)"));
+  if (path.isEmpty()) return;
+  const auto d = import_file(fspath(path));
+  if (!d.has_errors()) status_label_->setText(tr("Imported %1").arg(QFileInfo(path).fileName()));
+}
+
+void MainWindow::check_then(const QString& what, std::function<void()> go) {
+  validate([this, what, go = std::move(go)](const ShipCheck& check) {
+    if (!check.ok()) {
+      QMessageBox box(QMessageBox::Warning, what, qstr(summary(check)), QMessageBox::Ok, this);
+      box.setInformativeText(tr("The Diagnostics panel lists every problem; click one to go to it."));
+      box.exec();
+      return;
+    }
+    if (check.warnings > 0 &&
+        QMessageBox::question(this, what, qstr(summary(check)) + QStringLiteral("\n\n") + tr("Export anyway?")) !=
+            QMessageBox::Yes) {
+      return;
+    }
+    go();
+  });
 }
 
 void MainWindow::export_dialog(ExportFormat format) {
   const bool stl = format == ExportFormat::Stl;
-  const QString path = QFileDialog::getSaveFileName(this, stl ? tr("Export STL") : tr("Export 3MF"), QString(),
-                                                    stl ? tr("STL (*.stl)") : tr("3MF (*.3mf)"));
-  if (path.isEmpty()) return;
-  export_to(fspath(path), format);
+  check_then(stl ? tr("Export STL") : tr("Export 3MF"), [this, stl, format] {
+    const QString path = QFileDialog::getSaveFileName(this, stl ? tr("Export STL") : tr("Export 3MF"), QString(),
+                                                      stl ? tr("STL (*.stl)") : tr("3MF (*.3mf)"));
+    if (path.isEmpty()) return;
+    export_to(fspath(path), format);
+  });
+}
+
+void MainWindow::export_step_dialog() {
+  check_then(tr("Export STEP"), [this] {
+    // The user's choice for procedural volumes, and what else to include.
+    QDialog options(this);
+    options.setWindowTitle(tr("Export STEP"));
+    auto* layout = new QVBoxLayout(&options);
+    layout->addWidget(new QLabel(tr("Procedural volumes go in as:"), &options));
+    auto* as_mesh = new QRadioButton(tr("Mesh bodies (the generated triangles)"), &options);
+    auto* as_boundary = new QRadioButton(tr("Their boundary only (B-rep)"), &options);
+    as_mesh->setChecked(true);
+    layout->addWidget(as_mesh);
+    layout->addWidget(as_boundary);
+    auto* boundaries = new QCheckBox(tr("Also include every volume's boundary"), &options);
+    auto* surfaces = new QCheckBox(tr("Also include connection surfaces"), &options);
+    layout->addWidget(boundaries);
+    layout->addWidget(surfaces);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &options);
+    connect(buttons, &QDialogButtonBox::accepted, &options, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &options, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (options.exec() != QDialog::Accepted) return;
+    eval::StepExportOptions o;
+    o.procedural = as_boundary->isChecked() ? eval::ProceduralAs::Boundary : eval::ProceduralAs::Mesh;
+    o.boundaries = boundaries->isChecked();
+    o.connection_surfaces = surfaces->isChecked();
+    const QString path =
+        QFileDialog::getSaveFileName(this, tr("Export STEP"), QString(), tr("STEP (*.step *.stp)"));
+    if (path.isEmpty()) return;
+    export_step_to(fspath(path), o);
+  });
+}
+
+void MainWindow::export_step_to(const std::filesystem::path& path, const eval::StepExportOptions& options,
+                                std::function<void(const eval::StepExport&)> done) {
+  const SnapshotPtr s = session_->latest();
+  if (!s || s->preview || session_->busy() || previewing_) {
+    eval::StepExport r;
+    r.diagnostics.add(core::Diagnostic::error("app.export.busy",
+                                              "Wait for the evaluation to finish (and close the open dialog) "
+                                              "before exporting."));
+    report(r.diagnostics, {});
+    if (done) done(r);
+    return;
+  }
+  status_label_->setText(tr("Exporting…"));
+  auto result = std::make_shared<eval::StepExport>();
+  session_->run_in_background([s, result, path, options] { *result = eval::export_step(s->evaluation, path, options); },
+                              [this, result, path, done] {
+                                report(result->diagnostics,
+                                       tr("Exported %1 (%2 parts: %3 B-rep, %4 mesh, %5 boundary)")
+                                           .arg(qpath(path))
+                                           .arg(result->parts.size())
+                                           .arg(result->breps)
+                                           .arg(result->meshes)
+                                           .arg(result->boundaries));
+                                if (done) done(*result);
+                              });
 }
 
 void MainWindow::export_to(const std::filesystem::path& path, ExportFormat format,
@@ -1810,22 +1950,24 @@ void MainWindow::export_to(const std::filesystem::path& path, ExportFormat forma
       });
 }
 
-void MainWindow::validate() {
+void MainWindow::validate(std::function<void(const ShipCheck&)> done) {
   const SnapshotPtr s = session_->latest();
   if (!s) return;
   status_label_->setText(tr("Validating…"));
-  auto report_ptr = std::make_shared<validate::ValidationReport>();
+  auto check = std::make_shared<ShipCheck>();
   const core::ProductSettings settings = session_->settings();
+  const bool interactive = !done;
   session_->run_in_background(
-      [s, report_ptr, settings] {
-        *report_ptr = validate::validate(s->project->document, settings, &s->project->blobs);
-      },
-      [this, report_ptr] {
-        show_diagnostics(report_ptr->diagnostics, tr("Validation"));
-        status_label_->setText(report_ptr->ok() ? tr("Validation passed")
-                                                : tr("Validation found %n error(s)", nullptr,
-                                                     static_cast<int>(report_ptr->diagnostics.count(
-                                                         core::Severity::Error))));
+      [s, check, settings] { *check = check_for_export(*s->project, s->evaluation, settings); },
+      [this, check, done, interactive] {
+        last_check_ = *check;
+        show_diagnostics(check->diagnostics, tr("Validation"));
+        status_label_->setText(qstr(summary(*check)));
+        if (done) {
+          done(*check);
+        } else if (interactive) {
+          QMessageBox::information(this, tr("Validate"), qstr(summary(*check)));
+        }
       });
 }
 

@@ -334,6 +334,17 @@ Command import_contents(Id volume, std::vector<std::byte> file, std::string form
           }};
 }
 
+Command import_volume(std::vector<std::byte> file, std::string format, std::string name,
+                      core::ProductSettings settings) {
+  return {"Import " + name, [file = std::move(file), format = std::move(format), name,
+                              settings](model::Project& p) -> Diagnostics {
+            auto id = eval::import_volume(p, file, format, name, settings);
+            Diagnostics d;
+            if (!id) d.add(id.error());
+            return d;
+          }};
+}
+
 // --- procedural contents (M15) ---------------------------------------------------------------
 
 proc::Graph starter_graph() {

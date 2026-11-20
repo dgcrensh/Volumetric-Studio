@@ -44,6 +44,8 @@ add_library(vs_app_lib STATIC
   src/scene.hpp
   src/session.cpp
   src/session.hpp
+  src/ship.cpp
+  src/ship.hpp
   src/sketch_editor.cpp
   src/sketch_editor.hpp
   src/sketch_mode.cpp
@@ -96,6 +98,7 @@ if(VS_BUILD_TESTS)
     tests/test_outline.cpp
     tests/test_scene.cpp
     tests/test_session.cpp
+    tests/test_ship.cpp
     tests/test_sketch_editor.cpp
     tests/test_window.cpp)
   target_link_libraries(vs_app_tests PRIVATE vs_app_lib Catch2::Catch2)

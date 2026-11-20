@@ -24,6 +24,7 @@
 
 #include <QObject>
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -96,18 +97,27 @@ class Session : public QObject {
 
   // Reads a folder or zip project without enforcing the authoring rules,
   // so a broken file still opens and shows what is wrong with it, then
-  // regenerates. On failure the current project stays.
+  // regenerates. The caches saved with it (M17) seed the engine first, so
+  // contents whose keys still match aren't regenerated. On failure the
+  // current project stays.
   core::Diagnostics open(const std::filesystem::path& path);
-  // Replaces the project (no file, or `path`) and regenerates.
-  void set_project(model::Project project, std::filesystem::path path = {});
+  // Replaces the project (no file, or `path`) and regenerates, with
+  // `cache` (eval::project_cache_files()) in the engine's cache.
+  void set_project(model::Project project, std::filesystem::path path = {},
+                   model::CacheFiles cache = {});
   // An edit (or a dialog's live preview) of the same project: replaces it
   // and regenerates, keeping the engine's cache and each volume's last
   // valid contents, the file path and the view.
   void update_project(std::shared_ptr<const model::Project> project);
   // Saves to `path`: a folder when `path` is an existing folder, else a
   // zip file. With `project`, saves that instead of the one shown (which
-  // may be a dialog's preview).
-  core::Diagnostics save(const std::filesystem::path& path, const model::Project* project = nullptr);
+  // may be a dialog's preview). With `cache`, those files become the
+  // project's caches (an empty set removes them; null leaves a folder's).
+  core::Diagnostics save(const std::filesystem::path& path, const model::Project* project = nullptr,
+                         const model::CacheFiles* cache = nullptr);
+  // How many cache entries the last open() loaded into the engine (read on
+  // the UI thread after the first snapshot arrives).
+  [[nodiscard]] std::size_t cache_entries_loaded() const { return cache_entries_loaded_; }
 
   void regenerate();
   // A dimension drag (M16): shows `project` (the drag's edit applied, not
@@ -178,6 +188,7 @@ class Session : public QObject {
   std::filesystem::path path_;
   SnapshotPtr latest_;
   Preparer preparer_;
+  std::atomic<std::size_t> cache_entries_loaded_{0};
 
   // UI thread only.
   std::uint64_t requested_ = 0;
