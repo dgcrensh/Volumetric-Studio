@@ -19,7 +19,8 @@ set(VS_LIBRARY_ORDER
   vs_validate
   vs_mesh
   vs_eval
-  vs_proc)
+  vs_proc
+  vs_gpu)
 
 set(VS_APPLICATIONS
   vs_app

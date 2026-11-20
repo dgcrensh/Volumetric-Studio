@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <limits>
+#include <mutex>
 #include <numbers>
 #include <utility>
 
@@ -479,8 +480,45 @@ Hash256 SampledField::hash() const {
   return h.finalize();
 }
 
+namespace {
+
+std::mutex& backend_mutex() {
+  static std::mutex m;
+  return m;
+}
+std::shared_ptr<SamplingBackend>& backend_slot() {
+  static std::shared_ptr<SamplingBackend> b;
+  return b;
+}
+
+}  // namespace
+
+void set_sampling_backend(std::shared_ptr<SamplingBackend> backend) {
+  const std::lock_guard lock(backend_mutex());
+  backend_slot() = std::move(backend);
+}
+
+std::shared_ptr<SamplingBackend> sampling_backend() {
+  const std::lock_guard lock(backend_mutex());
+  return backend_slot();
+}
+
 SampledField sample(const FieldExpr& field, const GridSpec& grid, eval::ThreadPool* pool,
                     const eval::CancellationToken* cancel, bool* cancelled) {
+  if (const auto backend = sampling_backend()) {
+    SampledField out;
+    out.grid = grid;
+    bool stopped = false;
+    if (backend->sample(field, grid, out.values, cancel, &stopped) && out.values.size() == grid.size()) {
+      if (cancelled != nullptr) *cancelled = stopped;
+      return out;
+    }
+  }
+  return sample_cpu(field, grid, pool, cancel, cancelled);
+}
+
+SampledField sample_cpu(const FieldExpr& field, const GridSpec& grid, eval::ThreadPool* pool,
+                        const eval::CancellationToken* cancel, bool* cancelled) {
   SampledField out;
   out.grid = grid;
   out.values.assign(grid.size(), 0.0f);

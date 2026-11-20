@@ -107,7 +107,7 @@ Applications may link any library, but never each other, and nothing links an
 application.
 
 ```
-vs_core → vs_kernel → vs_sketch → vs_feature → vs_model → vs_validate → vs_mesh → vs_eval → vs_proc
+vs_core → vs_kernel → vs_sketch → vs_feature → vs_model → vs_validate → vs_mesh → vs_eval → vs_proc → vs_gpu
 apps: vs_app, vstudio-cli
 ```
 
@@ -485,6 +485,27 @@ so they are registered. A new library must also be added to
   `bench-gyroid [--size mm] [--cell mm] [--threads N] [--3mf out]` (the
   CPU baseline) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
   block out, fill, iterate, swap and ship end to end.
+
+## vs_gpu essentials (L1)
+
+- **What.** Procedural fields sampled on the GPU with exactly the CPU's
+  values (decision 0018, plan `docs/plans/L1-gpu-field-evaluation.md`).
+  `gpu::install()` opens an OpenGL 4.3 compute context (WGL; other
+  platforms say why not), runs `self_check()` (21 fields, every value
+  compared) and installs itself as `proc::set_sampling_backend()`;
+  `proc::sample()` then sends grids of 32k+ samples to it, `sample_cpu()`
+  is the CPU alone. `sample_gpu()` forces the GPU (tests, benchmarks).
+- **How.** `src/glsl.cpp` writes one GLSL function per node, numbers in a
+  storage buffer (shaders depend on a tree's shape only), constants as bit
+  patterns, every double `precise`, `sqrt_rn()` for correctly rounded
+  roots, `std::min`/`max`/`clamp` semantics, the boundary BVH walked in
+  the CPU's order. `src/device.cpp` is the context's thread; GL entry
+  points are loaded at run time (`src/gl.hpp`), so no GL SDK is needed.
+  **Any change to `FieldExpr::eval()`, `TriangleDistance` or the
+  infill maths must be mirrored in `glsl.cpp`**; `vs_gpu_tests` catches
+  a mismatch on a machine with a GPU.
+- **Where.** The app installs it at start (`--cpu` skips; About says
+  which device); `vstudio-cli --gpu <command>`.
 
 ## vs_app essentials
 

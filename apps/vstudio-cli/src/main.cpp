@@ -16,6 +16,7 @@
 #include "selftest.hpp"
 #include "vs/core/log.hpp"
 #include "vs/core/version.hpp"
+#include "vs/gpu/gpu.hpp"
 
 namespace {
 
@@ -79,6 +80,8 @@ Commands:
 
 Options:
   --version         Print the version and exit
+  --gpu             Sample procedural fields on the GPU (only when it gives exactly
+                    the CPU's samples; otherwise it says why and the CPU does it)
   --log-level <l>   trace, debug, info, warning, error or off (default: warning)
   -h, --help        Print this message and exit
 )";
@@ -107,6 +110,14 @@ int main(int argc, char** argv) {
     } else if (arg == "-h" || arg == "--help") {
       std::cout << kUsage;
       return 0;
+    } else if (arg == "--gpu") {
+      // Sample procedural fields on the GPU when it matches the CPU (L1).
+      const auto status = vs::gpu::install();
+      if (status.installed) {
+        std::cout << "gpu         fields sampled on " << status.device << "\n";
+      } else {
+        std::cout << "gpu         not used: " << status.why << "\n";
+      }
     } else if (arg == "--log-level") {
       if (i + 1 >= args.size()) {
         std::cerr << "vstudio-cli: --log-level needs a value\n";

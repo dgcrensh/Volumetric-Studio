@@ -3,7 +3,7 @@
 //   vs_app [project] [--select <volume or surface name>] [--view iso|top|front|right|...]
 //          [--context <volume name>] [--sketch <sketch name>] [--edit <feature name>]
 //          [--graph <volume name> [--node <node name>] [--slice]]
-//          [--size <w>x<h>] [--screenshot <out.bmp>] [--viewport-image <out.bmp>]
+//          [--size <w>x<h>] [--screenshot <out.bmp>] [--viewport-image <out.bmp>] [--cpu]
 //
 // (vcpkg's Qt here is built without PNG support, so images are BMP.)
 //
@@ -28,6 +28,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <thread>
 
 #include "feature_dialog.hpp"
 #include "main_window.hpp"
@@ -36,6 +37,7 @@
 #include "sketch_mode.hpp"
 #include "viewport.hpp"
 #include "vs/core/version.hpp"
+#include "vs/gpu/gpu.hpp"
 
 int main(int argc, char** argv) {
   QApplication app(argc, argv);
@@ -43,6 +45,20 @@ int main(int argc, char** argv) {
   QApplication::setOrganizationName(QStringLiteral("Volumetric Studio"));
   const auto version = vs::core::version_string();
   QApplication::setApplicationVersion(QString::fromUtf8(version.data(), static_cast<qsizetype>(version.size())));
+
+  // Procedural fields go to the GPU once it has shown it samples exactly as
+  // the CPU does (L1); the check runs beside start-up, and until it passes
+  // (or if it never does) the CPU samples. --cpu skips it.
+  std::thread gpu_check;
+  if (!QApplication::arguments().contains(QStringLiteral("--cpu"))) {
+    gpu_check = std::thread([] { vs::gpu::install(); });
+  }
+  struct Join {
+    std::thread& t;
+    ~Join() {
+      if (t.joinable()) t.join();
+    }
+  } join{gpu_check};
 
   QString project, select, view, screenshot, viewport_image, context, sketch, edit, graph, node;
   bool slice = false;
@@ -67,6 +83,8 @@ int main(int argc, char** argv) {
       graph = args[++i];
     } else if (a == QLatin1String("--node") && has_value) {
       node = args[++i];
+    } else if (a == QLatin1String("--cpu")) {
+      // handled above
     } else if (a == QLatin1String("--slice")) {
       slice = true;
     } else if (a == QLatin1String("--edit") && has_value) {
