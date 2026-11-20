@@ -1,6 +1,12 @@
 # L1b — Faster meshing: parallel surface nets, GPU where it pays (plan)
 
-Nov 20, 2026 · follows L1 (L2 in the plan is curved connection surfaces, so this is L1b) · decision record (when built): `docs/decisions/0019-parallel-and-gpu-meshing.md`
+Nov 20, 2026 · follows L1 (L2 in the plan is curved connection surfaces, so this is L1b) · decision record: `docs/decisions/0019-parallel-and-gpu-meshing.md`
+
+**Status: built.** Parts A to C as below; results and what differed from
+this plan are in decision 0019. In short: engine 26.0 s to 10.8 s on this
+desktop, the same mesh bit for bit; surface nets 18 s to about 5 s (not
+the 3 s estimated: six cores, not twelve); the GPU stages work and match
+exactly but calibration keeps them on the CPU here.
 
 ## Goal
 
