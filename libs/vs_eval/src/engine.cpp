@@ -356,7 +356,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       const std::size_t i = to_run[k];
       VolumeResult& r = ev.volumes[i];
       Generated& g = generated[k];
-      if (!g.ran) {
+      if (!g.ran || g.contents->cancelled) {
         ev.cancelled = true;
         r.status = VolumeStatus::Stale;
         set_state(r.volume, r.status);

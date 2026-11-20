@@ -202,6 +202,37 @@ TEST_CASE("Broken graph JSON fails the volume", "[proc][engine]") {
   CHECK(target.volume == b.volumes[0]);
 }
 
+TEST_CASE("Cancelling stops a procedural volume part way; it stays stale and isn't cached",
+          "[proc][engine]") {
+  const auto s = scenes::shell_and_ball();
+  auto b = scenes::boxes({s.graph});
+  eval::Engine engine(kSettings, threads(2));
+  install(engine);
+  const auto first = engine.evaluate(b.project);
+  REQUIRE(first.ok());
+
+  // Cancelled as the job starts (the progress callback runs just before
+  // it): the job sees the token at its first stage and stops.
+  set_wall(b, 0, 3.0);
+  eval::EvaluateOptions options;
+  eval::CancellationToken token;
+  options.cancel = token;
+  options.progress = [&](const eval::ProgressEvent& e) {
+    if (e.kind == eval::ProgressEvent::Kind::VolumeStarted) token.cancel();
+  };
+  const auto cancelled = engine.evaluate(b.project, options);
+  CHECK(cancelled.cancelled);
+  CHECK(cancelled.volumes[0].status == VolumeStatus::Stale);
+  CHECK(cancelled.volumes[0].stale_contents);
+  CHECK(field_contents(cancelled.volumes[0]) == field_contents(first.volumes[0]));
+  CHECK_FALSE(cancelled.diagnostics.with_code("eval.cancelled").empty());
+
+  // Nothing of it was cached: the next evaluation generates it.
+  const auto again = engine.evaluate(b.project);
+  REQUIRE(again.ok());
+  CHECK(regenerated(again) == std::set<std::string>{"P0"});
+}
+
 TEST_CASE("Procedural contents are a mesh whose outputs are measured", "[proc][engine]") {
   auto b = scenes::boxes({scenes::shell_and_ball().graph});
   eval::Engine engine(kSettings, threads(1));

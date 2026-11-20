@@ -269,6 +269,7 @@ core::Diagnostics Session::save(const std::filesystem::path& path, const model::
 void Session::regenerate() {
   if (!has_project_) return;
   const std::uint64_t generation = ++requested_;
+  full_requested_ = generation;
   eval::CancellationToken cancel;
   {
     std::lock_guard lock(mutex_);
@@ -278,6 +279,19 @@ void Session::regenerate() {
   }
   emit evaluationStarted(generation);
   post([this, generation, project = project_, cancel] { evaluate_job(generation, project, cancel); });
+}
+
+void Session::drag_preview(std::shared_ptr<const model::Project> project) {
+  if (!has_project_ || !project) return;
+  const std::uint64_t generation = ++requested_;
+  eval::CancellationToken cancel;
+  {
+    std::lock_guard lock(mutex_);
+    current_cancel_.cancel();
+    current_cancel_ = cancel;
+    newest_ = generation;
+  }
+  post([this, generation, project = std::move(project), cancel] { evaluate_job(generation, project, cancel, true); });
 }
 
 void Session::cancel() {
@@ -320,7 +334,7 @@ void Session::worker_loop() {
 }
 
 void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model::Project> project,
-                           eval::CancellationToken cancel) {
+                           eval::CancellationToken cancel, bool drag) {
   {
     std::lock_guard lock(mutex_);
     if (generation != newest_ || stopping_) return;  // superseded before it started
@@ -330,8 +344,16 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
     QMetaObject::invokeMethod(
         this,
         [this, snapshot] {
-          // Only the newest request's results reach the screen.
-          if (snapshot->generation != requested_) return;
+          // Only the newest request's results reach the screen. A drag
+          // asks for a preview every frame, faster than they come: each
+          // one still shows unless a regeneration (or a later drag
+          // preview) was requested and shown since.
+          if (snapshot->drag) {
+            if (snapshot->generation < full_requested_) return;
+            if (latest_ && latest_->generation > snapshot->generation) return;
+          } else if (snapshot->generation != requested_) {
+            return;
+          }
           latest_ = snapshot;
           emit evaluated(snapshot);
         },
@@ -340,7 +362,9 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
   auto finish_snapshot = [&](std::shared_ptr<Snapshot> s, std::chrono::steady_clock::time_point t0) {
     s->evaluate_ms = ms_since(t0);
     const auto t1 = std::chrono::steady_clock::now();
-    s->scene = build_scene(s->evaluation, settings_);
+    SceneOptions scene_options;
+    scene_options.hide_stale_contents = s->drag;
+    s->scene = build_scene(s->evaluation, settings_, scene_options);
     if (preparer_) s->prepared = preparer_(s->scene);
     s->scene_ms = ms_since(t1);
   };
@@ -351,10 +375,17 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
     auto s = std::make_shared<Snapshot>();
     s->generation = generation;
     s->preview = true;
+    s->drag = drag;
     s->project = project;
     s->evaluation = engine_.preview(*project);
     finish_snapshot(s, t0);
     deliver(s);
+  }
+  if (drag) {
+    // A drag shows the preview tier only; releasing the handle regenerates.
+    std::lock_guard lock(mutex_);
+    running_ = 0;
+    return;
   }
   // 2. the full evaluation. Cancelled already, it returns at once with
   // every volume as it was (Stale), which is still worth showing when no

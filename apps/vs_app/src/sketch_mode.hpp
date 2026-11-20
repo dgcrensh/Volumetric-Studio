@@ -17,7 +17,10 @@
 //     selection;
 //   - geometry is drawn by state: selected orange, part of a conflict red,
 //     still free blue, fully fixed dark green, construction dashed grey;
-//     dimensions show their value (and expression).
+//     dimensions show their value (and expression);
+//   - dragging a dimension's label (M16) changes its value along the
+//     dimension's direction, solving as it goes (one drag one undo step);
+//     a dimension an expression drives says so instead.
 //
 // SketchMode, the panel around it, ends with finished(true) (Finish) or
 // finished(false) (Cancel); the main window commits the sketch on Finish.
@@ -49,11 +52,15 @@ class SketchView : public QWidget {
   // Screen position of a sketch point, and back.
   [[nodiscard]] QPointF to_screen(dvec2 p) const;
   [[nodiscard]] dvec2 to_sketch(QPointF p) const;
+  // Where a dimension's label was last drawn (empty if it wasn't).
+  [[nodiscard]] QRectF dimension_label(const Id& constraint) const;
 
  signals:
   void selectionChanged();
   // The sketch changed (a shape, a drag, a deletion).
   void edited();
+  // Something to tell the user (a dimension that can't be dragged).
+  void message(const QString& text);
 
  protected:
   void paintEvent(QPaintEvent* event) override;
@@ -77,6 +84,11 @@ class SketchView : public QWidget {
   bool panning_ = false;
   Id dragging_;
   bool drag_started_ = false;
+  // M16: dimension labels as last drawn, and a dimension being dragged.
+  mutable std::vector<std::pair<Id, QRectF>> labels_;
+  Id dragging_dimension_;
+  double dimension_start_ = 0.0;
+  QPointF dimension_from_;
 };
 
 class SketchMode : public QWidget {

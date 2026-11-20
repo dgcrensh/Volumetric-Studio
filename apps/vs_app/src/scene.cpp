@@ -159,15 +159,37 @@ core::Result<DisplayMesh> display_mesh(const kernel::Shape& shape, const core::P
   auto tess = kernel::tessellate(shape, params, settings);
   if (!tess) return tess.error();
   DisplayMesh out;
-  for (const auto& face : tess->faces) {
+  // The faces each edge bounds, from the faces' wires.
+  std::vector<std::array<std::int32_t, 2>> sides(tess->edges.size(), {-1, -1});
+  for (std::size_t f = 0; f < tess->faces.size(); ++f) {
+    const auto& face = tess->faces[f];
+    DisplayMesh::FacePart part;
+    part.first = static_cast<std::uint32_t>(out.triangle_count());
     append_smoothed(face.points, face.triangles, options.crease_angle, out);
+    part.count = static_cast<std::uint32_t>(out.triangle_count()) - part.first;
+    part.face = face.face;
+    out.faces.push_back(std::move(part));
+    for (const auto& wire : face.wires) {
+      for (const auto& use : wire) {
+        if (use.edge >= sides.size()) continue;
+        auto& s = sides[use.edge];
+        const auto fi = static_cast<std::int32_t>(f);
+        if (s[0] < 0) {
+          s[0] = fi;
+        } else if (s[1] < 0) {
+          s[1] = fi;  // equal to s[0] for a seam
+        }
+      }
+    }
   }
-  for (const auto& edge : tess->edges) {
+  for (std::size_t e = 0; e < tess->edges.size(); ++e) {
+    const auto& edge = tess->edges[e];
     if (edge.degenerate || edge.points.size() < 2) continue;
     std::vector<fvec3> line;
     line.reserve(edge.points.size());
     for (const auto& p : edge.points) line.push_back(core::to_fp32(p));
     out.edges.push_back(std::move(line));
+    out.edge_faces.push_back(sides[e]);
   }
   return out;
 }
@@ -210,7 +232,8 @@ Scene build_scene(const eval::Evaluation& evaluation, const core::ProductSetting
     const eval::VolumeResult* result = evaluation.find(volume.id);
     const Rgb color = volume.keep_out ? Rgb{0.85f, 0.25f, 0.25f} : volume_color(i);
     const bool has_contents = result != nullptr && result->contents &&
-                              (result->contents->mesh || !result->contents->solid.is_empty());
+                              (result->contents->mesh || !result->contents->solid.is_empty()) &&
+                              !(options.hide_stale_contents && result->stale_contents);
 
     if (vb != nullptr && !vb->boundary.is_empty()) {
       SceneItem item;

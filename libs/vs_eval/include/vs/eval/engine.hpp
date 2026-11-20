@@ -51,7 +51,8 @@
 // Cancellation. When the token is cancelled the engine starts nothing new;
 // results that finished are kept (and cached: they are valid for their
 // keys), and every volume not reached keeps its previous contents as
-// Stale. The engine's state is then exactly what an evaluation of the
+// Stale. A generator's job may also stop part way (vs_proc's do, M16);
+// its volume is then Stale too, as if never started. The engine's state is then exactly what an evaluation of the
 // finished volumes alone would leave, so the next evaluation carries on
 // from it.
 //

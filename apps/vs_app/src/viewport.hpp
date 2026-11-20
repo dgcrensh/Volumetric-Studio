@@ -14,12 +14,24 @@
 // about the cursor, a click selects (boundaries and connection surfaces
 // are pickable; contents are picked through their boundary), and the view
 // cube in the top right corner turns the view to a face, edge or corner.
+//
+// M16 adds two things:
+//
+//   - pick mode: a click picks a face or an edge of a B-rep item (each face
+//     its own pickable part, picking.hpp) instead of selecting the item,
+//     and only items on the given list can be picked (edit in context);
+//   - dimension handles: small markers drawn on top of everything; a left
+//     drag starting on one moves it along its direction instead of
+//     orbiting, reported as the distance moved in mm.
 
 #include <QWidget>
 
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
+#include "picking.hpp"
 #include "scene.hpp"
 #include "vs/core/id.hpp"
 
@@ -30,6 +42,14 @@ namespace vs::app {
 struct PreparedScene;
 
 enum class StandardView { Iso, Top, Bottom, Front, Back, Left, Right };
+
+enum class PickMode { None, Face, Edge };
+
+// A dimension handle (dimension_drag.hpp) as the viewport draws it.
+struct ViewHandle {
+  core::dvec3 anchor{};
+  core::dvec3 direction{};  // unit
+};
 
 class Viewport : public QWidget {
   Q_OBJECT
@@ -70,6 +90,29 @@ class Viewport : public QWidget {
   [[nodiscard]] std::size_t shown_items(ItemRole role) const;
   void fit_all();
   void set_view(StandardView view);
+  // Looks at the scene from the `eye` side (a direction from the scene
+  // towards the viewer), framed.
+  void look_along(const core::dvec3& eye);
+
+  // --- picking faces and edges (M16)
+  // In Face or Edge mode a click picks a part of one of `pickable`'s items
+  // (subject and role) and emits partPicked() instead of picked().
+  void set_pick_mode(PickMode mode, std::vector<std::pair<core::Id, ItemRole>> pickable = {});
+  [[nodiscard]] PickMode pick_mode() const;
+  // Picks at a point of the widget as a click there would (emitting what a
+  // click emits); what was hit, if anything.
+  std::optional<PickedPart> pick_at(QPointF position);
+  // Where a model point appears in the widget (nullopt without a view).
+  [[nodiscard]] std::optional<QPointF> project(const core::dvec3& point) const;
+
+  // --- dimension handles (M16)
+  void set_handles(std::vector<ViewHandle> handles);
+  [[nodiscard]] std::size_t handle_count() const;
+  // The handle drawn within a few pixels of `position`, if any.
+  [[nodiscard]] std::optional<std::size_t> handle_at(QPointF position) const;
+  // The distance (mm along the handle's direction) a move of the mouse
+  // from `from` to `to` drags handle `index`.
+  [[nodiscard]] double drag_distance(std::size_t index, QPointF from, QPointF to) const;
 
   // Renders the view off screen at the widget's size.
   [[nodiscard]] QImage render_image();
@@ -86,6 +129,11 @@ class Viewport : public QWidget {
  signals:
   // The user clicked an item (its subject) or empty space (null).
   void picked(vs::core::Id subject);
+  // Pick mode: the face or edge clicked.
+  void partPicked(vs::app::PickedPart part);
+  // A handle dragged `distance` mm along its direction since the press;
+  // `finished` on release.
+  void handleDragged(int index, double distance, bool finished);
   void frameRendered(double ms);
 
  protected:
@@ -100,6 +148,10 @@ class Viewport : public QWidget {
   struct Impl;
   std::unique_ptr<Impl> impl_;
   double last_frame_ms_ = 0.0;
+  // A handle drag in progress (index, where it started).
+  std::optional<std::size_t> dragging_handle_;
+  QPointF drag_from_;
+  QPointF press_at_;
   friend struct Impl;
 };
 

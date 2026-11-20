@@ -517,6 +517,24 @@ so they are registered. A new library must also be added to
   contents hide meanwhile). `MainWindow::edit_graph()`,
   `attach_template()`, `bake()`, `unbake()`, `preview_node()` are the
   entry points tests drive.
+- **Interactive regeneration** (M16, decision 0016): `dimension_drag.*`
+  (no Qt) gives a selected sketch's or extrude's handles and the Command a
+  drag makes (a bare variable name drags the variable); the viewport draws
+  and hit-tests them (`set_handles()`, `handleDragged`), and
+  `MainWindow::begin_drag()` / `drag_to()` / `end_drag()` preview through
+  `Session::drag_preview()` (preview tier only, stale contents left out)
+  and commit one step. Sketch mode drags dimension labels
+  (`SketchEditor::drag_dimension()`). Procedural jobs honour cancellation
+  (`GeneratedContents::cancelled`). `swap_contents()` (`authoring.hpp`)
+  swaps one volume between placeholder, modelled, procedural and baked;
+  `guidance.*` (no Qt) is the habit guidance `MainWindow::guide()` shows.
+- **Picking** (M16): B-rep display meshes keep `faces` (triangle ranges
+  with kernel faces) and `edge_faces`; `picking.*` (no Qt) names a picked
+  part by surface against `reference_choices()` and lists what may be
+  picked (`pickable_items()`, edit-in-context rules). `Viewport::
+  set_pick_mode()`, `pick_at()` (clicking again in place picks what's
+  behind), `project()` and `look_along()`; feature dialogs' Pick buttons
+  (`FeatureDialog::begin_pick()`, `apply_pick()`).
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

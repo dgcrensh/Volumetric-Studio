@@ -32,9 +32,11 @@
 //   proc.output.unpublished  (warning) a Published output the graph doesn't
 //                            publish: it has no value (the volume first)
 //
-// A job, once started, runs to the end, like a kernel operation: the
-// engine's cancellation starts no new volumes, and a finished job's
-// contents are valid for their key.
+// The engine's cancellation starts no new volumes, and a finished job's
+// contents are valid for their key. A job that is running watches the
+// token too (M16): between graph nodes, sampling slices, and before and
+// after meshing; when cancelled it stops and sets `cancelled`, so its
+// volume stays stale and nothing is cached.
 
 #include <atomic>
 #include <cstddef>

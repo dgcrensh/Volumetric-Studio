@@ -96,6 +96,20 @@ std::optional<proc::Graph> graph_of(const model::Document& document, const Id& v
 Command bake_volume(Id volume, mesh::Mesh mesh);
 Command unbake_volume(Id volume);
 
+// --- swapping contents (M16) -------------------------------------------------------------------
+
+// What a volume's contents can be swapped to.
+enum class ContentsKind { Placeholder, Parametric, Procedural, Baked };
+std::string_view to_string(ContentsKind kind);
+// The kind a volume's contents are now (nullopt: a keep-out, or imported
+// static contents, which aren't any of these).
+std::optional<ContentsKind> contents_kind(const model::Volume& volume);
+// Swaps one volume's contents and nothing else: to a placeholder; to empty
+// modelled contents; to a procedure (a baked volume's own graph back, else
+// the starter graph); or baked (`baked_mesh`: the procedure's current
+// mesh, required). Swapping to the kind it already is changes nothing.
+Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> baked_mesh = std::nullopt);
+
 // --- connection surfaces, keep-out regions, links -----------------------------------------------
 
 Command add_connection(model::ConnectionSurface surface);

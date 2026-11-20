@@ -560,6 +560,28 @@ bool SketchEditor::rename(const Id& id, std::string name) {
   return true;
 }
 
+core::Diagnostics SketchEditor::drag_dimension(const Id& constraint, double value, bool record_step) {
+  core::Diagnostics d;
+  auto* c = sketch_.find_constraint(constraint);
+  if (c == nullptr || !c->dimension) {
+    d.add(core::Diagnostic::error("app.sketch.not_dimension", "That constraint has no dimension."));
+    return d;
+  }
+  if (!c->dimension->expression.empty()) {
+    d.add(core::Diagnostic::error(
+        "app.sketch.dimension_driven",
+        "'" + sketch_.label(constraint) + "' is driven by '" + c->dimension->expression +
+            "'; change that instead (or type a number to drive it by hand)."));
+    return d;
+  }
+  if (record_step || undo_.empty()) record();
+  c = sketch_.find_constraint(constraint);
+  c->dimension->value = value;
+  solve();
+  changed_ = true;
+  return d;
+}
+
 bool SketchEditor::drag(const Id& point, dvec2 target, bool record_step) {
   if (!sketch_.point(point)) return false;
   if (record_step || undo_.empty()) record();

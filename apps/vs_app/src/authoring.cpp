@@ -408,6 +408,57 @@ Command unbake_volume(Id volume) {
   return {"Unbake", [volume](model::Project& p) -> Diagnostics { return proc::unbake(p, volume); }};
 }
 
+// --- swapping contents (M16) ------------------------------------------------------------------
+
+std::string_view to_string(ContentsKind kind) {
+  switch (kind) {
+    case ContentsKind::Placeholder: return "placeholder";
+    case ContentsKind::Parametric: return "modelled";
+    case ContentsKind::Procedural: return "procedural";
+    case ContentsKind::Baked: return "baked";
+  }
+  return "?";
+}
+
+std::optional<ContentsKind> contents_kind(const model::Volume& v) {
+  if (v.keep_out) return std::nullopt;
+  if (proc::is_baked(v)) return ContentsKind::Baked;
+  if (v.tree() != nullptr) return ContentsKind::Parametric;
+  if (v.kind() == model::VolumeKind::Procedural) return ContentsKind::Procedural;
+  if (v.contents_empty()) return ContentsKind::Placeholder;
+  return std::nullopt;  // imported static contents
+}
+
+Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> baked_mesh) {
+  std::string label = fmt::format("Swap contents to {}", to_string(kind));
+  return {std::move(label), [volume, kind, baked_mesh = std::move(baked_mesh)](model::Project& p) -> Diagnostics {
+            model::Volume* v = p.document.find_volume(volume);
+            if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            if (v->keep_out) return error("app.edit.keep_out_contents", "A keep-out has no contents.");
+            const auto now = contents_kind(*v);
+            if (now == kind) return {};
+            switch (kind) {
+              case ContentsKind::Placeholder: v->contents = model::StaticContents{}; return {};
+              case ContentsKind::Parametric: v->contents = model::ParametricContents{}; return {};
+              case ContentsKind::Procedural:
+                if (now == ContentsKind::Baked) return proc::unbake(p, volume);
+                v->contents = model::ProceduralContents{proc::to_json(starter_graph())};
+                return {};
+              case ContentsKind::Baked:
+                if (now != ContentsKind::Procedural) {
+                  return error("app.swap.not_procedural", fmt::format("Only a procedural volume can be baked; '{}' "
+                                                                      "isn't one.", v->name));
+                }
+                if (!baked_mesh) {
+                  return error("app.bake.not_generated",
+                               fmt::format("Wait for '{}' to finish generating before baking it.", v->name));
+                }
+                return proc::bake(p, volume, *baked_mesh);
+            }
+            return {};
+          }};
+}
+
 // --- connection surfaces, keep-outs, links --------------------------------------------------
 
 Command add_connection(model::ConnectionSurface surface) {
