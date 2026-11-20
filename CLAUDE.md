@@ -179,7 +179,11 @@ so they are registered. A new library must also be added to
 - **Exchange.** STEP (AP242, mm) and IGES go through `exchange.hpp`; calls
   are serialised because OCCT's exchange layer has global state.
   `write_brep()` / `read_brep()` (OCCT's own text, no triangulations) and
-  `shape_hash()` serve M9's cache keys and disk cache.
+  `shape_hash()` serve M9's cache keys and disk cache. Since M17,
+  `write_step(parts, path, name)` writes an assembly of named parts
+  (XDE) and `read_step_parts()` reads it back; `mesh_shape()` is a
+  surface-less face carrying triangles, written as AP242 tessellated
+  geometry (decision 0017).
 - **Tessellation** (`tessellate.hpp`, M8) runs BRepMesh on a copy and
   returns plain data: vertices, each edge's division, each face's wires
   and triangulation with where every point sits (inside, vertex, k-th edge
@@ -269,7 +273,9 @@ so they are registered. A new library must also be added to
   `build_contents()` per volume, which only reads the layout and may run
   on several threads; vs_eval calls the halves itself.
 - **Files.** `.vsproj` is a folder or a zip of `project.json` plus
-  `blobs/<hash>.<ext>` (`project.hpp`, decision 0005). Zips go through the
+  `blobs/<hash>.<ext>` (`project.hpp`, decision 0005), and optional
+  `cache/` files (`save_project(..., &cache)`, `load_project_cache()`;
+  never hashed, in zips too since M17). Zips go through the
   vendored miniz (deflated, zero timestamps, decision 0006). Loading checks
   blob hashes and runs `check()` (`load_project(path, false)` skips it, for
   validation). `content_hash()` hashes the document's
@@ -373,7 +379,10 @@ so they are registered. A new library must also be added to
   content definition, the boundary's exact shape and named faces, joining
   surfaces, parameters, seed and measured outputs; static keys leave
   parameters and seed out. Memory always; disk (`cache/<key>.brep` and
-  `.json`) for clean B-rep contents only. `measure.hpp` measures outputs
+  `.json`) for clean B-rep contents, and since M17 `.mesh` for meshes;
+  `encode_entry()` / `insert_files()` move entries in and out of a
+  project's `cache/` (`project_cache_files()` skips parametric contents,
+  whose rebuild lives in memory). `measure.hpp` measures outputs
   of meshes too (public since M12, for vs_proc). `vstudio-cli rebuild
   --cache` uses a folder project's `cache/`.
 - **Determinism** (`thread_pool.hpp`): `run()`, `parallel_for()` and
@@ -474,7 +483,8 @@ so they are registered. A new library must also be added to
   welded mesh; `templates`, `inspect <project> <volume> <node>
   [--preview]`, `bake` / `unbake <project> <volume> [--out <path>]` and
   `bench-gyroid [--size mm] [--cell mm] [--threads N] [--3mf out]` (the
-  CPU baseline) cover M12.
+  CPU baseline) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
+  block out, fill, iterate, swap and ship end to end.
 
 ## vs_app essentials
 
@@ -535,6 +545,15 @@ so they are registered. A new library must also be added to
   set_pick_mode()`, `pick_at()` (clicking again in place picks what's
   behind), `project()` and `look_along()`; feature dialogs' Pick buttons
   (`FeatureDialog::begin_pick()`, `apply_pick()`).
+- **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
+  `check_for_export()`: `validate()`, the shown evaluation's volume
+  diagnostics, volumes not current, and the weld; Model > Validate and every
+  export run it first (errors stop, warnings ask). `MainWindow::validate()`,
+  `export_step_to()`, `import_file()` (a new static volume) and
+  `save_to()` (with the shown evaluation's caches while File > Save Caches
+  With Project is on) are the entry points tests drive; `Session::open()`
+  loads a project's caches into the engine. The GUI walk of the five
+  workflows is `docs/manual-tests/mvp-workflows.md`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

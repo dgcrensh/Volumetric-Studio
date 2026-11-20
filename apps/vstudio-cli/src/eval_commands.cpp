@@ -13,6 +13,7 @@
 
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
+#include "vs/eval/step_export.hpp"
 #include "vs/mesh/io.hpp"
 #include "vs/model/project.hpp"
 #include "vs/proc/generator.hpp"
@@ -89,12 +90,15 @@ void print(const eval::Evaluation& ev, double ms, std::ostream& out) {
 int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   constexpr std::string_view kUsage =
       "usage: vstudio-cli rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] "
-      "[--stl <out.stl>] [--cache] [--set <volume>.<parameter>=<value>]... [--twice]\n";
+      "[--stl <out.stl>] [--step <out.step> [--procedural-boundary]] [--cache] "
+      "[--set <volume>.<parameter>=<value>]... [--twice]\n";
   std::optional<std::string_view> project_arg;
   eval::EngineOptions engine_options;
   eval::EvaluateOptions options;
   bool cache = false, twice = false;
   std::optional<std::string_view> stl;
+  std::optional<std::string_view> step;
+  eval::StepExportOptions step_options;
   std::vector<std::string_view> sets;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const auto a = args[i];
@@ -113,6 +117,10 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
     } else if (a == "--stl" && i + 1 < args.size()) {
       stl = args[++i];
       options.weld = true;
+    } else if (a == "--step" && i + 1 < args.size()) {
+      step = args[++i];
+    } else if (a == "--procedural-boundary") {
+      step_options.procedural = eval::ProceduralAs::Boundary;
     } else if (a == "--cache") {
       cache = true;
     } else if (a == "--twice") {
@@ -189,6 +197,13 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
       }
       if (!f) return err << "vstudio-cli: can't write " << *stl << "\n", 1;
       out << fmt::format("wrote       {} (STL, {} bytes)\n", *stl, bytes->size());
+    }
+    if (step && run + 1 == (twice ? 2 : 1) && !errors) {
+      const auto r = eval::export_step(ev, to_path(*step), step_options);
+      for (const auto& d : r.diagnostics) out << "  " << d.to_string() << "\n";
+      if (!r.ok()) return 1;
+      out << fmt::format("wrote       {} (STEP, {} parts: {} B-rep, {} mesh, {} boundary)\n", *step,
+                         r.parts.size(), r.breps, r.meshes, r.boundaries);
     }
   }
   out << "result      " << (errors ? "errors" : "ok") << "\n";
