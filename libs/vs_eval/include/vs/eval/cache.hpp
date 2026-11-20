@@ -27,11 +27,17 @@
 //
 // The cache holds generated contents by key. In memory it holds everything
 // it is given; on disk (optional, a directory such as a folder project's
-// cache/) it holds B-rep contents that generated cleanly, as
-// "<key>.brep" (kernel::write_brep) plus "<key>.json" (status, outputs,
-// diagnostics, output hash). Disk entries are never needed: a missing,
-// unreadable or foreign-engine entry is a miss. The feature rebuild result
-// of a parametric volume is kept in memory only.
+// cache/) it holds contents that generated cleanly, as "<key>.brep"
+// (kernel::write_brep) or, since M17, "<key>.mesh" (FP32 positions, seam
+// vertex ids, indices and triangle volumes, bit for bit), plus
+// "<key>.json" (status, outputs, diagnostics, output hash). Disk entries
+// are never needed: a missing, unreadable or foreign-engine entry is a
+// miss. The feature rebuild result of a parametric volume and a
+// generator's extra contents are kept in memory only.
+//
+// The same files travel inside a project (M17, model::CacheFiles):
+// encode_entry() writes one entry's files, insert_files() reads every entry
+// in a set of files into memory.
 
 #include <cstddef>
 #include <filesystem>
@@ -47,6 +53,7 @@
 #include "vs/mesh/mesh.hpp"
 #include "vs/model/build.hpp"
 #include "vs/model/document.hpp"
+#include "vs/model/project.hpp"
 
 namespace vs::eval {
 
@@ -105,8 +112,12 @@ class ContentsCache {
   // From memory, else from disk (then kept in memory). `from_disk`, when
   // given, says which.
   [[nodiscard]] ContentsPtr find(const Hash256& key, bool* from_disk = nullptr);
-  // Keeps `contents` in memory, and on disk when it is clean B-rep contents.
+  // Keeps `contents` in memory, and on disk when cacheable() (below).
   void insert(const ContentsPtr& contents);
+  // Reads every entry in `files` (encode_entry()'s) into memory, skipping
+  // damaged, foreign-engine and already held ones. Returns how many it
+  // added.
+  std::size_t insert_files(const model::CacheFiles& files);
   void clear_memory();
   [[nodiscard]] std::size_t memory_size() const;
   [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
@@ -116,6 +127,15 @@ class ContentsCache {
   std::map<Hash256, ContentsPtr> memory_;
   std::filesystem::path directory_;
 };
+
+// Contents that can be stored as files: they generated cleanly (Current,
+// not cancelled) into a solid or a mesh.
+bool cacheable(const GeneratedContents& contents);
+// Adds `contents`' files to `files` ("<key>.json" and "<key>.brep" or
+// "<key>.mesh"); false (nothing added) when it isn't cacheable().
+bool encode_entry(const GeneratedContents& contents, model::CacheFiles& files);
+// The entry for `key` in `files`, or null when it is missing or unusable.
+ContentsPtr decode_entry(const model::CacheFiles& files, const Hash256& key);
 
 // The output hash of contents (see GeneratedContents::output_hash).
 Hash256 output_hash(model::VolumeStatus status, const kernel::Solid& solid,

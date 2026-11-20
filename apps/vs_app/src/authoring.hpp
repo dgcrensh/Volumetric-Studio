@@ -76,6 +76,10 @@ Command make_placeholder(Id volume);
 // Imports a file as the volume's static contents (vs_eval import.hpp).
 Command import_contents(Id volume, std::vector<std::byte> file, std::string format,
                         core::ProductSettings settings);
+// Imports a file as a new static volume boxed by its bounds (M17,
+// vs_eval import_volume()), named `name`.
+Command import_volume(std::vector<std::byte> file, std::string format, std::string name,
+                      core::ProductSettings settings);
 
 // --- procedural contents (M15) ---------------------------------------------------------------
 

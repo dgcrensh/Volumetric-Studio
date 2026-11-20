@@ -205,6 +205,14 @@ class Engine {
   std::map<model::VolumeKind, std::shared_ptr<ContentsGenerator>> generators_;
 };
 
+// A project's caches (M17, model::CacheFiles): the files of every volume's
+// current contents in `evaluation` that are cacheable(), except parametric
+// contents, whose rebuild result (named faces for the app's references and
+// picking) lives in memory only, so they rebuild on load instead. Load them
+// with `engine.cache().insert_files()` before the first evaluation: keys
+// that still match are hits, the rest (stale) are never looked up.
+model::CacheFiles project_cache_files(const Evaluation& evaluation);
+
 // The determinism check on its own: evaluates `project` with fresh engines
 // of each thread count (no cache shared) and returns their output hashes.
 std::vector<Hash256> output_hashes_by_threads(const model::Project& project,

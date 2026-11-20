@@ -68,6 +68,8 @@
 #include "picking.hpp"
 #include "outline.hpp"
 #include "session.hpp"
+#include "ship.hpp"
+#include "vs/eval/step_export.hpp"
 #include "widgets.hpp"
 
 class QAction;
@@ -124,6 +126,25 @@ class MainWindow : public QMainWindow {
   // on the UI thread after the file is written (when it could be).
   void export_to(const std::filesystem::path& path, ExportFormat format,
                  std::function<void(const ExportResult&)> done = {});
+
+  // --- shipping (M17). File > Export runs the same check first.
+  // Model > Validate: every check (ship.hpp) against what is shown, on the
+  // worker thread; the diagnostics list shows the result and done gets
+  // it on the UI thread. Without done (the menu) a summary dialog opens.
+  void validate(std::function<void(const ShipCheck&)> done = {});
+  [[nodiscard]] const std::optional<ShipCheck>& last_check() const { return last_check_; }
+  // Writes what is shown as STEP (eval::export_step()), on the worker.
+  void export_step_to(const std::filesystem::path& path, const eval::StepExportOptions& options,
+                      std::function<void(const eval::StepExport&)> done = {});
+  // File > Import: a STEP, IGES, STL, 3MF or OBJ file as a new static
+  // volume named after the file, boxed by its bounds (one undoable step).
+  core::Diagnostics import_file(const std::filesystem::path& path);
+  // Saves the project to path (a folder when it is one, else a zip), with
+  // the shown evaluation's caches when save_caches() is on.
+  core::Diagnostics save_to(const std::filesystem::path& path);
+  // File > Save Caches With Project (kept between runs; on by default).
+  [[nodiscard]] bool save_caches() const;
+  void set_save_caches(bool on);
 
   // Clicks the diagnostics list's row `row`, as the user would.
   void activate_diagnostic(int row);
@@ -256,7 +277,11 @@ class MainWindow : public QMainWindow {
   void save();
   void save_as();
   void export_dialog(ExportFormat format);
-  void validate();
+  void export_step_dialog();
+  void import_dialog();
+  // Validates, then runs `go` unless errors stop it (shown in a dialog);
+  // warnings ask first.
+  void check_then(const QString& what, std::function<void()> go);
   void report(const core::Diagnostics& diagnostics, const QString& what);
   void show_project();  // the history's current project, to the session
 
@@ -292,6 +317,8 @@ class MainWindow : public QMainWindow {
   QLabel* frame_label_ = nullptr;
   QTimer* state_timer_ = nullptr;
   QAction* cancel_action_ = nullptr;
+  QAction* save_caches_action_ = nullptr;
+  std::optional<ShipCheck> last_check_;
   QAction* undo_action_ = nullptr;
   QAction* redo_action_ = nullptr;
   QAction* leave_context_action_ = nullptr;

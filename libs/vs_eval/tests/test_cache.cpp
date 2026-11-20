@@ -132,3 +132,81 @@ TEST_CASE("The disk cache serves a second engine", "[eval][cache]") {
     CHECK(c.output_hash() == a.output_hash());
   }
 }
+
+// --- project caches (M17) -----------------------------------------------------------
+
+TEST_CASE("Mesh contents round-trip through cache files bit for bit", "[eval][cache]") {
+  auto contents = std::make_shared<eval::GeneratedContents>();
+  contents->key = core::blake3_of_bytes(std::span<const std::byte>{});
+  mesh::Mesh m;
+  const core::Id volume = core::Id::random();
+  const core::Id seam = core::Id::random();
+  m.add_vertex({0.1f, 0.2f, 0.3f}, seam);
+  m.add_vertex({1.0f / 3.0f, 0, 0});
+  m.add_vertex({0, 7.25f, -1e-7f});
+  m.add_triangle(0, 1, 2, volume);
+  contents->mesh = m;
+  contents->output_hash = core::blake3_of_bytes(std::span<const std::byte>{});
+  model::OutputResult o;
+  o.output = core::Id::random();
+  o.value = 12.5;
+  contents->outputs.push_back(o);
+  contents->diagnostics.add(core::Diagnostic::warning("proc.mesh.seam_uncovered", "a warning"));
+
+  model::CacheFiles files;
+  REQUIRE(eval::encode_entry(*contents, files));
+  CHECK(files.size() == 2);
+  const auto back = eval::decode_entry(files, contents->key);
+  REQUIRE(back);
+  REQUIRE(back->mesh);
+  CHECK(*back->mesh == m);
+  CHECK(back->output_hash == contents->output_hash);
+  CHECK(std::get<double>(*back->outputs.at(0).value) == 12.5);
+  CHECK(back->diagnostics.items().at(0).code == "proc.mesh.seam_uncovered");
+
+  SECTION("a damaged mesh is a miss") {
+    auto& bytes = files.at(contents->key.to_hex() + ".mesh");
+    bytes.resize(bytes.size() - 1);
+    CHECK_FALSE(eval::decode_entry(files, contents->key));
+  }
+  SECTION("failed contents aren't stored") {
+    auto failed = std::make_shared<eval::GeneratedContents>(*contents);
+    failed->status = model::VolumeStatus::Failed;
+    model::CacheFiles none;
+    CHECK_FALSE(eval::encode_entry(*failed, none));
+    CHECK(none.empty());
+  }
+}
+
+TEST_CASE("Project caches let a new engine skip what still matches", "[eval][cache]") {
+  auto b = bracket::make_bracket();
+  eval::EngineOptions eo;
+  eo.threads = 2;
+  eval::Engine first(kSettings, eo);
+  const auto a = first.evaluate(b.project);
+  REQUIRE(a.ok());
+
+  // The Upright (static STEP) is stored; the Base (parametric) rebuilds.
+  const model::CacheFiles files = eval::project_cache_files(a);
+  CHECK(files.size() == 2);
+  CHECK(files.contains(a.find(b.upright)->key->to_hex() + ".json"));
+
+  eval::Engine second(kSettings, eo);
+  CHECK(second.cache().insert_files(files) == 1);
+  const auto c = second.evaluate(b.project);
+  REQUIRE(c.ok());
+  CHECK(c.find(b.upright)->from_cache);
+  CHECK_FALSE(c.find(b.base)->from_cache);
+  CHECK(c.output_hash() == a.output_hash());
+
+  SECTION("stale entries are simply not used") {
+    // A taller Upright: its boundary and so its key change, so the stored
+    // entry is never found and the file is read again.
+    eval::Engine third(kSettings, eo);
+    third.cache().insert_files(files);
+    REQUIRE_FALSE(b.project.document.layout.variables().set_expression(b.upright_h, "41 mm").has_errors());
+    const auto d = third.evaluate(b.project);
+    CHECK_FALSE(d.find(b.upright)->from_cache);
+    CHECK(d.find(b.upright)->key != a.find(b.upright)->key);
+  }
+}

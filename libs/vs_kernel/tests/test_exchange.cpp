@@ -100,3 +100,68 @@ TEST_CASE("exchange failures are diagnostics", "[kernel][exchange]") {
             .with_code("kernel.step.write_failed")
             .size() == 1);
 }
+
+// --- named parts and mesh shapes (M17) ---------------------------------------------
+
+namespace {
+// A closed tetrahedron, wound counter-clockwise from outside.
+struct Tetra {
+  std::vector<vs::core::fvec3> positions{{0, 0, 0}, {10, 0, 0}, {0, 10, 0}, {0, 0, 10}};
+  std::vector<std::uint32_t> indices{0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3};
+};
+}  // namespace
+
+TEST_CASE("mesh shapes keep their triangles and reject bad input", "[kernel][exchange]") {
+  const Tetra t;
+  const auto shape = mesh_shape(t.positions, t.indices);
+  REQUIRE(shape.ok());
+  CHECK(shape->kind() == ShapeKind::Face);
+  CHECK(stored_triangle_count(*shape) == 4);
+
+  const std::vector<std::uint32_t> out_of_range{0, 1, 4};
+  CHECK(mesh_shape(t.positions, out_of_range).error().code == "kernel.mesh.invalid");
+  const std::vector<std::uint32_t> partial{0, 1};
+  CHECK(mesh_shape(t.positions, partial).error().code == "kernel.mesh.invalid");
+  std::vector<vs::core::fvec3> nan = t.positions;
+  nan[1].x = std::nanf("");
+  CHECK(mesh_shape(nan, t.indices).error().code == "kernel.mesh.invalid");
+}
+
+TEST_CASE("STEP parts keep their names, B-rep solids and mesh triangles", "[kernel][exchange]") {
+  const TempDir dir;
+  const fs::path file = dir.path / "parts.step";
+  const auto box = make_box(vs::core::dbox3::from_min_max({0, 0, 0}, {20, 10, 5}), kSettings);
+  REQUIRE(box.ok());
+  const Tetra t;
+  const auto tetra = mesh_shape(t.positions, t.indices);
+  REQUIRE(tetra.ok());
+
+  // A name beyond ASCII, on purpose.
+  const std::vector<NamedShape> parts{{"Base", *box}, {"Infill \xC3\xBC", *tetra}};
+  const Diagnostics written = write_step(parts, file, "Bracket");
+  INFO((written.empty() ? std::string() : written.items().front().message));
+  REQUIRE(written.empty());
+  const std::string text = read_text(file);
+  CHECK(text.find("AP242") != std::string::npos);
+  // The mesh goes out as tessellated geometry, not as B-rep faces.
+  CHECK(text.find("TESSELLATED_SHAPE_REPRESENTATION") != std::string::npos);
+
+  const auto back = read_step_parts(file);
+  REQUIRE(back.ok());
+  REQUIRE(back->size() == 2);
+  CHECK((*back)[0].name == "Base");
+  CHECK((*back)[1].name == "Infill \xC3\xBC");
+  const auto solid = Solid::from((*back)[0].shape);
+  REQUIRE(solid.ok());
+  CHECK(mass_properties(*solid)->volume == Approx(1000.0).epsilon(1e-9));
+  CHECK(stored_triangle_count((*back)[1].shape) == 4);
+}
+
+TEST_CASE("writing no parts, or an empty one, is refused", "[kernel][exchange]") {
+  const TempDir dir;
+  const std::vector<NamedShape> none;
+  CHECK(write_step(none, dir.path / "none.step", "A").items().front().code == "kernel.step.empty_shape");
+  const std::vector<NamedShape> empty{{"Empty", Shape{}}};
+  CHECK(write_step(empty, dir.path / "empty.step", "A").items().front().code == "kernel.step.empty_shape");
+  CHECK(read_step_parts(dir.path / "missing.step").error().code == "kernel.step.not_found");
+}
