@@ -121,7 +121,7 @@ struct EngineOptions {
   // Generate every regenerating volume twice and compare (debug).
   bool check_determinism = false;
   // Where to keep the on-disk cache; empty: memory only.
-  std::filesystem::path disk_cache;
+  std::filesystem::path disk_cache{};
 };
 
 struct EvaluateOptions {
