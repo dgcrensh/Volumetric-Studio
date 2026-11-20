@@ -270,6 +270,9 @@ struct ConnectionDialog::Widgets {
   RefPicker<Id> sketch;
   RefPicker<feature::PlaneRef> plane;
   ParamEdit *u = nullptr, *v = nullptr, *width = nullptr, *height = nullptr;
+  RefPicker<feature::AxisRef> axis;
+  ParamEdit *radius = nullptr, *arc_start = nullptr, *sweep = nullptr, *along = nullptr,
+            *length = nullptr;
   RefPicker<Id> first, second;
   QComboBox* type = nullptr;
   ParamEdit* gap = nullptr;
@@ -299,7 +302,8 @@ ConnectionDialog::ConnectionDialog(const model::ConnectionSurface& surface, cons
   watch(w.name);
 
   w.patch_kind = new QComboBox;
-  w.patch_kind->addItems({tr("A layout sketch's profile"), tr("A rectangle on a layout plane")});
+  w.patch_kind->addItems({tr("A layout sketch's profile"), tr("A rectangle on a layout plane"),
+                          tr("Part of a cylinder round a layout axis")});
   f->addRow(tr("Patch"), w.patch_kind);
   watch(w.patch_kind);
   auto* patch_pages = pages_for(w.patch_kind, f);
@@ -320,6 +324,18 @@ ConnectionDialog::ConnectionDialog(const model::ConnectionSurface& surface, cons
     w.v = param(p, tr("Centre v"), ParamUnit::Length);
     w.width = param(p, tr("Width"), ParamUnit::Length);
     w.height = param(p, tr("Height"), ParamUnit::Length);
+  }
+  {
+    auto* p = add_page(patch_pages);
+    auto* box = new QComboBox;
+    p->addRow(tr("Axis"), box);
+    w.axis = RefPicker<feature::AxisRef>(box, layout.axes);
+    watch(box);
+    w.radius = param(p, tr("Radius"), ParamUnit::Length);
+    w.arc_start = param(p, tr("Start angle"), ParamUnit::Angle);
+    w.sweep = param(p, tr("Sweep (a full turn: a band)"), ParamUnit::Angle);
+    w.along = param(p, tr("Start along the axis"), ParamUnit::Length);
+    w.length = param(p, tr("Length"), ParamUnit::Length);
   }
 
   auto* first = new QComboBox;
@@ -399,6 +415,17 @@ void ConnectionDialog::set_value(const model::ConnectionSurface& s) {
   w.v->set_param(rect.v);
   w.width->set_param(rect.width);
   w.height->set_param(rect.height);
+  const auto* cp = std::get_if<model::CylinderPatch>(&s.geometry);
+  const model::CylinderPatch cyl = cp != nullptr ? *cp : model::CylinderPatch{};
+  if (cp != nullptr) {
+    w.patch_kind->setCurrentIndex(2);
+    w.axis.set(cp->axis);
+  }
+  w.radius->set_param(cyl.radius);
+  w.arc_start->set_param(cyl.start_angle);
+  w.sweep->set_param(cyl.sweep);
+  w.along->set_param(cyl.start);
+  w.length->set_param(cyl.length);
   if (!s.volumes.empty()) w.first.set(s.volumes[0]);
   if (s.volumes.size() > 1) {
     w.second.set(s.volumes[1]);
@@ -436,6 +463,9 @@ model::ConnectionSurface ConnectionDialog::value() const {
   s.name = sstr(w.name->text().trimmed());
   if (w.patch_kind->currentIndex() == 0) {
     s.geometry = model::SketchPatch{w.sketch.get().value_or(Id{})};
+  } else if (w.patch_kind->currentIndex() == 2) {
+    s.geometry = model::CylinderPatch{w.axis.get().value_or(feature::PrincipalAxis::Z), p(w.radius),
+                                      p(w.arc_start), p(w.sweep), p(w.along), p(w.length)};
   } else {
     s.geometry = model::DatumPatch{w.plane.get().value_or(feature::PrincipalPlane::XY), p(w.u), p(w.v),
                                    p(w.width), p(w.height)};
@@ -468,6 +498,10 @@ bool ConnectionDialog::complete() const {
   const auto& w = *w_;
   if (w.name->text().trimmed().isEmpty() || !w.first.get()) return false;
   if (w.patch_kind->currentIndex() == 0) return w.sketch.get().has_value();
+  if (w.patch_kind->currentIndex() == 2) {
+    return w.axis.get() && w.radius->param() && w.arc_start->param() && w.sweep->param() &&
+           w.along->param() && w.length->param();
+  }
   return w.plane.get() && w.u->param() && w.v->param() && w.width->param() && w.height->param();
 }
 

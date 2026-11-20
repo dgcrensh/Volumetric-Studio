@@ -26,6 +26,15 @@
 //      the boundary), constrained Delaunay. Faces whose edges are as
 //      BRepMesh divided them keep BRepMesh's triangles.
 //
+// Curved seams (L2, decision 0020) go another way for step 3: the kernel
+// first imprints each curved patch on the solid, so the patch is faces of
+// its own; cylindrical faces on the seam's cylinder lying wholly inside the
+// patch are dropped and, once their area is the patch's, the seam's
+// triangles take their place, facing out of the material. What the patch
+// leaves of such a face goes through step 4, with a lattice of points at
+// the seam's spacing inside it. Steps 1 and 2 work through the seam's
+// surface (Seam::offset(), to_uv(), to_model()) for both kinds.
+//
 // Points are shared structurally: one mesh vertex per B-rep vertex, per
 // point of an edge's division and per seam vertex, so the mesh is closed
 // by construction; analyse() confirms it. Seam vertices carry their ids

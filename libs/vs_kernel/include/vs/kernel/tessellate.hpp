@@ -9,6 +9,7 @@
 //
 // tessellate() first merges faces and edges lying on the same surface or
 // curve (so a face split by a boolean along a line comes back whole),
+// splits faces along the outlines of any `imprints` lying on them (L2),
 // copies the shape (meshing attaches triangulations to the shape, and
 // handles are immutable and may be shared between threads), then runs
 // BRepMesh with `params`. The result describes:

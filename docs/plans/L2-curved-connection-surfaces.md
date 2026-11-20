@@ -2,7 +2,14 @@
 
 Nov 20, 2026 · follows L1b · decision record: `docs/decisions/0020-curved-connection-surfaces.md`
 
-**Status: planned.**
+**Status: built.** As below, with three differences found while building it
+(decision 0020 has the details): the derived spacing is `sqrt(8 r δ) / 1.5`,
+because the triangulation's edges run up to about 1.5 spacings round the
+axis; what an imprinted patch leaves of a cylinder's face gets a lattice of
+points at the seam's spacing, because BRepMesh puts none inside a cylinder;
+and containment gives triangles touching a curved seam a centroid slack of
+twice the seam deflection rather than skipping only the seam's own
+triangles, because the strip triangles next to them sag too.
 
 ## Goal
 
