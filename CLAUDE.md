@@ -302,6 +302,21 @@ so they are registered. A new library must also be added to
   add children's `ContentsMeasure`s up (Volume, Mass, Centre of gravity,
   Envelope only). Tests: `tests/nested.*` (root → Housing → Left → Core
   and Cap, plus Right and Base), shared by every suite.
+- **Generated children** (L4, decision 0022, `generated.hpp`): a
+  composite may have a `generator` (vs_proc graph JSON) and `templates`
+  (`ChildTemplate`: static, parametric or procedural contents, parameters,
+  outputs, `origin`), both written to JSON only when set. A
+  `GeneratedLayout` (boxes, joins on axis-aligned planes, delegations) is
+  written into a copy of the document by `expand()`: datum points and
+  planes in the composite's layout, children with `Volume::generated`
+  appended after every authored volume, ids derived from the composite
+  and the generator's keys. A copy of a parametric template carries
+  `contents_offset` (box min minus `origin`): `build_contents()` rebuilds
+  it with inputs moved back and moves the result. Generated volumes live
+  only in evaluated documents; their names needn't be distinct.
+  `model.composite.generated_link` refuses links from outside into a
+  generating composite's inputs. Tests: `tests/rack.*` (Base and a Rack
+  with a Cell template and a Seat), shared by the suites.
 
 ## vs_validate essentials
 
@@ -410,6 +425,15 @@ so they are registered. A new library must also be added to
   its definition and their keys, and outputs adding their measures up.
   `combine()`, 3MF and STEP take leaves only; STEP parts of children are
   named by path ("Housing / Left / Core").
+- **Generated children** (L4): when a composite has a generator,
+  `evaluate()` builds the layout once after `check()`, asks the
+  `LayoutGenerator` (`set_layout_generator()`; `proc::install()` sets it)
+  per generating composite, caches the outcome by the composite's key,
+  `model::expand()`s and re-`check()`s, then runs as L3 on the expanded
+  document (`Evaluation::document` and `volumes` include the children). A
+  failed generator or refused expansion fails the composite (Stale with no
+  generator installed); children failing a layout check fail it too
+  (`eval.generated.layout`). `stats.layouts_generated` counts runs.
 - **States.** Current; Failed (generation or containment failed, or the
   boundary or a parameter: shows its last valid contents as
   `stale_contents`, blocks only its dependants, which get `eval.blocked`);
@@ -516,6 +540,17 @@ so they are registered. A new library must also be added to
 - **Outputs**: the generator measures the mesh (`eval::measure_mesh()`)
   and fills `Published` outputs from `output.publish` nodes
   (`proc.output.unpublished` when missing).
+- **Children** (L4, decision 0022, `src/nodes_children.cpp`): port type
+  `Children` (a `model::GeneratedLayout`); `children.grid` (the boundary
+  box in cells, neighbours joined bonded / clearance / none, patches inset
+  by `margin`), `children.at_frames` (boxes at frames), `children.merge`,
+  `children.delegate` (a joining surface to the child with a face on it),
+  each child from a `template` property and optionally `values` for a
+  template `parameter`; `output.children` ends a composite's generator.
+  `check_volume_graph()` adds `proc.graph.output_kind` (the wrong output
+  for the volume) and `proc.reference.template`. `ProceduralGenerator` is
+  also the engine's `LayoutGenerator`. `test_children.cpp` covers nodes,
+  checks, the engine, failures and welds.
 - **Inspection** (`inspect.hpp`): `inspect_node()` / `inspect_volume_node()`
   evaluate one node and its ancestors (`EvaluateGraphOptions::only_for`),
   so unfinished graphs inspect; `preview()` makes a coarse mesh, points
@@ -640,6 +675,16 @@ so they are registered. A new library must also be added to
   `Viewport::set_context(..., inside)`). `set_delegation()` /
   `MainWindow::set_met_by()` is the surface menu's "Met inside ... by";
   deleting a composite deletes everything inside it.
+- **Generated children** (L4, decision 0022): rows from the evaluated
+  document, so generated children nest under their composite
+  (`VolumeRow::generated`, "Generated Parametric"); they are read-only
+  (`MainWindow::is_generated()`, edit in context refused; their menu opens
+  the composite's generator). `set_graph()` / `graph_of()` work on a
+  composite's generator (`starter_generator()`, Generate children / Edit
+  generator / Stop generating children), the node form lists the
+  composite's templates, a Children value previews as boxes, and
+  `make_template()` / `MainWindow::make_template_of()` turns an authored
+  child into a template (keeping its id; origin from its built box).
 - **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
   `check_for_export()`: `validate()`, the shown evaluation's volume
   diagnostics, volumes not current, and the weld; Model > Validate and every

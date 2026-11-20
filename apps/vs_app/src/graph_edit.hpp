@@ -50,6 +50,7 @@ struct GraphContext {
     model::ConnectionType type = model::ConnectionType::Bonded;
   };
   std::vector<Surface> surfaces;
+  std::vector<std::string> templates;  // L4: a composite's, by name
 };
 GraphContext graph_context(const model::Document& document, const Id& volume);
 

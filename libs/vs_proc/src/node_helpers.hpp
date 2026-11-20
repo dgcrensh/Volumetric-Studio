@@ -90,5 +90,6 @@ inline bool check_count(NodeContext& ctx, std::string_view port, double v, doubl
 void add_infill_nodes(NodeRegistry& r);
 void add_frame_nodes(NodeRegistry& r);
 void add_mesh_nodes(NodeRegistry& r);
+void add_children_nodes(NodeRegistry& r);  // L4, nodes_children.cpp
 
 }  // namespace vs::proc::detail

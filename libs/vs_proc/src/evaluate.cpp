@@ -75,6 +75,7 @@ Value empty_value(PortType type) {
     case PortType::Frames: return Frames{};
     case PortType::Curves: return Curves{};
     case PortType::List: return List{};
+    case PortType::Children: return Children{};
   }
   return 0.0;
 }
@@ -245,6 +246,7 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       const Setting* name = node.find_setting("name");
       if (name != nullptr) ev.published[std::get<std::string>(*name)] = std::get<double>(in.at(0));
     }
+    if (node.type == "output.children") ev.children = std::get<Children>(in.at(0));
     if (node.type == "output") {
       ev.contents = std::get<Field>(in.at(0));
       const Setting* cell = node.find_setting("cell_size");

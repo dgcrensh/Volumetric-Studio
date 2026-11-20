@@ -154,6 +154,7 @@ std::vector<VolumeRow> volume_rows(const eval::Evaluation& evaluation,
     row.kind = v.kind();
     row.keep_out = v.keep_out;
     row.placeholder = v.contents_empty();
+    row.generated = v.generated;
     if (const auto* r = evaluation.find(v.id)) {
       row.status = r->status;
       row.stale_contents = r->stale_contents;
@@ -191,7 +192,14 @@ std::vector<SurfaceRow> surface_rows(const eval::Evaluation& evaluation) {
   return rows;
 }
 
+std::string base_kind_label(const VolumeRow& row);
+
 std::string kind_label(const VolumeRow& row) {
+  if (row.generated) return "Generated " + base_kind_label(row);
+  return base_kind_label(row);
+}
+
+std::string base_kind_label(const VolumeRow& row) {
   if (row.keep_out) return "Keep-out";
   if (row.placeholder) return "Placeholder";
   switch (row.kind) {
@@ -381,8 +389,10 @@ std::vector<Property> inspect(const eval::Evaluation& evaluation, const Selectio
     case Selection::Kind::Node: {
       const model::Volume* v = doc.find_volume(selection.volume);
       const auto* pc = v != nullptr ? std::get_if<model::ProceduralContents>(&v->contents) : nullptr;
-      if (pc == nullptr) break;
-      auto graph = proc::graph_from_json(pc->graph);
+      // L4: or a composite's generator.
+      const auto* cc = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents) : nullptr;
+      if (pc == nullptr && (cc == nullptr || !cc->generates())) break;
+      auto graph = proc::graph_from_json(pc != nullptr ? pc->graph : cc->generator);
       if (!graph) break;
       const proc::Node* n = graph->find_node(selection.id);
       if (n == nullptr) break;

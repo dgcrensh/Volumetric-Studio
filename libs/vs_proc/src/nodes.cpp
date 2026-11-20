@@ -87,6 +87,9 @@ const List& NodeContext::list(std::string_view port) const { return std::get<Lis
 const MeshValue& NodeContext::mesh(std::string_view port) const {
   return std::get<MeshValue>(input(port));
 }
+const Children& NodeContext::children(std::string_view port) const {
+  return std::get<Children>(input(port));
+}
 const Frames& NodeContext::frames(std::string_view port) const {
   return std::get<Frames>(input(port));
 }
@@ -612,6 +615,7 @@ NodeRegistry make_library() {
   add_infill_nodes(r);
   add_frame_nodes(r);
   add_mesh_nodes(r);
+  add_children_nodes(r);
   add_output(r);
   return r;
 }

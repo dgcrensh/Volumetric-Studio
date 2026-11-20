@@ -36,6 +36,7 @@
 
 #include "vs/core/diagnostic.hpp"
 #include "vs/core/id.hpp"
+#include "vs/core/vec.hpp"
 #include "vs/feature/tree.hpp"
 
 namespace vs::model {
@@ -66,66 +67,6 @@ struct BoxBoundary {
 };
 
 using Boundary = std::variant<FeatureBoundary, BoxBoundary>;
-
-// --- contents -------------------------------------------------------------------
-
-enum class VolumeKind { Static, Parametric, Procedural, Composite };
-std::string_view to_string(VolumeKind kind);
-
-// Imported or baked geometry, held as a blob of the project (project.hpp).
-// An empty `blob` is a placeholder volume: blocked out, not filled yet.
-// Baked contents (vs_proc bake.hpp, M12) keep the graph they were baked
-// from, opaque here as in ProceduralContents, so they can be unbaked.
-struct StaticContents {
-  std::string blob;    // the blob's path in the project, e.g. "blobs/<hash>.step"
-  std::string format;  // "step", "iges", "stl", "3mf", "obj"
-  std::string baked_graph;  // the graph's JSON when baked; empty otherwise
-  friend bool operator==(const StaticContents&, const StaticContents&) = default;
-};
-
-// The volume's own feature tree. Its sketches and datums may anchor only to
-// the volume's boundary and its connection surfaces (references.hpp), and
-// its expressions may use the volume's parameters by name. Everything in it
-// is private to the volume.
-struct ParametricContents {
-  feature::FeatureTree tree;
-  friend bool operator==(const ParametricContents&, const ParametricContents&) = default;
-};
-
-// A node graph: vs_proc's JSON (proc/graph.hpp, M10). vs_model sits below
-// vs_proc, so here it is opaque text, stored and hashed as it is; vs_proc
-// checks it against the document when the engine generates the volume.
-struct ProceduralContents {
-  std::string graph;  // JSON; empty: no graph yet
-  friend bool operator==(const ProceduralContents&, const ProceduralContents&) = default;
-};
-
-// Which child meets a connection surface that joins a composite volume from
-// outside (L3). The surface is a fixed input of the composite, which passes
-// it down to the child lying against it; the child takes it as a fixed
-// input too, and passes it further down if it is a composite itself.
-struct Delegation {
-  Id surface;
-  Id child;
-  friend bool operator==(const Delegation&, const Delegation&) = default;
-};
-
-// Child volumes (L3). The children are the volumes whose `parent` is this
-// one. What the composite holds is its own layout: a feature tree rebuilt
-// as a parametric volume's tree is (its boundary, the connection surfaces
-// joining it and its parameters are its inputs), from which its children's
-// boundaries, the connection surfaces and keep-outs between them and their
-// parameters' expressions are built. It is to its children what the root
-// layout is to the top-level volumes.
-struct CompositeContents {
-  feature::FeatureTree layout;
-  std::vector<Delegation> delegations;
-  [[nodiscard]] const Delegation* delegation(const Id& surface) const;
-  friend bool operator==(const CompositeContents&, const CompositeContents&) = default;
-};
-
-using Contents =
-    std::variant<StaticContents, ParametricContents, ProceduralContents, CompositeContents>;
 
 // --- parameters and published outputs -----------------------------------------------
 
@@ -161,6 +102,101 @@ struct PublishedOutput {
   friend bool operator==(const PublishedOutput&, const PublishedOutput&) = default;
 };
 
+// --- contents -------------------------------------------------------------------
+
+enum class VolumeKind { Static, Parametric, Procedural, Composite };
+std::string_view to_string(VolumeKind kind);
+
+// Imported or baked geometry, held as a blob of the project (project.hpp).
+// An empty `blob` is a placeholder volume: blocked out, not filled yet.
+// Baked contents (vs_proc bake.hpp, M12) keep the graph they were baked
+// from, opaque here as in ProceduralContents, so they can be unbaked.
+struct StaticContents {
+  std::string blob;    // the blob's path in the project, e.g. "blobs/<hash>.step"
+  std::string format;  // "step", "iges", "stl", "3mf", "obj"
+  std::string baked_graph;  // the graph's JSON when baked; empty otherwise
+  friend bool operator==(const StaticContents&, const StaticContents&) = default;
+};
+
+// The volume's own feature tree. Its sketches and datums may anchor only to
+// the volume's boundary and its connection surfaces (references.hpp), and
+// its expressions may use the volume's parameters by name. Everything in it
+// is private to the volume.
+struct ParametricContents {
+  feature::FeatureTree tree;
+  friend bool operator==(const ParametricContents&, const ParametricContents&) = default;
+};
+
+// A node graph: vs_proc's JSON (proc/graph.hpp, M10). vs_model sits below
+// vs_proc, so here it is opaque text, stored and hashed as it is; vs_proc
+// checks it against the document when the engine generates the volume.
+struct ProceduralContents {
+  std::string graph;  // JSON; empty: no graph yet
+  friend bool operator==(const ProceduralContents&, const ProceduralContents&) = default;
+};
+
+// What a composite's generated children are filled from (L4): contents,
+// parameters and published outputs, as a volume's. A parametric template's
+// tree refers to its boundary by the template's own id (faces "-x".."+z",
+// as a box volume's tree does); expand() (generated.hpp) gives each copy
+// ids derived from the child's, the template's own id becoming the
+// child's. A template can't be a composite.
+using TemplateContents = std::variant<StaticContents, ParametricContents, ProceduralContents>;
+
+struct ChildTemplate {
+  Id id;
+  std::string name;
+  TemplateContents contents;
+  std::vector<VolumeParameter> parameters;
+  std::vector<PublishedOutput> outputs;
+  // The min corner of the box a parametric template was authored for:
+  // a copy in a box with min corner m is built offset by m - origin.
+  core::dvec3 origin{};
+  friend bool operator==(const ChildTemplate&, const ChildTemplate&) = default;
+};
+
+// Which child meets a connection surface that joins a composite volume from
+// outside (L3). The surface is a fixed input of the composite, which passes
+// it down to the child lying against it; the child takes it as a fixed
+// input too, and passes it further down if it is a composite itself.
+struct Delegation {
+  Id surface;
+  Id child;
+  friend bool operator==(const Delegation&, const Delegation&) = default;
+};
+
+// Child volumes (L3). The children are the volumes whose `parent` is this
+// one. What the composite holds is its own layout: a feature tree rebuilt
+// as a parametric volume's tree is (its boundary, the connection surfaces
+// joining it and its parameters are its inputs), from which its children's
+// boundaries, the connection surfaces and keep-outs between them and their
+// parameters' expressions are built. It is to its children what the root
+// layout is to the top-level volumes.
+//
+// A composite may also generate children (L4): `generator` is a procedural
+// graph (vs_proc JSON, opaque here as in ProceduralContents) whose output
+// is a generated layout (generated.hpp), and `templates` are what the
+// generated children are filled from. Generated children exist only in an
+// evaluated document (vs_eval), never in an authored one; they are
+// siblings of the composite's authored children.
+struct CompositeContents {
+  feature::FeatureTree layout;
+  std::vector<Delegation> delegations;
+  std::string generator;                 // L4: a graph's JSON; empty: none
+  std::vector<ChildTemplate> templates;  // L4
+  [[nodiscard]] const Delegation* delegation(const Id& surface) const;
+  [[nodiscard]] const ChildTemplate* find_template(std::string_view name) const;
+  [[nodiscard]] bool generates() const { return !generator.empty(); }
+  friend bool operator==(const CompositeContents&, const CompositeContents&) = default;
+};
+
+using Contents =
+    std::variant<StaticContents, ParametricContents, ProceduralContents, CompositeContents>;
+
+// A template's contents as a volume's, and back (null for a composite).
+Contents as_contents(const TemplateContents& contents);
+std::optional<TemplateContents> as_template_contents(const Contents& contents);
+
 // --- volumes ------------------------------------------------------------------------
 
 struct Volume {
@@ -176,6 +212,15 @@ struct Volume {
   // keep-out regions may use its boundary as their cutter.
   bool keep_out = false;
   Contents contents;
+  // Made by its composite parent's generator (L4): only ever in an
+  // evaluated document. Its id derives from the parent's and the
+  // generator's key, and nothing authored can name it.
+  bool generated = false;
+  // Where its parametric contents were authored, relative to where they are
+  // built (L4): the tree is rebuilt with every input moved by -offset, and
+  // the result moved by +offset, so a template authored for one box fills
+  // any box of the same size. Zero (the default) for authored volumes.
+  core::dvec3 contents_offset{};
   std::vector<VolumeParameter> parameters;
   std::uint64_t seed = 0;
   std::vector<PublishedOutput> outputs;

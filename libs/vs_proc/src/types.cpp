@@ -10,8 +10,8 @@ namespace vs::proc {
 
 namespace {
 
-constexpr std::array<std::string_view, 7> kNames = {"scalar", "vector", "field",  "mesh",
-                                                     "frames", "curves", "list"};
+constexpr std::array<std::string_view, 8> kNames = {"scalar", "vector", "field",  "mesh",
+                                                     "frames", "curves", "list",   "children"};
 
 void append_transform(Hasher& h, const core::ftransform& t) {
   for (std::size_t r = 0; r < 3; ++r) {
@@ -66,6 +66,9 @@ void hash_append(Hasher& h, const Value& value) {
             h.add(static_cast<std::uint64_t>(line.size()));
             for (const auto& p : line) h.add(p);
           }
+        } else if constexpr (std::is_same_v<T, Children>) {
+          h.add(v != nullptr);
+          if (v) h.add(*v);
         } else {
           static_assert(std::is_same_v<T, List>);
           h.add(static_cast<std::uint64_t>(v.size()));
@@ -97,6 +100,10 @@ std::string describe(const Value& value) {
           return v ? fmt::format("{} frames", v->frames.size()) : "frames (none)";
         } else if constexpr (std::is_same_v<T, Curves>) {
           return v ? fmt::format("{} curves", v->polylines.size()) : "curves (none)";
+        } else if constexpr (std::is_same_v<T, Children>) {
+          return v ? fmt::format("{} children, {} surfaces", v->children.size(),
+                                 v->surfaces.size())
+                   : "children (none)";
         } else {
           return fmt::format("list of {}", v.size());
         }

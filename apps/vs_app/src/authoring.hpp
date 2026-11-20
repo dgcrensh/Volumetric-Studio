@@ -93,9 +93,11 @@ proc::Graph starter_graph();
 // with errors other than unfinished ones (check_volume_graph(): a node
 // reading a surface that doesn't join the volume, say).
 Command make_procedural(Id volume, proc::Graph graph, std::string label = "Fill by procedure");
-// Replaces a procedural volume's graph (the node editor's every change).
+// Replaces a procedural volume's graph, or a composite's generator (L4): the
+// node editor's every change.
 Command set_graph(Id volume, proc::Graph graph, std::string label);
-// A procedural volume's graph (empty for an empty one); nullopt when it
+// A procedural volume's graph (empty for an empty one), or a generating
+// composite's generator (L4); nullopt when it
 // isn't procedural or its JSON doesn't parse.
 std::optional<proc::Graph> graph_of(const model::Document& document, const Id& volume);
 // proc::bake() with the volume's generated mesh, and proc::unbake().
@@ -115,6 +117,22 @@ std::optional<ContentsKind> contents_kind(const model::Volume& volume);
 // the starter graph); or baked (`baked_mesh`: the procedure's current
 // mesh, required). Swapping to the kind it already is changes nothing.
 Command swap_contents(Id volume, ContentsKind kind, std::optional<mesh::Mesh> baked_mesh = std::nullopt);
+
+// --- generated children (L4) ---------------------------------------------------------------------
+
+// A composite's generator to start from: a children.grid of two cells from
+// `template_name` (empty: placeholders), to output.children. set_graph()
+// on a composite sets its generator; graph_of() reads it.
+proc::Graph starter_generator(const std::string& template_name);
+// Turns `child`, an authored child of a composite, into a template of that
+// composite and deletes it (as remove_volume() would). The template keeps
+// the child's id, so its tree's references to its boundary stay valid, and
+// `origin` is the min corner of the child's box (from the layout build).
+Command make_template(Id child, core::dvec3 origin);
+Command set_template_name(Id composite, Id template_id, std::string name);
+Command remove_template(Id composite, Id template_id);
+// The composite keeps its templates and authored children.
+Command clear_generator(Id composite);
 
 // --- connection surfaces, keep-out regions, links -----------------------------------------------
 

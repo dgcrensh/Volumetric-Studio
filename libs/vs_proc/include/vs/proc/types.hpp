@@ -16,6 +16,8 @@
 //   Frames   a point set with orientations: placements (FP32 transforms)
 //   Curves   polylines (FP32), for ribs and paths
 //   List     a list of numbers
+//   Children child volumes, surfaces and delegations a composite's generator
+//            emits (L4)
 //
 // A Value holds one of them. Values are immutable once made and cheap to
 // copy (the big ones are shared pointers), so a node's outputs can be
@@ -34,6 +36,7 @@
 #include "vs/core/transform.hpp"
 #include "vs/core/vec.hpp"
 #include "vs/mesh/mesh.hpp"
+#include "vs/model/generated.hpp"
 
 namespace vs::proc {
 
@@ -42,7 +45,7 @@ using core::fvec3;
 using core::Hash256;
 using core::Hasher;
 
-enum class PortType { Scalar, Vector, Field, Mesh, Frames, Curves, List };
+enum class PortType { Scalar, Vector, Field, Mesh, Frames, Curves, List, Children };
 
 std::string_view to_string(PortType type);
 std::optional<PortType> port_type_from_string(std::string_view text);
@@ -64,8 +67,12 @@ using Curves = std::shared_ptr<const CurveSet>;
 
 using List = std::vector<double>;
 
+// Child volumes a composite's generator emits (L4): boxes filled from its
+// templates, surfaces between them and delegations (model/generated.hpp).
+using Children = std::shared_ptr<const model::GeneratedLayout>;
+
 // In PortType order, so value.index() == static_cast<size_t>(type).
-using Value = std::variant<double, dvec3, Field, MeshValue, Frames, Curves, List>;
+using Value = std::variant<double, dvec3, Field, MeshValue, Frames, Curves, List, Children>;
 
 [[nodiscard]] PortType type_of(const Value& value);
 

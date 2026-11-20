@@ -97,6 +97,8 @@ if(VS_BUILD_TESTS)
     tests/test_interactive_ui.cpp
     tests/test_nested.cpp
     ../../libs/vs_model/tests/nested.cpp
+    ../../libs/vs_model/tests/rack.cpp
+    tests/test_generated.cpp
     tests/test_node_editor.cpp
     tests/test_outline.cpp
     tests/test_scene.cpp

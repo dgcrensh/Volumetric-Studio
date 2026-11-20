@@ -60,6 +60,8 @@ ojson point_ref_json(const PointRef& ref) {
   return entity_ref_json(std::get<feature::SketchEntityRef>(ref));
 }
 
+ojson vec3_json(const core::dvec3& v) { return ojson::array({v.x, v.y, v.z}); }
+
 ojson ids_json(const std::vector<Id>& ids) {
   ojson a = ojson::array();
   for (const Id& id : ids) a.push_back(id.to_string());
@@ -67,6 +69,65 @@ ojson ids_json(const std::vector<Id>& ids) {
 }
 
 ojson tree_json(const feature::FeatureTree& tree) { return ojson::parse(feature::to_json(tree)); }
+
+ojson parameters_json(const std::vector<VolumeParameter>& parameters) {
+  ojson a = ojson::array();
+  for (const auto& p : parameters) {
+    a.push_back(ojson{{"id", p.id.to_string()}, {"name", p.name}, {"value", param_json(p.value)}});
+  }
+  return a;
+}
+
+ojson outputs_json(const std::vector<PublishedOutput>& outputs) {
+  ojson a = ojson::array();
+  for (const auto& o : outputs) {
+    ojson oj{{"id", o.id.to_string()},
+             {"name", o.name},
+             {"quantity", std::string(to_string(o.quantity))}};
+    if (o.quantity == OutputQuantity::Mass) oj["density"] = o.density;
+    a.push_back(std::move(oj));
+  }
+  return a;
+}
+
+ojson contents_json(const Contents& contents) {
+  ojson c;
+  c["kind"] = std::string(to_string(static_cast<VolumeKind>(contents.index())));
+  if (const auto* s = std::get_if<StaticContents>(&contents)) {
+    if (!s->blob.empty()) c["blob"] = s->blob;
+    if (!s->format.empty()) c["format"] = s->format;
+    if (!s->baked_graph.empty()) c["baked_graph"] = s->baked_graph;
+  } else if (const auto* p = std::get_if<ParametricContents>(&contents)) {
+    c["tree"] = tree_json(p->tree);
+  } else if (const auto* comp = std::get_if<CompositeContents>(&contents)) {
+    c["layout"] = tree_json(comp->layout);
+    if (!comp->delegations.empty()) {
+      ojson a = ojson::array();
+      for (const auto& d : comp->delegations) {
+        a.push_back(ojson{{"surface", d.surface.to_string()}, {"child", d.child.to_string()}});
+      }
+      c["delegations"] = std::move(a);
+    }
+    // L4: written only when set, so L3 documents read and hash as before.
+    if (!comp->generator.empty()) c["generator"] = comp->generator;
+    if (!comp->templates.empty()) {
+      ojson a = ojson::array();
+      for (const auto& t : comp->templates) {
+        ojson tj{{"id", t.id.to_string()}, {"name", t.name}};
+        tj["contents"] = contents_json(as_contents(t.contents));
+        if (!t.parameters.empty()) tj["parameters"] = parameters_json(t.parameters);
+        if (!t.outputs.empty()) tj["outputs"] = outputs_json(t.outputs);
+        if (!(t.origin == core::dvec3{})) tj["origin"] = vec3_json(t.origin);
+        a.push_back(std::move(tj));
+      }
+      c["templates"] = std::move(a);
+    }
+  } else {
+    const auto& g = std::get<ProceduralContents>(contents);
+    if (!g.graph.empty()) c["graph"] = g.graph;
+  }
+  return c;
+}
 
 ojson volume_json(const Volume& v) {
   ojson j;
@@ -81,47 +142,13 @@ ojson volume_json(const Volume& v) {
     j["boundary"] = ojson{{"box", ojson{{"min", point_ref_json(b.min)}, {"max", point_ref_json(b.max)}}}};
   }
   if (v.keep_out) j["keep_out"] = true;
-  ojson c;
-  c["kind"] = std::string(to_string(v.kind()));
-  if (const auto* s = std::get_if<StaticContents>(&v.contents)) {
-    if (!s->blob.empty()) c["blob"] = s->blob;
-    if (!s->format.empty()) c["format"] = s->format;
-    if (!s->baked_graph.empty()) c["baked_graph"] = s->baked_graph;
-  } else if (const auto* p = std::get_if<ParametricContents>(&v.contents)) {
-    c["tree"] = tree_json(p->tree);
-  } else if (const auto* comp = std::get_if<CompositeContents>(&v.contents)) {
-    c["layout"] = tree_json(comp->layout);
-    if (!comp->delegations.empty()) {
-      ojson a = ojson::array();
-      for (const auto& d : comp->delegations) {
-        a.push_back(ojson{{"surface", d.surface.to_string()}, {"child", d.child.to_string()}});
-      }
-      c["delegations"] = std::move(a);
-    }
-  } else {
-    const auto& g = std::get<ProceduralContents>(v.contents);
-    if (!g.graph.empty()) c["graph"] = g.graph;
-  }
-  j["contents"] = std::move(c);
-  if (!v.parameters.empty()) {
-    ojson a = ojson::array();
-    for (const auto& p : v.parameters) {
-      a.push_back(ojson{{"id", p.id.to_string()}, {"name", p.name}, {"value", param_json(p.value)}});
-    }
-    j["parameters"] = std::move(a);
-  }
+  j["contents"] = contents_json(v.contents);
+  // Generated volumes (L4) live in evaluated documents only.
+  if (v.generated) j["generated"] = true;
+  if (!(v.contents_offset == core::dvec3{})) j["contents_offset"] = vec3_json(v.contents_offset);
+  if (!v.parameters.empty()) j["parameters"] = parameters_json(v.parameters);
   if (v.seed != 0) j["seed"] = v.seed;
-  if (!v.outputs.empty()) {
-    ojson a = ojson::array();
-    for (const auto& o : v.outputs) {
-      ojson oj{{"id", o.id.to_string()},
-               {"name", o.name},
-               {"quantity", std::string(to_string(o.quantity))}};
-      if (o.quantity == OutputQuantity::Mass) oj["density"] = o.density;
-      a.push_back(std::move(oj));
-    }
-    j["outputs"] = std::move(a);
-  }
+  if (!v.outputs.empty()) j["outputs"] = outputs_json(v.outputs);
   return j;
 }
 
@@ -253,9 +280,16 @@ std::vector<Id> read_ids(const json& j, std::string_view key, std::string_view w
   return out;
 }
 
+core::dvec3 read_vec3(const json& j, std::string_view where);
+
 double read_number(const json& j, std::string_view where) {
   if (!j.is_number()) fail(where, "expected a number");
   return j.get<double>();
+}
+
+core::dvec3 read_vec3(const json& j, std::string_view where) {
+  if (!j.is_array() || j.size() != 3) fail(where, "expected three numbers");
+  return {read_number(j[0], where), read_number(j[1], where), read_number(j[2], where)};
 }
 
 Param read_param(const json& j, std::string_view where) {
@@ -336,6 +370,86 @@ OutputQuantity read_quantity(const json& j, std::string_view where) {
   fail(where, fmt::format("unknown quantity \"{}\"", s));
 }
 
+std::vector<VolumeParameter> read_parameters(const json& j, const std::string& where) {
+  std::vector<VolumeParameter> out;
+  const json* ps = optional_member(j, "parameters");
+  if (ps == nullptr) return out;
+  if (!ps->is_array()) fail(where + ".parameters", "expected an array");
+  for (std::size_t i = 0; i < ps->size(); ++i) {
+    const std::string pw = fmt::format("{}.parameters[{}]", where, i);
+    const json& p = (*ps)[i];
+    out.push_back({read_id(member(p, "id", pw), pw + ".id"),
+                   read_string(member(p, "name", pw), pw + ".name"),
+                   read_param(member(p, "value", pw), pw + ".value")});
+  }
+  return out;
+}
+
+std::vector<PublishedOutput> read_outputs(const json& j, const std::string& where) {
+  std::vector<PublishedOutput> outputs;
+  const json* os = optional_member(j, "outputs");
+  if (os == nullptr) return outputs;
+  if (!os->is_array()) fail(where + ".outputs", "expected an array");
+  for (std::size_t i = 0; i < os->size(); ++i) {
+    const std::string ow = fmt::format("{}.outputs[{}]", where, i);
+    const json& o = (*os)[i];
+    PublishedOutput out;
+    out.id = read_id(member(o, "id", ow), ow + ".id");
+    out.name = read_string(member(o, "name", ow), ow + ".name");
+    out.quantity = read_quantity(member(o, "quantity", ow), ow + ".quantity");
+    if (const json* d = optional_member(o, "density")) out.density = read_number(*d, ow + ".density");
+    outputs.push_back(std::move(out));
+  }
+  return outputs;
+}
+
+Contents read_contents(const json& c, const std::string& at) {
+  const auto kind = read_string(member(c, "kind", at), at + ".kind");
+  if (kind == "static") {
+    return StaticContents{read_optional_string(c, "blob", at),
+                          read_optional_string(c, "format", at),
+                          read_optional_string(c, "baked_graph", at)};
+  }
+  if (kind == "parametric") {
+    return ParametricContents{read_tree(member(c, "tree", at), at + ".tree")};
+  }
+  if (kind == "procedural") return ProceduralContents{read_optional_string(c, "graph", at)};
+  if (kind == "composite") {
+    CompositeContents comp;
+    comp.layout = read_tree(member(c, "layout", at), at + ".layout");
+    if (const json* ds = optional_member(c, "delegations")) {
+      if (!ds->is_array()) fail(at + ".delegations", "expected an array");
+      for (std::size_t i = 0; i < ds->size(); ++i) {
+        const std::string dw = fmt::format("{}.delegations[{}]", at, i);
+        const json& d = (*ds)[i];
+        comp.delegations.push_back({read_id(member(d, "surface", dw), dw + ".surface"),
+                                    read_id(member(d, "child", dw), dw + ".child")});
+      }
+    }
+    comp.generator = read_optional_string(c, "generator", at);
+    if (const json* ts = optional_member(c, "templates")) {
+      if (!ts->is_array()) fail(at + ".templates", "expected an array");
+      for (std::size_t i = 0; i < ts->size(); ++i) {
+        const std::string tw = fmt::format("{}.templates[{}]", at, i);
+        const json& t = (*ts)[i];
+        ChildTemplate ct;
+        ct.id = read_id(member(t, "id", tw), tw + ".id");
+        ct.name = read_optional_string(t, "name", tw);
+        auto contents = as_template_contents(read_contents(member(t, "contents", tw), tw + ".contents"));
+        if (!contents) fail(tw + ".contents.kind", "a template can't be a composite");
+        ct.contents = std::move(*contents);
+        ct.parameters = read_parameters(t, tw);
+        ct.outputs = read_outputs(t, tw);
+        if (const json* o = optional_member(t, "origin")) ct.origin = read_vec3(*o, tw + ".origin");
+        comp.templates.push_back(std::move(ct));
+      }
+    }
+    return comp;
+  }
+  fail(at + ".kind",
+       fmt::format("unknown kind \"{}\" (static, parametric, procedural or composite)", kind));
+}
+
 Volume read_volume(const json& j, const std::string& where) {
   Volume v;
   v.id = read_id(member(j, "id", where), where + ".id");
@@ -354,63 +468,22 @@ Volume read_volume(const json& j, const std::string& where) {
     if (!k->is_boolean()) fail(where + ".keep_out", "expected true or false");
     v.keep_out = k->get<bool>();
   }
-  const json& c = member(j, "contents", where);
-  const std::string at = where + ".contents";
-  const auto kind = read_string(member(c, "kind", at), at + ".kind");
-  if (kind == "static") {
-    v.contents = StaticContents{read_optional_string(c, "blob", at),
-                                read_optional_string(c, "format", at),
-                                read_optional_string(c, "baked_graph", at)};
-  } else if (kind == "parametric") {
-    v.contents = ParametricContents{read_tree(member(c, "tree", at), at + ".tree")};
-  } else if (kind == "procedural") {
-    v.contents = ProceduralContents{read_optional_string(c, "graph", at)};
-  } else if (kind == "composite") {
-    CompositeContents comp;
-    comp.layout = read_tree(member(c, "layout", at), at + ".layout");
-    if (const json* ds = optional_member(c, "delegations")) {
-      if (!ds->is_array()) fail(at + ".delegations", "expected an array");
-      for (std::size_t i = 0; i < ds->size(); ++i) {
-        const std::string dw = fmt::format("{}.delegations[{}]", at, i);
-        const json& d = (*ds)[i];
-        comp.delegations.push_back({read_id(member(d, "surface", dw), dw + ".surface"),
-                                    read_id(member(d, "child", dw), dw + ".child")});
-      }
-    }
-    v.contents = std::move(comp);
-  } else {
-    fail(at + ".kind",
-         fmt::format("unknown kind \"{}\" (static, parametric, procedural or composite)", kind));
+  v.contents = read_contents(member(j, "contents", where), where + ".contents");
+  if (const json* g = optional_member(j, "generated")) {
+    if (!g->is_boolean()) fail(where + ".generated", "expected true or false");
+    v.generated = g->get<bool>();
   }
-  if (const json* ps = optional_member(j, "parameters")) {
-    if (!ps->is_array()) fail(where + ".parameters", "expected an array");
-    for (std::size_t i = 0; i < ps->size(); ++i) {
-      const std::string pw = fmt::format("{}.parameters[{}]", where, i);
-      const json& p = (*ps)[i];
-      v.parameters.push_back({read_id(member(p, "id", pw), pw + ".id"),
-                              read_string(member(p, "name", pw), pw + ".name"),
-                              read_param(member(p, "value", pw), pw + ".value")});
-    }
+  if (const json* o = optional_member(j, "contents_offset")) {
+    v.contents_offset = read_vec3(*o, where + ".contents_offset");
   }
+  v.parameters = read_parameters(j, where);
   if (const json* s = optional_member(j, "seed")) {
     if (!s->is_number_unsigned() && !(s->is_number_integer() && s->get<std::int64_t>() >= 0)) {
       fail(where + ".seed", "expected a whole number of 0 or more");
     }
     v.seed = s->get<std::uint64_t>();
   }
-  if (const json* os = optional_member(j, "outputs")) {
-    if (!os->is_array()) fail(where + ".outputs", "expected an array");
-    for (std::size_t i = 0; i < os->size(); ++i) {
-      const std::string ow = fmt::format("{}.outputs[{}]", where, i);
-      const json& o = (*os)[i];
-      PublishedOutput out;
-      out.id = read_id(member(o, "id", ow), ow + ".id");
-      out.name = read_string(member(o, "name", ow), ow + ".name");
-      out.quantity = read_quantity(member(o, "quantity", ow), ow + ".quantity");
-      if (const json* d = optional_member(o, "density")) out.density = read_number(*d, ow + ".density");
-      v.outputs.push_back(std::move(out));
-    }
-  }
+  v.outputs = read_outputs(j, where);
   return v;
 }
 

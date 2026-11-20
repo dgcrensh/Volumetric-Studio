@@ -34,6 +34,8 @@
 //                                                  or a surface twice
 //                  model.composite.undelegated     (warning) a bonded or bolted surface joins
 //                                                  a composite and no child meets it
+//                  model.composite.template        (L4) a template has no name, shares one,
+//                                                  or has an illegal or repeated parameter
 //                  model.level.mixed               a surface or keep-out names volumes of
 //                                                  different levels
 //                  model.link.not_output           the source isn't a published output
@@ -49,6 +51,11 @@
 //                                                  surfaces, parameters, links, and
 //                                                  every feature inside each volume
 //   dependencies   model.dependency.loop           (dependency.hpp)
+//                  model.composite.generated_link  (L4) a link feeds the inputs of a composite
+//                                                  with a generator, from outside it
+//
+// Generated volumes (L4, generated.hpp) are checked like authored ones,
+// except that their names (and their surfaces') needn't be distinct.
 //
 // A diagnostic names the thing to change first: the feature, volume,
 // connection surface, keep-out, parameter or link holding the reference.

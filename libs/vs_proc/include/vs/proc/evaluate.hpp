@@ -88,6 +88,7 @@ struct NodeRun {
 
 struct GraphEvaluation {
   std::optional<Field> contents;  // set when the graph evaluated
+  std::optional<Children> children;  // L4: a composite generator's output.children
   double cell_size = 0.0;         // the output node's
   std::map<std::string, double, std::less<>> published;  // output.publish values by name
   std::vector<NodeRun> nodes;     // those reached, in evaluation order
@@ -96,7 +97,9 @@ struct GraphEvaluation {
   bool cancelled = false;
   core::Diagnostics diagnostics;
 
-  [[nodiscard]] bool ok() const { return contents.has_value() && !diagnostics.has_errors(); }
+  [[nodiscard]] bool ok() const {
+    return (contents.has_value() || children.has_value()) && !diagnostics.has_errors();
+  }
   [[nodiscard]] const NodeRun* find(const Id& node) const;
 };
 

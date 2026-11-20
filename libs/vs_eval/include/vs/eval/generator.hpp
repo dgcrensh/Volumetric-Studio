@@ -34,6 +34,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 
 #include "vs/core/settings.hpp"
 #include "vs/eval/cache.hpp"
@@ -41,6 +42,7 @@
 #include "vs/eval/thread_pool.hpp"
 #include "vs/model/build.hpp"
 #include "vs/model/document.hpp"
+#include "vs/model/generated.hpp"
 
 namespace vs::eval {
 
@@ -55,6 +57,31 @@ class ContentsGenerator {
   virtual Job prepare(const model::Document& document, const model::DocumentBuild& layout,
                       std::size_t index, const core::ProductSettings& settings, ThreadPool& pool,
                       const CancellationToken& cancel) = 0;
+};
+
+// Layout generators (L4): how a library above vs_eval makes the children
+// of composites with a generator (model::CompositeContents::generator).
+// Engine::set_layout_generator(g); vs_proc's install() sets its own.
+//
+// generate() runs on the calling thread, before the children it makes are
+// scheduled, and must be deterministic. It returns the layout, or no
+// layout and the diagnostics saying why (the composite first). The engine
+// expands it into the evaluated document (model::expand()).
+struct LayoutOutcome {
+  std::optional<model::GeneratedLayout> layout;
+  core::Diagnostics diagnostics;
+};
+
+class LayoutGenerator {
+ public:
+  virtual ~LayoutGenerator() = default;
+
+  // The children `document.volumes[index]`, a composite with a generator,
+  // emits, given the layout build.
+  virtual LayoutOutcome generate(const model::Document& document,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings, ThreadPool& pool,
+                                 const CancellationToken& cancel) = 0;
 };
 
 }  // namespace vs::eval

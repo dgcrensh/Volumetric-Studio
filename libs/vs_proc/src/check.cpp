@@ -74,6 +74,14 @@ void check_settings(const Graph& graph, const Node& node, const NodeType& type, 
         ok = s != nullptr && feature::is_valid_name(*s);
         break;
       }
+      // L4: a template's name (checked against the composite by
+      // check_volume_graph()), or a template parameter's (empty: none).
+      case PropertyKind::Template: ok = std::holds_alternative<std::string>(value); break;
+      case PropertyKind::TemplateParameter: {
+        const auto* s = std::get_if<std::string>(&value);
+        ok = s != nullptr && (s->empty() || feature::is_valid_name(*s));
+        break;
+      }
       case PropertyKind::Parameter: {
         const auto* s = std::get_if<std::string>(&value);
         ok = s != nullptr;
@@ -142,6 +150,10 @@ std::vector<std::size_t> find_loop(const Graph& graph) {
 }
 
 }  // namespace
+
+bool is_output_node(std::string_view type) {
+  return type == "output" || type == "output.children";
+}
 
 bool is_unfinished(std::string_view code) {
   return code == "proc.graph.missing_input" || code == "proc.graph.output";
@@ -214,7 +226,7 @@ Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry) {
                                 {self}));
       continue;
     }
-    if (node.type == "output") ++outputs;
+    if (is_output_node(node.type)) ++outputs;
     check_settings(graph, node, *type, out);
   }
 
@@ -332,10 +344,44 @@ Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry) {
 Diagnostics check_volume_graph(const Graph& graph, const model::Document& document,
                                const Id& volume, const NodeRegistry& registry) {
   Diagnostics out = check_graph(graph, registry);
+  // L4: a composite's generator emits children, anything else contents.
+  const model::Volume* v = document.find_volume(volume);
+  const auto* composite = v != nullptr ? std::get_if<model::CompositeContents>(&v->contents)
+                                       : nullptr;
+  for (const auto& node : graph.nodes) {
+    if (!is_output_node(node.type)) continue;
+    const bool children = node.type == "output.children";
+    if (children != (composite != nullptr)) {
+      out.add(Diagnostic::error(
+          "proc.graph.output_kind",
+          composite != nullptr
+              ? fmt::format("'{}': a composite's generator emits child volumes; use an "
+                            "output.children node",
+                            node_subject(node).label)
+              : fmt::format("'{}': only a composite's generator emits child volumes; a "
+                            "procedural volume's graph ends in an output node",
+                            node_subject(node).label),
+          {node_subject(node)}));
+    }
+  }
   for (const auto& node : graph.nodes) {
     const NodeType* type = registry.find(node.type);
     if (type == nullptr) continue;
     for (const auto& prop : type->properties) {
+      if (prop.kind == PropertyKind::Template) {
+        const Setting* s = node.find_setting(prop.name);
+        const auto* name = s != nullptr ? std::get_if<std::string>(s) : nullptr;
+        if (name == nullptr || name->empty()) continue;  // a placeholder
+        if (composite == nullptr || composite->find_template(*name) == nullptr) {
+          out.add(Diagnostic::error(
+              "proc.reference.template",
+              fmt::format("'{}' fills children from template '{}', which this composite doesn't "
+                          "have",
+                          node_subject(node).label, *name),
+              {node_subject(node)}));
+        }
+        continue;
+      }
       if (prop.kind != PropertyKind::Surface) continue;
       const Setting* s = node.find_setting(prop.name);
       const auto* text = s != nullptr ? std::get_if<std::string>(s) : nullptr;
