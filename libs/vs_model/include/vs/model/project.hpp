@@ -8,10 +8,13 @@
 //   blobs/<hash>.<ext>     imported files, baked meshes: anything binary the
 //                          document refers to, named by the first 32 hex
 //                          digits of the content's BLAKE3 hash
-//   cache/...              optional caches: vs_eval's contents cache (M9,
-//                          cache.hpp), in folder projects only. Never
-//                          needed: loading ignores them, saving leaves them
-//                          alone, and zips never hold them
+//   cache/<file>           optional caches: vs_eval's contents cache (M9,
+//                          cache.hpp), in folders and, since M17, zips.
+//                          Never needed and never part of the content hash:
+//                          load_project() ignores them (load_project_cache()
+//                          reads them), and save_project() writes them only
+//                          when given some (a folder's are otherwise left
+//                          alone; a zip then has none)
 //
 // The manifest:
 //
@@ -85,6 +88,8 @@ inline constexpr int kProjectFormatVersion = 1;
 using Blob = std::vector<std::byte>;
 // Blobs by path within the project ("blobs/<hash>.<ext>").
 using BlobStore = std::map<std::string, Blob, std::less<>>;
+// A project's cache files by file name within cache/ (M17).
+using CacheFiles = std::map<std::string, Blob, std::less<>>;
 
 struct Project {
   Document document;
@@ -120,8 +125,17 @@ enum class ProjectLayout { Folder, Zip };
 // written in place: project.json and the blobs are replaced, blobs the
 // project no longer holds are removed, and anything else (cache/) is left
 // alone. A zip is written to a temporary file and moved over `path`.
+//
+// Caches (M17): with `cache`, its files become the project's cache/
+// entries, replacing any it had (a folder's other cache files are removed).
+// Names are plain file names; one with a path separator or ".." is skipped.
 Diagnostics save_project(const Project& project, const std::filesystem::path& path,
-                         ProjectLayout layout);
+                         ProjectLayout layout, const CacheFiles* cache = nullptr);
+
+// The cache/ entries of a folder or zip project, by file name. Caches are
+// never needed, so anything unreadable just isn't there: no project, a
+// damaged zip or no cache/ all give an empty map.
+CacheFiles load_project_cache(const std::filesystem::path& path);
 
 // Reads a folder or zip project, whichever `path` is. With `check_document`
 // false the document isn't checked (check.hpp) and comes back even when it

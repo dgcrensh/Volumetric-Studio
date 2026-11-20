@@ -257,6 +257,48 @@ TEST_CASE("Saving a folder keeps caches and drops stale blobs", "[model][project
   CHECK(*loaded == b.project);
 }
 
+TEST_CASE("Projects carry optional caches in folders and zips", "[model][project][cache]") {
+  const auto b = bracket::make_bracket();
+  Scratch scratch;
+  const auto blob = [](std::string_view s) {
+    Blob out;
+    for (const char c : s) out.push_back(static_cast<std::byte>(c));
+    return out;
+  };
+  CacheFiles cache;
+  cache.emplace("a.json", blob("{}"));
+  cache.emplace("a.mesh", blob("mesh bytes"));
+  cache.emplace("../escape", blob("never written"));  // skipped
+
+  for (const ProjectLayout layout : {ProjectLayout::Folder, ProjectLayout::Zip}) {
+    const bool folder = layout == ProjectLayout::Folder;
+    INFO((folder ? "folder" : "zip"));
+    const fs::path path = scratch.dir / (folder ? "f.vsproj" : "z.vsproj");
+    REQUIRE_FALSE(save_project(b.project, path, layout, &cache).has_errors());
+
+    const CacheFiles back = load_project_cache(path);
+    REQUIRE(back.size() == 2);
+    CHECK(back.at("a.mesh") == cache.at("a.mesh"));
+    CHECK_FALSE(fs::exists(scratch.dir / "escape"));
+    // Caches aren't part of the project: it loads and hashes as before.
+    auto loaded = load_project(path);
+    REQUIRE(loaded.ok());
+    CHECK(content_hash(*loaded) == content_hash(b.project));
+
+    // Saving with other caches replaces them; saving with none keeps a
+    // folder's and leaves a zip without.
+    CacheFiles other;
+    other.emplace("b.json", blob("[]"));
+    REQUIRE_FALSE(save_project(b.project, path, layout, &other).has_errors());
+    CHECK(load_project_cache(path).size() == 1);
+    CHECK(load_project_cache(path).contains("b.json"));
+    REQUIRE_FALSE(save_project(b.project, path, layout).has_errors());
+    CHECK(load_project_cache(path).size() == (folder ? 1u : 0u));
+  }
+  // Nothing there, or not a project: no caches, no error.
+  CHECK(load_project_cache(scratch.dir / "missing.vsproj").empty());
+}
+
 TEST_CASE("Blobs are named by their content", "[model][project]") {
   Project p;
   const Blob bytes{std::byte{1}, std::byte{2}, std::byte{3}};

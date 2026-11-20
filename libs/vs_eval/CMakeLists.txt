@@ -13,6 +13,7 @@ vs_add_library(vs_eval
     src/import.cpp
     src/measure.cpp
     src/module.cpp
+    src/step_export.cpp
     src/thread_pool.cpp
   PUBLIC_LINKS
     vs::vs_core
@@ -32,6 +33,7 @@ vs_add_library_tests(vs_eval
     tests/test_engine.cpp
     tests/test_import.cpp
     tests/test_module.cpp
+    tests/test_step_export.cpp
     tests/test_thread_pool.cpp
     ../vs_model/tests/bracket.cpp)
 

@@ -21,6 +21,13 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr std::string_view kManifest = "project.json";
+constexpr std::string_view kCache = "cache";
+
+// A cache file name: no folders, nothing that climbs out of cache/.
+bool plain_name(std::string_view name) {
+  return !name.empty() && name.find_first_of("/\\:") == std::string_view::npos && name != "." &&
+         name.find("..") == std::string_view::npos;
+}
 
 std::string display(const fs::path& p) {
   const auto u = p.generic_u8string();
@@ -130,13 +137,19 @@ std::string Project::add_blob(Blob bytes, std::string_view extension) {
   return path;
 }
 
-Diagnostics save_project(const Project& project, const fs::path& path, ProjectLayout layout) {
+Diagnostics save_project(const Project& project, const fs::path& path, ProjectLayout layout,
+                         const CacheFiles* cache) {
   Diagnostics out;
   const std::string manifest = manifest_json(project);
   if (layout == ProjectLayout::Zip) {
     detail::ZipEntries entries;
     entries.emplace_back(std::string(kManifest), bytes_of(manifest));
     for (const auto& [name, bytes] : project.blobs) entries.emplace_back(name, bytes);
+    if (cache != nullptr) {
+      for (const auto& [name, bytes] : *cache) {
+        if (plain_name(name)) entries.emplace_back(fmt::format("{}/{}", kCache, name), bytes);
+      }
+    }
     auto zip = detail::zip_store(entries);
     if (!zip) {
       Diagnostic d = zip.error();
@@ -175,6 +188,46 @@ Diagnostics save_project(const Project& project, const fs::path& path, ProjectLa
   }
   // The manifest last, so a reader never sees it before its blobs.
   out.append(write_file(path / kManifest, bytes_of(manifest)));
+  if (cache != nullptr && !out.has_errors()) {
+    // Caches are never needed, so failing to write one isn't an error.
+    const fs::path dir = path / kCache;
+    fs::create_directories(dir, ec);
+    for (const auto& [name, bytes] : *cache) {
+      if (plain_name(name)) (void)write_file(dir / fs::path(name), bytes);
+    }
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+      if (entry.is_regular_file() && !cache->contains(display(entry.path().filename()))) {
+        fs::remove(entry.path(), ec);
+      }
+    }
+  }
+  return out;
+}
+
+CacheFiles load_project_cache(const fs::path& path) {
+  CacheFiles out;
+  std::error_code ec;
+  if (fs::is_directory(path, ec)) {
+    for (const auto& entry : fs::directory_iterator(path / kCache, ec)) {
+      if (!entry.is_regular_file()) continue;
+      const std::string name = display(entry.path().filename());
+      if (name.ends_with(".tmp")) continue;  // a write that didn't finish
+      auto bytes = read_file(entry.path());
+      if (bytes) out.emplace(name, std::move(*bytes));
+    }
+    return out;
+  }
+  if (!fs::is_regular_file(path, ec)) return out;
+  auto bytes = read_file(path);
+  if (!bytes || !detail::looks_like_zip(*bytes)) return out;
+  auto files = detail::zip_read(*bytes);
+  if (!files) return out;
+  const std::string prefix = fmt::format("{}/", kCache);
+  for (auto& [name, data] : *files) {
+    if (name.starts_with(prefix) && plain_name(std::string_view(name).substr(prefix.size()))) {
+      out.emplace(name.substr(prefix.size()), std::move(data));
+    }
+  }
   return out;
 }
 
