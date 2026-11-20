@@ -92,6 +92,8 @@ class FieldExpr {
   [[nodiscard]] const std::vector<double>& numbers() const { return numbers_; }
   [[nodiscard]] const std::vector<Field>& children() const { return children_; }
   [[nodiscard]] const Hash256& hash() const { return hash_; }
+  // The mesh of a MeshSigned or MeshUnsigned leaf (null otherwise).
+  [[nodiscard]] const TriangleDistance* mesh() const { return mesh_.get(); }
 
   // The field's value at `p`.
   [[nodiscard]] double eval(const dvec3& p) const;
@@ -211,5 +213,28 @@ struct SampledField {
 // `cancelled` (when given) is set.
 SampledField sample(const FieldExpr& field, const GridSpec& grid, eval::ThreadPool* pool = nullptr,
                     const eval::CancellationToken* cancel = nullptr, bool* cancelled = nullptr);
+
+// --- sampling backends (L1) ------------------------------------------------------------
+//
+// Something that samples fields faster than the CPU and gives exactly the
+// CPU's values, bit for bit (vs_gpu installs one). sample() offers every
+// grid to the installed backend first and samples on the CPU whatever it
+// declines, so results never depend on which one ran.
+class SamplingBackend {
+ public:
+  virtual ~SamplingBackend() = default;
+  // Fills alues (grid.size() of them) and returns true, or returns false
+  // to leave the grid to the CPU (alues is then ignored). With a
+  // cancelled token it may stop early, set cancelled and return true.
+  // Called from any thread.
+  virtual bool sample(const FieldExpr& field, const GridSpec& grid, std::vector<float>& values,
+                      const eval::CancellationToken* cancel, bool* cancelled) = 0;
+};
+// Process-wide; null removes it. Not while samples are being taken.
+void set_sampling_backend(std::shared_ptr<SamplingBackend> backend);
+[[nodiscard]] std::shared_ptr<SamplingBackend> sampling_backend();
+// sample() on the CPU alone, whatever backend is installed.
+SampledField sample_cpu(const FieldExpr& field, const GridSpec& grid, eval::ThreadPool* pool = nullptr,
+                        const eval::CancellationToken* cancel = nullptr, bool* cancelled = nullptr);
 
 }  // namespace vs::proc

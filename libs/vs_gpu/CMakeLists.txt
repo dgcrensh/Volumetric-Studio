@@ -7,6 +7,8 @@ vs_add_library(vs_gpu
   SOURCES
     src/device.cpp
     src/gl_context.cpp
+    src/glsl.cpp
+    src/sampler.cpp
   PUBLIC_LINKS
     vs::vs_core
     vs::vs_kernel
@@ -24,8 +26,11 @@ endif()
 
 vs_add_library_tests(vs_gpu
   SOURCES
-    tests/test_arithmetic.cpp)
+    tests/test_arithmetic.cpp
+    tests/test_fields.cpp)
 
 if(VS_BUILD_TESTS)
   target_include_directories(vs_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_definitions(vs_gpu_tests PRIVATE
+    VS_PROC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/../vs_proc/tests/data")
 endif()

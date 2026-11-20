@@ -73,7 +73,10 @@ class TriangleDistance {
   };
   [[nodiscard]] Nearest nearest(const dvec3& p) const;
 
- private:
+  // The search structure, read-only, for evaluators elsewhere that must
+  // give the same answers (vs_gpu, L1): nodes[0] is the root; a leaf holds
+  // order[first .. first + count); triangles keep their face and edge
+  // pseudonormals, vertex_normals() the vertices'.
   struct Node {
     dbox3 box;
     std::uint32_t first = 0;  // leaves: triangles [first, first + count)
@@ -85,6 +88,12 @@ class TriangleDistance {
     dvec3 normal;           // unit face normal
     dvec3 edge_normal[3];   // pseudonormals of edges v0v1, v1v2, v2v0
   };
+  [[nodiscard]] const std::vector<Node>& nodes() const { return nodes_; }
+  [[nodiscard]] const std::vector<Tri>& triangles() const { return triangles_; }
+  [[nodiscard]] const std::vector<std::uint32_t>& order() const { return order_; }
+  [[nodiscard]] const std::vector<dvec3>& vertex_normals() const { return vertex_normals_; }
+
+ private:
 
   void build(std::uint32_t node, std::uint32_t first, std::uint32_t count, int depth);
   void search(std::uint32_t node, const dvec3& p, Nearest& best) const;
