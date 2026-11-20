@@ -38,6 +38,7 @@ vs_add_library_tests(vs_mesh
     tests/test_triangulate.cpp
     tests/test_weld.cpp
     ../vs_model/tests/bracket.cpp
+    ../vs_model/tests/curved.cpp
     ../vs_validate/tests/fixtures.cpp)
 
 if(VS_BUILD_TESTS)

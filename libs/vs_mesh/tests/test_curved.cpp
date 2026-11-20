@@ -11,9 +11,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "curved.hpp"
 #include "vs/core/settings.hpp"
 #include "vs/kernel/kernel.hpp"
+#include "vs/mesh/combine.hpp"
 #include "vs/mesh/seam_library.hpp"
+#include "vs/model/build.hpp"
 #include "vs/mesh/tessellate.hpp"
 #include "vs/mesh/topology.hpp"
 #include "vs/mesh/weld.hpp"
@@ -338,4 +341,34 @@ TEST_CASE("A volume that covers only part of a curved patch can't conform",
   REQUIRE(m.diagnostics.has_errors());
   CHECK(codes(m.diagnostics).find("mesh.tessellate.seam_uncovered") != std::string::npos);
   CHECK(m.seams.empty());
+}
+
+TEST_CASE("Documents with curved surfaces weld through the seam library",
+          "[mesh][combine][curved]") {
+  for (const bool half : {false, true}) {
+    curved::Options o;
+    o.half = half;
+    if (!half) {
+      o.patch_start = 5;  // a band on part of the bore: the rest is plain contact
+      o.patch_length = 20;
+    }
+    const auto c = curved::make_curved(o);
+    const auto& doc = c.project.document;
+    const auto b = vs::model::build(doc, kSettings);
+    INFO((half ? "half shell: " : "shaft in sleeve: ") << describe(b.diagnostics));
+    REQUIRE(b.ok());
+    vs::mesh::CombineOptions opts;
+    opts.placeholders = true;
+    opts.tessellation.params = kFine;
+    const auto m = vs::mesh::combine(doc, b, &c.project.blobs, kSettings, opts);
+    INFO(describe(m.diagnostics));
+    REQUIRE(m.seams.seams.size() == 1);
+    CHECK(m.seams.seams[0].curved());
+    CHECK(m.seams.seams[0].band == !half);
+    CHECK(m.ok());
+    CHECK(m.weld.topology.watertight());
+    CHECK(m.weld.topology.manifold());
+    const double whole = kPi * 400 * 30;
+    CHECK_THAT(vs::mesh::enclosed_volume(m.weld.mesh), WithinRel(half ? whole / 2 : whole, 2e-3));
+  }
 }

@@ -31,6 +31,8 @@ vs_add_library_tests(vs_model
   SOURCES
     tests/bracket.cpp
     tests/test_build.cpp
+    tests/test_curved.cpp
+    tests/curved.cpp
     tests/test_dependency.cpp
     tests/test_document.cpp
     tests/test_encapsulation.cpp
