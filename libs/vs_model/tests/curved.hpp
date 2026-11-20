@@ -38,4 +38,8 @@ struct Curved {
 
 Curved make_curved(const Options& options = {});
 
+// Parametric contents filling the shaft (or the sleeve) of `options`' layout:
+// its profile sketched on the XY plane and extruded the full height.
+vs::model::ParametricContents fill(const Options& options, bool shaft);
+
 }  // namespace curved

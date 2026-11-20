@@ -53,6 +53,12 @@ namespace vs::validate {
 struct MeshView {
   std::span<const core::fvec3> positions;
   std::span<const std::uint32_t> indices;
+  // Optional (L2): per triangle, how much farther its centroid may lie
+  // outside than the tolerance allows. Near a curved seam a mesh's
+  // triangles are the seam's chords of the shared surface, which stray
+  // from it by up to the seam's deflection (vs_mesh's kSeamDeflection);
+  // the engine allows that much there. Empty: no slack anywhere.
+  std::span<const float> centroid_slack = {};
 };
 
 struct ContainmentResult {

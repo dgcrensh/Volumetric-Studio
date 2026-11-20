@@ -46,6 +46,8 @@ vs_add_library_tests(vs_proc
     tests/scenes.cpp
     tests/test_acceptance.cpp
     tests/test_check.cpp
+    tests/test_curved.cpp
+    ../vs_model/tests/curved.cpp
     tests/test_data.cpp
     tests/test_distance.cpp
     tests/test_engine.cpp
@@ -64,6 +66,8 @@ vs_add_library_tests(vs_proc
     tests/test_mvp_workflows.cpp)
 
 if(VS_BUILD_TESTS)
+  target_include_directories(vs_proc_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../vs_model/tests)
   target_compile_definitions(vs_proc_tests PRIVATE
     VS_PROC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 endif()

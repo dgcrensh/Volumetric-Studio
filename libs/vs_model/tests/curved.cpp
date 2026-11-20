@@ -1,6 +1,7 @@
 #include "curved.hpp"
 
 #include <numbers>
+#include <string>
 
 namespace curved {
 
@@ -38,23 +39,31 @@ void half_profile(Sketch& s, double r, double big_r) {
 
 }  // namespace
 
+static Sketch profile(const Options& o, bool shaft_side, const std::string& name) {
+  Sketch s(Id::random(), name);
+  const double bore = o.radius + o.gap;
+  if (o.half) {
+    if (shaft_side) {
+      half_profile(s, o.radius, 0);
+    } else {
+      half_profile(s, bore, o.outer);
+    }
+  } else if (shaft_side) {
+    s.add_circle(s.add_point({0, 0}), o.radius);
+  } else {
+    const Id c = s.add_point({0, 0});
+    s.add_circle(c, o.outer);
+    s.add_circle(c, bore);
+  }
+  return s;
+}
+
 Curved make_curved(const Options& o) {
   Curved out;
   Document& doc = out.project.document;
   doc = make_document(o.half ? "Half shell" : "Shaft in sleeve");
-  const double bore = o.radius + o.gap;
-
-  Sketch shaft(Id::random(), "Shaft outline");
-  Sketch sleeve(Id::random(), "Sleeve outline");
-  if (o.half) {
-    half_profile(shaft, o.radius, 0);
-    half_profile(sleeve, bore, o.outer);
-  } else {
-    shaft.radius(shaft.add_circle(shaft.add_point({0, 0}), o.radius), o.radius);
-    const Id c = sleeve.add_point({0, 0});
-    sleeve.add_circle(c, o.outer);
-    sleeve.add_circle(c, bore);
-  }
+  const Sketch shaft = profile(o, true, "Shaft outline");
+  const Sketch sleeve = profile(o, false, "Sleeve outline");
   out.shaft_sketch = doc.layout.add(SketchFeature{shaft, PrincipalPlane::XY});
   out.sleeve_sketch = doc.layout.add(SketchFeature{sleeve, PrincipalPlane::XY});
   ExtrudeFeature shaft_block;
@@ -93,6 +102,17 @@ Curved make_curved(const Options& o) {
   doc.volumes.push_back(std::move(sleeve_volume));
   doc.connections.push_back(std::move(s));
   return out;
+}
+
+ParametricContents fill(const Options& o, bool shaft) {
+  ParametricContents contents;
+  const Id s = contents.tree.add(
+      SketchFeature{profile(o, shaft, shaft ? "Shaft fill" : "Sleeve fill"), PrincipalPlane::XY});
+  ExtrudeFeature e;
+  e.sketch = s;
+  e.depth = Param::of(o.height);
+  contents.tree.add(e, "Fill");
+  return contents;
 }
 
 }  // namespace curved

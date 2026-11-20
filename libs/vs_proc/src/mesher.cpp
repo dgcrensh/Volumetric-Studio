@@ -9,10 +9,12 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include <fmt/format.h>
@@ -709,6 +711,20 @@ double loop_distance(const std::vector<dvec2>& loop, const dvec2& p) {
   return best;
 }
 
+// Distance from p to a closed polyline in space.
+double polyline_distance(const std::vector<dvec3>& loop, const dvec3& p) {
+  double best = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < loop.size(); ++i) {
+    const dvec3& a = loop[i];
+    const dvec3 ab = loop[(i + 1) % loop.size()] - a;
+    const double len2 = dot(ab, ab);
+    double t = len2 > 0.0 ? dot(p - a, ab) / len2 : 0.0;
+    t = std::clamp(t, 0.0, 1.0);
+    best = std::min(best, length(p - (a + ab * t)));
+  }
+  return best;
+}
+
 double signed_area(const std::vector<dvec2>& loop) {
   double a = 0.0;
   for (std::size_t i = 0; i < loop.size(); ++i) a += cross(loop[i], loop[(i + 1) % loop.size()]);
@@ -731,13 +747,34 @@ class Builder {
   std::vector<dvec3>& positions() { return positions_; }
 
   // Stitches `seam` in, or says why it can't.
+  //
+  // Planar seams as in M11. Curved seams (L2) work the same way through the
+  // seam's surface: heights along its normal at each point, (u, v) unrolled
+  // round the axis. A band's patch is a ring, so its removal leaves two
+  // rims, and each is stitched to the seam loop it follows.
   std::optional<std::string> stitch(const mesh::Seam& seam) {
     if (seam.triangles.empty() || seam.loops.empty()) return std::string("it has no triangles");
+    const bool curved = seam.curved();
     const dvec3 fn = seam.normal();
     const dvec3 o = seam.frame.origin;
     const dvec3 xa = seam.frame.x_axis;
     const dvec3 ya = seam.frame.y_axis;
-    const auto uv = [&](const dvec3& p) { return dvec2{dot(p - o, xa), dot(p - o, ya)}; };
+    const auto uv = [&](const dvec3& p) {
+      return curved ? seam.to_uv(p) : dvec2{dot(p - o, xa), dot(p - o, ya)};
+    };
+    const auto normal_at = [&](const dvec3& p) { return curved ? seam.normal_at(p) : fn; };
+    // A triangle's corners in (u, v), whole across a band's cut.
+    const double wrap = curved ? 2.0 * std::numbers::pi * seam.radius : 0.0;
+    const auto tri_uv = [&](const Triangle& tri) {
+      std::array<dvec2, 3> q{uv(positions_[tri[0]]), uv(positions_[tri[1]]), uv(positions_[tri[2]])};
+      if (curved) {
+        const double hi = std::max({q[0].x, q[1].x, q[2].x});
+        for (dvec2& p : q) {
+          if (p.x < hi - 0.5 * wrap) p.x += wrap;
+        }
+      }
+      return q;
+    };
 
     // Which way is out of the volume, across the patch.
     const Triangle& t0 = seam.triangles.front();
@@ -745,17 +782,37 @@ class Builder {
                      seam.vertices[t0[2]].position) *
                     (1.0 / 3.0);
     constexpr double kProbe = 1e-3;
-    const dvec3 out_n = boundary_.signed_distance(c + fn * kProbe) >=
-                                boundary_.signed_distance(c - fn * kProbe)
-                            ? fn
-                            : fn * -1.0;
-    const double turn = dot(out_n, fn) > 0 ? 1.0 : -1.0;
+    const dvec3 cn = normal_at(c);
+    const double turn = boundary_.signed_distance(c + cn * kProbe) >=
+                                boundary_.signed_distance(c - cn * kProbe)
+                            ? 1.0
+                            : -1.0;
+    const dvec3 out_n = cn * turn;
+    // How far a point lies out of the volume across the surface.
+    const auto height = [&](const dvec3& p) {
+      return curved ? seam.offset(p) * turn : dot(p - o, out_n);
+    };
+    const auto outward_at = [&](const dvec3& p) { return curved ? normal_at(p) * turn : out_n; };
 
+    // The patch's extent in (u, v): its outline polygon, or a band's two
+    // ends (y0 and y1, any u).
     std::vector<dvec2> outline;
     for (const std::uint32_t v : seam.loops[0].vertices) outline.push_back(seam.vertices[v].uv);
-    if (outline.size() < 3) return std::string("its outline is degenerate");
+    if (outline.size() < 3 && !seam.band) return std::string("its outline is degenerate");
+    double y0 = 0.0, y1 = 0.0;
+    if (seam.band) {
+      y0 = seam.vertices[seam.loops[0].vertices.front()].uv.y;
+      y1 = seam.vertices[seam.loops[1].vertices.front()].uv.y;
+    }
+    const auto within_patch = [&](const dvec2& q) {
+      return seam.band ? (y0 <= q.y && q.y <= y1) : point_in_polygon(outline, q);
+    };
+    const auto outline_distance = [&](const dvec2& q) {
+      return seam.band ? std::min(std::abs(q.y - y0), std::abs(q.y - y1))
+                       : loop_distance(outline, q);
+    };
 
-    // 1. The grid's triangles on the patch: within a cell of its plane,
+    // 1. The grid's triangles on the patch: within a cell of its surface,
     //    touching the outline or within a cell of it, and facing out. Near
     //    the outline, sideways too: where the patch runs to an edge of the
     //    boundary, the grid's surface rounds the edge off, and taking that
@@ -774,18 +831,20 @@ class Builder {
       double depth = 0.0;   // of its deepest corner
       bool ok = true;
       for (const std::uint32_t v : tri) {
-        const double d = dot(positions_[v] - o, out_n);
+        const double d = height(positions_[v]);
         if (d > above) ok = false;
         depth = std::max(depth, -d);
         const dvec2 q = uv(positions_[v]);
-        if (!within && point_in_polygon(outline, q)) within = true;
-        if (!near && loop_distance(outline, q) <= margin) near = true;
+        if (!within && within_patch(q)) within = true;
+        if (!near && outline_distance(q) <= margin) near = true;
       }
       if (!ok || !(within || near) || depth > (near ? below_rim : below)) continue;
       const dvec3 n = cross(positions_[tri[1]] - positions_[tri[0]], positions_[tri[2]] - positions_[tri[0]]);
       const double len = length(n);
       if (!(len > 0.0)) continue;
-      const double facing = dot(n, out_n) / len;
+      const dvec3 centre =
+          (positions_[tri[0]] + positions_[tri[1]] + positions_[tri[2]]) * (1.0 / 3.0);
+      const double facing = dot(n, outward_at(centre)) / len;
       if (facing <= (near ? -0.2 : 0.3)) continue;
       candidate[t] = true;
     }
@@ -819,9 +878,14 @@ class Builder {
         const std::uint32_t u = queue[q];
         pieces.back().push_back(u);
         const Triangle& tri = triangles_[u];
-        areas.back() += 0.5 * turn *
-                        cross(uv(positions_[tri[1]]) - uv(positions_[tri[0]]),
-                              uv(positions_[tri[2]]) - uv(positions_[tri[0]]));
+        if (curved) {
+          const std::array<dvec2, 3> p = tri_uv(tri);
+          areas.back() += 0.5 * turn * cross(p[1] - p[0], p[2] - p[0]);
+        } else {
+          areas.back() += 0.5 * turn *
+                          cross(uv(positions_[tri[1]]) - uv(positions_[tri[0]]),
+                                uv(positions_[tri[2]]) - uv(positions_[tri[0]]));
+        }
         for (std::size_t k = 0; k < 3; ++k) {
           const auto w = across(tri[k], tri[(k + 1) % 3]);
           if (w && candidate[*w] && component[*w] < 0) {
@@ -839,21 +903,21 @@ class Builder {
     if (!(areas[best] > 0.0)) return std::string("the contents don't reach it");
     const auto chosen = static_cast<std::int32_t>(best);
 
-    // 3. Its rim: edges of chosen triangles whose neighbour stays. Where it
-    //    touches itself at a vertex (round a corner of the patch, say), the
-    //    triangles round that vertex join it. Then it must be one simple
-    //    loop, or the contents leave gaps in the patch.
+    // 3. Its rims: edges of chosen triangles whose neighbour stays. Where a
+    //    rim touches itself at a vertex (round a corner of the patch, say),
+    //    the triangles round that vertex join it. Then the rims must be
+    //    simple loops, one per loop of the seam's face (a band has two), or
+    //    the contents leave gaps in the patch.
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> fans;
     for (std::uint32_t t = 0; t < triangles_.size(); ++t) {
       if (state_[t] != State::Field) continue;
       for (const std::uint32_t v : triangles_[t]) fans[v].push_back(t);
     }
     std::unordered_map<std::uint32_t, std::uint32_t> next;
-    std::uint32_t start = 0;
-    std::size_t rim_edges = 0;
+    std::vector<std::uint32_t> starts;  // each rim edge's start, in order
     for (int attempt = 0;; ++attempt) {
       next.clear();
-      rim_edges = 0;
+      starts.clear();
       std::vector<std::uint32_t> pinched;
       for (const std::uint32_t t : pieces[best]) {
         const Triangle& tri = triangles_[t];
@@ -863,7 +927,7 @@ class Builder {
           const auto w = across(a, b);
           if (w && component[*w] == chosen) continue;
           if (!next.emplace(a, b).second) pinched.push_back(a);
-          if (rim_edges++ == 0) start = a;
+          starts.push_back(a);
         }
       }
       if (pinched.empty()) break;
@@ -878,30 +942,47 @@ class Builder {
         }
       }
     }
-    std::vector<std::uint32_t> rim;
-    for (std::uint32_t v = start;;) {
-      rim.push_back(v);
-      const auto it = next.find(v);
-      if (it == next.end()) return std::string("the contents leave gaps in the patch");
-      v = it->second;
-      if (v == start) break;
-      if (rim.size() > rim_edges) return std::string("the contents leave gaps in the patch");
-    }
-    if (rim.size() != rim_edges || rim.size() < 3) {
-      return std::string("the contents leave gaps in the patch");
+    const std::size_t want_loops = seam.band ? 2 : 1;
+    std::vector<std::vector<std::uint32_t>> rims;
+    {
+      std::unordered_set<std::uint32_t> seen;
+      std::size_t walked = 0;
+      for (const std::uint32_t start : starts) {
+        if (seen.contains(start)) continue;
+        std::vector<std::uint32_t> rim;
+        for (std::uint32_t v = start;;) {
+          rim.push_back(v);
+          seen.insert(v);
+          const auto it = next.find(v);
+          if (it == next.end()) return std::string("the contents leave gaps in the patch");
+          v = it->second;
+          if (v == start) break;
+          if (rim.size() > starts.size() || seen.contains(v)) {
+            return std::string("the contents leave gaps in the patch");
+          }
+        }
+        walked += rim.size();
+        if (rim.size() < 3) return std::string("the contents leave gaps in the patch");
+        rims.push_back(std::move(rim));
+        if (rims.size() > want_loops) return std::string("the contents leave gaps in the patch");
+      }
+      if (rims.size() != want_loops || walked != starts.size()) {
+        return std::string("the contents leave gaps in the patch");
+      }
     }
 
     // The seam's face, facing out: its triangles and every hole fill (the
-    // contents have no bolt holes), and its outer loop in the face's own
+    // contents have no bolt holes), and its loops in the face's own
     // direction.
-    std::vector<Triangle> face = seam.triangles_facing(out_n);
+    std::vector<Triangle> face = curved ? seam.oriented_triangles(turn > 0)
+                                        : seam.triangles_facing(out_n);
     for (const auto& fill : seam.hole_fills) {
       for (Triangle t : fill) {
         if (turn < 0) std::swap(t[1], t[2]);
         face.push_back(t);
       }
     }
-    std::vector<std::uint32_t> loop;
+    std::vector<std::vector<std::uint32_t>> loops;
     {
       std::unordered_map<std::uint64_t, int> directed;
       for (const Triangle& t : face) {
@@ -915,37 +996,109 @@ class Builder {
           if (directed.count(edge_key(b, a)) == 0) seam_next.emplace(a, b);
         }
       }
-      const std::uint32_t s0 = seam.loops[0].vertices.front();
-      for (std::uint32_t v = s0;;) {
-        loop.push_back(v);
-        const auto it = seam_next.find(v);
-        if (it == seam_next.end() || loop.size() > seam_next.size()) {
-          return std::string("its triangulation has no single outer loop");
+      std::size_t walked = 0;
+      for (std::size_t l = 0; l < want_loops; ++l) {
+        std::vector<std::uint32_t> loop;
+        const std::uint32_t s0 = seam.loops[l].vertices.front();
+        for (std::uint32_t v = s0;;) {
+          loop.push_back(v);
+          const auto it = seam_next.find(v);
+          if (it == seam_next.end() || loop.size() > seam_next.size()) {
+            return std::string("its triangulation has no single outer loop");
+          }
+          v = it->second;
+          if (v == s0) break;
         }
-        v = it->second;
-        if (v == s0) break;
+        walked += loop.size();
+        loops.push_back(std::move(loop));
       }
-      if (loop.size() != seam_next.size()) return std::string("its triangulation has no single outer loop");
+      if (walked != seam_next.size()) return std::string("its triangulation has no single outer loop");
     }
 
-    // 4. The rim must follow the outline, both going the same way round.
-    std::vector<dvec2> rim2;
-    for (const std::uint32_t v : rim) rim2.push_back(uv(positions_[v]));
-    std::vector<dvec2> loop2;
-    for (const std::uint32_t v : loop) loop2.push_back(seam.vertices[v].uv);
-    if (!(signed_area(rim2) * turn > 0.0) || !(signed_area(loop2) * turn > 0.0)) {
-      return std::string("the contents fold over it");
-    }
+    // 4. Each rim must follow its loop of the outline, both going the same
+    //    way round.
     const double track = 3.0 * cell_;
-    for (const dvec2& p : loop2) {
-      if (loop_distance(rim2, p) > track) return std::string("the contents don't cover all of it");
-    }
-    for (const dvec2& p : rim2) {
-      if (loop_distance(loop2, p) > track) return std::string("the contents don't cover all of it");
+    if (!curved) {
+      const std::vector<std::uint32_t>& rim = rims[0];
+      const std::vector<std::uint32_t>& loop = loops[0];
+      std::vector<dvec2> rim2;
+      for (const std::uint32_t v : rim) rim2.push_back(uv(positions_[v]));
+      std::vector<dvec2> loop2;
+      for (const std::uint32_t v : loop) loop2.push_back(seam.vertices[v].uv);
+      if (!(signed_area(rim2) * turn > 0.0) || !(signed_area(loop2) * turn > 0.0)) {
+        return std::string("the contents fold over it");
+      }
+      for (const dvec2& p : loop2) {
+        if (loop_distance(rim2, p) > track) return std::string("the contents don't cover all of it");
+      }
+      for (const dvec2& p : rim2) {
+        if (loop_distance(loop2, p) > track) return std::string("the contents don't cover all of it");
+      }
+    } else {
+      // On a cylinder: pair rims with loops by height along the axis, check
+      // each pair winds the same way in u (a band's loops wind once round
+      // the axis; a rectangle's not at all, but its area has the sign), and
+      // track each other in space.
+      const auto mean_v = [&](const std::vector<dvec3>& pts) {
+        double s = 0.0;
+        for (const dvec3& p : pts) s += uv(p).y;
+        return s / static_cast<double>(pts.size());
+      };
+      const auto winding = [&](const std::vector<dvec3>& pts) {
+        // Signed area in unwrapped (u, v), and the total turn in u.
+        double area = 0.0, du = 0.0;
+        std::vector<dvec2> q;
+        for (const dvec3& p : pts) q.push_back(uv(p));
+        for (std::size_t i = 1; i < q.size(); ++i) {
+          double d = q[i].x - q[i - 1].x;
+          if (d > 0.5 * wrap) d -= wrap;
+          if (d < -0.5 * wrap) d += wrap;
+          q[i].x = q[i - 1].x + d;
+          du += d;
+        }
+        double d = uv(pts.front()).x - q.back().x;
+        d -= wrap * std::round(d / wrap);
+        du += d;
+        for (std::size_t i = 0; i < q.size(); ++i) area += cross(q[i], q[(i + 1) % q.size()]);
+        return std::pair{0.5 * area, du};
+      };
+      std::vector<std::vector<dvec3>> rim3(rims.size()), loop3(loops.size());
+      for (std::size_t r = 0; r < rims.size(); ++r) {
+        for (const std::uint32_t v : rims[r]) rim3[r].push_back(positions_[v]);
+      }
+      for (std::size_t l = 0; l < loops.size(); ++l) {
+        for (const std::uint32_t v : loops[l]) loop3[l].push_back(seam.vertices[v].position);
+      }
+      if (rims.size() == 2 &&
+          std::abs(mean_v(rim3[0]) - mean_v(loop3[0])) > std::abs(mean_v(rim3[1]) - mean_v(loop3[0]))) {
+        std::swap(rims[0], rims[1]);
+        std::swap(rim3[0], rim3[1]);
+      }
+      for (std::size_t l = 0; l < loops.size(); ++l) {
+        const auto [ra, ru] = winding(rim3[l]);
+        const auto [la, lu] = winding(loop3[l]);
+        if (seam.band) {
+          if (!(std::abs(ru) > 0.5 * wrap) || !(ru * lu > 0.0)) {
+            return std::string("the contents fold over it");
+          }
+        } else if (!(ra * turn > 0.0) || !(la * turn > 0.0)) {
+          return std::string("the contents fold over it");
+        }
+        for (const dvec3& p : loop3[l]) {
+          if (polyline_distance(rim3[l], p) > track) {
+            return std::string("the contents don't cover all of it");
+          }
+        }
+        for (const dvec3& p : rim3[l]) {
+          if (polyline_distance(loop3[l], p) > track) {
+            return std::string("the contents don't cover all of it");
+          }
+        }
+      }
     }
 
     // 5. Replace: drop the chosen triangles, add the seam's face, and join
-    //    the rim to the outline with a strip.
+    //    each rim to its loop of the outline with a strip.
     for (const std::uint32_t t : pieces[best]) state_[t] = State::Deleted;
     std::vector<std::uint32_t> map;
     map.reserve(seam.vertices.size());
@@ -956,45 +1109,49 @@ class Builder {
     }
     for (const Triangle& t : face) add({map[t[0]], map[t[1]], map[t[2]]});
 
-    // Start the rim at the vertex nearest the outline's first.
-    const dvec3 s_first = core::to_fp64(seam.vertices[loop.front()].position32);
-    std::size_t h0 = 0;
-    double h0_d = std::numeric_limits<double>::infinity();
-    for (std::size_t i = 0; i < rim.size(); ++i) {
-      const double d = length_squared(positions_[rim[i]] - s_first);
-      if (d < h0_d) {
-        h0_d = d;
-        h0 = i;
+    for (std::size_t l = 0; l < loops.size(); ++l) {
+      std::vector<std::uint32_t>& rim = rims[l];
+      const std::vector<std::uint32_t>& loop = loops[l];
+      // Start the rim at the vertex nearest the loop's first.
+      const dvec3 s_first = core::to_fp64(seam.vertices[loop.front()].position32);
+      std::size_t h0 = 0;
+      double h0_d = std::numeric_limits<double>::infinity();
+      for (std::size_t i = 0; i < rim.size(); ++i) {
+        const double d = length_squared(positions_[rim[i]] - s_first);
+        if (d < h0_d) {
+          h0_d = d;
+          h0 = i;
+        }
       }
-    }
-    std::rotate(rim.begin(), rim.begin() + static_cast<std::ptrdiff_t>(h0), rim.end());
-    const auto params = [](const std::vector<dvec3>& pts) {
-      std::vector<double> u(pts.size() + 1, 0.0);
-      for (std::size_t i = 0; i < pts.size(); ++i) {
-        u[i + 1] = u[i] + length(pts[(i + 1) % pts.size()] - pts[i]);
-      }
-      const double total = u.back();
-      for (double& x : u) x = total > 0 ? x / total : 0.0;
-      return u;
-    };
-    std::vector<dvec3> rim3;
-    for (const std::uint32_t v : rim) rim3.push_back(positions_[v]);
-    std::vector<dvec3> loop3;
-    for (const std::uint32_t v : loop) loop3.push_back(core::to_fp64(seam.vertices[v].position32));
-    const std::vector<double> uh = params(rim3);
-    const std::vector<double> us = params(loop3);
-    const std::size_t n = rim.size();
-    const std::size_t m = loop.size();
-    std::size_t i = 0;
-    std::size_t j = 0;
-    while (i < n || j < m) {
-      const bool advance_rim = j == m || (i < n && uh[i + 1] <= us[j + 1]);
-      if (advance_rim) {
-        add({rim[i], rim[(i + 1) % n], map[loop[j % m]]});
-        ++i;
-      } else {
-        add({map[loop[(j + 1) % m]], map[loop[j]], rim[i % n]});
-        ++j;
+      std::rotate(rim.begin(), rim.begin() + static_cast<std::ptrdiff_t>(h0), rim.end());
+      const auto params = [](const std::vector<dvec3>& pts) {
+        std::vector<double> u(pts.size() + 1, 0.0);
+        for (std::size_t i = 0; i < pts.size(); ++i) {
+          u[i + 1] = u[i] + length(pts[(i + 1) % pts.size()] - pts[i]);
+        }
+        const double total = u.back();
+        for (double& x : u) x = total > 0 ? x / total : 0.0;
+        return u;
+      };
+      std::vector<dvec3> rim3;
+      for (const std::uint32_t v : rim) rim3.push_back(positions_[v]);
+      std::vector<dvec3> loop3;
+      for (const std::uint32_t v : loop) loop3.push_back(core::to_fp64(seam.vertices[v].position32));
+      const std::vector<double> uh = params(rim3);
+      const std::vector<double> us = params(loop3);
+      const std::size_t n = rim.size();
+      const std::size_t m = loop.size();
+      std::size_t i = 0;
+      std::size_t j = 0;
+      while (i < n || j < m) {
+        const bool advance_rim = j == m || (i < n && uh[i + 1] <= us[j + 1]);
+        if (advance_rim) {
+          add({rim[i], rim[(i + 1) % n], map[loop[j % m]]});
+          ++i;
+        } else {
+          add({map[loop[(j + 1) % m]], map[loop[j]], rim[i % n]});
+          ++j;
+        }
       }
     }
     return std::nullopt;

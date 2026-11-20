@@ -32,7 +32,7 @@ vs::kernel::Solid box(dvec3 lo, dvec3 hi) {
 struct BoxMesh {
   std::vector<fvec3> positions;
   std::vector<std::uint32_t> indices;
-  MeshView view() const { return {positions, indices}; }
+  MeshView view() const { return {positions, indices, {}}; }
 };
 BoxMesh box_mesh(fvec3 lo, fvec3 hi) {
   BoxMesh m;

@@ -51,6 +51,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "vs/core/diagnostic.hpp"
@@ -112,6 +113,11 @@ struct OutlineLoop {
 // has two loops instead, each one line along x a full turn long: loops[0]
 // at the lower y running +x, loops[1] at the upper y running -x.
 struct SeamOutline {
+  SeamOutline() = default;
+  SeamOutline(const sketch::SketchPlane& frame_, std::vector<OutlineLoop> loops_,
+              double radius_ = 0.0, bool band_ = false)
+      : frame(frame_), loops(std::move(loops_)), radius(radius_), band(band_) {}
+
   sketch::SketchPlane frame;
   std::vector<OutlineLoop> loops;
   double radius = 0.0;  // 0: the frame's plane

@@ -261,7 +261,7 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
                      ms_since(t), cm.mesh.triangle_count(), cm.moved_vertices);
   t = std::chrono::steady_clock::now();
   const auto contained = validate::check_containment(
-      layout.volumes[0].boundary, validate::MeshView{cm.mesh.positions, cm.mesh.indices},
+      layout.volumes[0].boundary, validate::MeshView{cm.mesh.positions, cm.mesh.indices, {}},
       doc.volume_subject(v.id), settings,
       [&pool](std::size_t n, const std::function<void(std::size_t)>& task) { pool.run(n, task); });
   out << fmt::format("  containment   {:9.1f} ms  ({})\n", ms_since(t),
