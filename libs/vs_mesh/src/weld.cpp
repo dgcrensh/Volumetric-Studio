@@ -123,17 +123,30 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
   }();
 
   // 3. Conformity, per seam and volume.
-  // Each seam's triangles, as sorted seam vertex indices.
-  std::vector<std::vector<std::array<std::uint32_t, 3>>> expected(lib.seams.size());
-  std::vector<std::vector<std::array<std::uint32_t, 3>>> fills(lib.seams.size());
+  // Each seam's triangles and hole fills by sorted corners, with, for a
+  // fill, its hole (0 for the seam's own triangles).
+  struct Known {
+    std::array<std::uint32_t, 3> corners;
+    std::uint32_t hole;
+    bool operator<(const Known& o) const { return corners < o.corners; }
+  };
+  std::vector<std::vector<Known>> expected(lib.seams.size());
+  std::vector<std::vector<Known>> fills(lib.seams.size());
   for (std::uint32_t s = 0; s < lib.seams.size(); ++s) {
-    for (const Triangle& t : lib.seams[s].triangles) expected[s].push_back(sorted(t));
+    for (const Triangle& t : lib.seams[s].triangles) expected[s].push_back({sorted(t), 0});
     std::sort(expected[s].begin(), expected[s].end());
-    for (const auto& fill : lib.seams[s].hole_fills) {
-      for (const Triangle& t : fill) fills[s].push_back(sorted(t));
+    for (std::size_t h = 0; h < lib.seams[s].hole_fills.size(); ++h) {
+      for (const Triangle& t : lib.seams[s].hole_fills[h]) {
+        fills[s].push_back({sorted(t), static_cast<std::uint32_t>(h + 1)});
+      }
     }
     std::sort(fills[s].begin(), fills[s].end());
   }
+  const auto lookup = [](const std::vector<Known>& list,
+                         const std::array<std::uint32_t, 3>& corners) -> const Known* {
+    const auto it = std::lower_bound(list.begin(), list.end(), Known{corners, 0});
+    return it != list.end() && it->corners == corners ? &*it : nullptr;
+  };
   // Seam triangles: one of a seam's triangles, all three corners on it.
   // Other triangles may join three seam vertices too (a ring round a
   // concave outline, outside the patch); they are the mesher's own. Side:
@@ -142,29 +155,32 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
   std::vector<std::uint32_t> tri_seam(out.triangle_count(), kNoSeam);
   std::vector<bool> tri_fill(out.triangle_count(), false);  // one of a seam's hole fills
   std::vector<int> tri_side(out.triangle_count(), 0);
-  // (seam, volume) -> the seam triangles it has, and which way each faces.
-  std::map<std::pair<std::uint32_t, Id>, std::vector<std::pair<std::array<std::uint32_t, 3>, int>>>
-      observed;
+  struct Seen {
+    std::array<std::uint32_t, 3> corners;
+    int side;
+    std::uint32_t hole;  // 0: a seam triangle
+  };
+  // (seam, volume) -> the seam and fill triangles it has, and which way each faces.
+  std::map<std::pair<std::uint32_t, Id>, std::vector<Seen>> observed;
   for (std::size_t t = 0; t < out.triangle_count(); ++t) {
     const Triangle tri = out.triangle(t);
     const std::uint32_t s = seam_of[tri[0]];
     if (s == kNoSeam || seam_of[tri[1]] != s || seam_of[tri[2]] != s) continue;
-    const auto corners = sorted({seam_index[tri[0]], seam_index[tri[1]], seam_index[tri[2]]});
-    const bool is_seam = std::binary_search(expected[s].begin(), expected[s].end(), corners);
-    const bool is_fill = !is_seam && std::binary_search(fills[s].begin(), fills[s].end(), corners);
-    if (!is_seam && !is_fill) continue;
-    const Seam& seam = lib.seams[s];
+    const Triangle local{seam_index[tri[0]], seam_index[tri[1]], seam_index[tri[2]]};
+    const auto corners = sorted(local);
+    const Known* known = lookup(expected[s], corners);
+    if (known == nullptr) known = lookup(fills[s], corners);
+    if (known == nullptr) continue;
     // In uv, unwrapped across a band's cut (L2).
-    const std::array<dvec2, 3> q =
-        seam.triangle_uv({seam_index[tri[0]], seam_index[tri[1]], seam_index[tri[2]]});
-    const double o = core::cross(q[1] - q[0], q[2] - q[0]);
-    tri_side[t] = o > 0 ? 1 : (o < 0 ? -1 : 0);
-    if (is_fill) {
+    const std::array<dvec2, 3> q = lib.seams[s].triangle_uv(local);
+    const double turn = core::cross(q[1] - q[0], q[2] - q[0]);
+    tri_side[t] = turn > 0 ? 1 : (turn < 0 ? -1 : 0);
+    if (known->hole > 0) {
       tri_fill[t] = true;
-      continue;
+    } else {
+      tri_seam[t] = s;
     }
-    tri_seam[t] = s;
-    observed[{s, out.triangle_volumes[t]}].emplace_back(corners, tri_side[t]);
+    observed[{s, out.triangle_volumes[t]}].push_back({corners, tri_side[t], known->hole});
   }
   for (std::uint32_t s = 0; s < lib.seams.size(); ++s) {
     const Seam& seam = lib.seams[s];
@@ -187,24 +203,40 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
         continue;
       }
       std::vector<std::array<std::uint32_t, 3>> got;
+      std::vector<std::size_t> fill_count(seam.hole_fills.size() + 1, 0);
       got.reserve(it->second.size());
       int side = 0;
       bool one_way = true;
-      for (const auto& [tri, sd] : it->second) {
-        got.push_back(tri);
-        if (sd == 0 || (side != 0 && sd != side)) one_way = false;
-        if (side == 0) side = sd;
+      for (const Seen& seen : it->second) {
+        if (seen.hole == 0) {
+          got.push_back(seen.corners);
+        } else {
+          ++fill_count[seen.hole];
+        }
+        if (seen.side == 0 || (side != 0 && seen.side != side)) one_way = false;
+        if (side == 0) side = seen.side;
       }
       std::sort(got.begin(), got.end());
-      if (got != expected[s] || !one_way) {
-        std::vector<std::array<std::uint32_t, 3>> diff;
-        std::set_difference(expected[s].begin(), expected[s].end(), got.begin(), got.end(),
-                            std::back_inserter(diff));
+      std::vector<std::array<std::uint32_t, 3>> want;
+      want.reserve(expected[s].size());
+      for (const Known& k : expected[s]) want.push_back(k.corners);
+      // A hole is filled whole or not at all (H4).
+      std::size_t partial = 0;
+      for (std::size_t h = 1; h < fill_count.size(); ++h) {
+        if (fill_count[h] != 0 && fill_count[h] != seam.hole_fills[h - 1].size()) ++partial;
+      }
+      if (got != want || !one_way || partial > 0) {
+        std::vector<std::array<std::uint32_t, 3>> missing;
+        std::set_difference(want.begin(), want.end(), got.begin(), got.end(),
+                            std::back_inserter(missing));
+        const std::size_t repeated = got.size() - (want.size() - missing.size());
+        std::string what = std::to_string(missing.size()) + " of " + std::to_string(want.size()) +
+                           " seam triangles missing";
+        if (repeated > 0) what += ", " + std::to_string(repeated) + " repeated";
+        if (!one_way) what += ", not all facing one way";
+        if (partial > 0) what += ", " + std::to_string(partial) + " hole fill" + (partial == 1 ? "" : "s") + " partial";
         report.add("mesh.weld.nonconforming",
-                   "The volume's mesh of the seam isn't the seam's triangulation (" +
-                       std::to_string(diff.size()) + " of " + std::to_string(expected[s].size()) +
-                       " seam triangles missing" + (one_way ? "" : ", not all facing one way") +
-                       ")",
+                   "The volume's mesh of the seam isn't the seam's triangulation (" + what + ")",
                    {seam.subject(), lib.volume_subject(v)});
       }
     }

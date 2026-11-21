@@ -9,6 +9,7 @@
 #include "vs/core/core.hpp"
 #include "vs/eval/module.hpp"
 #include "vs/feature/module.hpp"
+#include "vs/gpu/gpu.hpp"
 #include "vs/kernel/module.hpp"
 #include "vs/kernel/kernel.hpp"
 #include "vs/mesh/module.hpp"
@@ -108,6 +109,17 @@ bool run_selftest(std::ostream& out) {
     }
     out << (ok ? "  pass  " : "  FAIL  ") << check.name << "\n";
     if (ok) ++passed;
+  }
+  // vs_gpu (H4): whether the GPU path is there and matches the CPU. Not a
+  // check: most machines (and every platform but Windows) have none, and
+  // then everything runs on the CPU.
+  vs::gpu::InstallOptions gpu_options;
+  gpu_options.force = true;  // the self-checks only, no calibration
+  const vs::gpu::Status gpu = vs::gpu::install(gpu_options);
+  if (gpu.installed) {
+    out << "  info  vs_gpu: " << gpu.device << ", matches the CPU\n";
+  } else {
+    out << "  info  vs_gpu: not available (" << gpu.why << ")\n";
   }
   out << "selftest: " << passed << "/" << all.size() << " checks passed\n";
   return passed == all.size();

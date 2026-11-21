@@ -1,4 +1,5 @@
 #include "sketch_commands.hpp"
+#include "files.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -13,12 +14,6 @@
 #include "vs/sketch/solver.hpp"
 
 namespace vs::cli {
-
-namespace {
-std::filesystem::path to_path(std::string_view arg) {
-  return std::filesystem::path(std::u8string(arg.begin(), arg.end()));
-}
-}  // namespace
 
 int run_sketch_solve(std::span<const std::string_view> args, std::ostream& out,
                      std::ostream& err) {

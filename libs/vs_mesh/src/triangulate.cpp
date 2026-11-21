@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <deque>
 #include <string>
 #include <unordered_map>
@@ -20,16 +21,43 @@ Diagnostic error(std::string code, std::string message) {
   return Diagnostic::error(std::move(code), std::move(message));
 }
 
+bool before(const dvec2& p, const dvec2& q) { return p.x < q.x || (p.x == q.x && p.y < q.y); }
+
+// Twice the signed area of (a, b, c). It is computed from the three points
+// in one canonical order (and the sign of the permutation applied), so it
+// is exactly antisymmetric: orient(a, b, c) == -orient(b, a, c) bit for
+// bit, and every test that sees the same three points agrees on their
+// side, whichever corner it measures from (H4).
 double orient(const dvec2& a, const dvec2& b, const dvec2& c) {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const dvec2* p = &a;
+  const dvec2* q = &b;
+  const dvec2* r = &c;
+  bool odd = false;
+  if (before(*q, *p)) {
+    std::swap(p, q);
+    odd = !odd;
+  }
+  if (before(*r, *q)) {
+    std::swap(q, r);
+    odd = !odd;
+  }
+  if (before(*q, *p)) {
+    std::swap(p, q);
+    odd = !odd;
+  }
+  const double o = (q->x - p->x) * (r->y - p->y) - (q->y - p->y) * (r->x - p->x);
+  return odd ? -o : o;
 }
 
 // A threshold under which orient(a, b, c) counts as zero: rounding in the
-// products is about 1e-16 of their size.
+// products is about 1e-16 of their size. Symmetric in the three points
+// (the product of the two longest sides), so it is the same threshold
+// whichever order a caller names them in.
 double orient_eps(const dvec2& a, const dvec2& b, const dvec2& c) {
   const double ab = std::abs(b.x - a.x) + std::abs(b.y - a.y);
-  const double ac = std::abs(c.x - a.x) + std::abs(c.y - a.y);
-  return 1e-12 * ab * ac;
+  const double bc = std::abs(c.x - b.x) + std::abs(c.y - b.y);
+  const double ca = std::abs(a.x - c.x) + std::abs(a.y - c.y);
+  return 1e-12 * std::max({ab * bc, bc * ca, ca * ab});
 }
 
 // Positive when d lies inside the circle through a, b, c (counter-clockwise).
@@ -107,7 +135,9 @@ class Cdt {
   bool insert(std::uint32_t q);
   bool convex_flip_ok(std::uint32_t t, std::uint32_t k) const;
   void flip(std::uint32_t t, std::uint32_t k);
-  void legalise(std::vector<std::pair<std::uint32_t, std::uint32_t>>& stack);
+  // False when it takes more flips than any Delaunay insertion can need
+  // (rounding cycling flips): the triangulation then fails, never hangs.
+  bool legalise(std::vector<std::pair<std::uint32_t, std::uint32_t>>& stack);
   // The triangle holding directed or undirected edge (x, y), and the edge's
   // index in it; kNone when the edge doesn't exist.
   std::pair<std::uint32_t, std::uint32_t> find_edge(std::uint32_t x, std::uint32_t y) const;
@@ -131,8 +161,12 @@ bool Cdt::locate(const dvec2& q, std::uint32_t& tri, std::uint32_t& edge) const 
       const std::uint32_t k = static_cast<std::uint32_t>((i + step) % 3);
       const dvec2& a = p_[tr.v[inc(k)]];
       const dvec2& b = p_[tr.v[dec(k)]];
-      const double o = orient(a, b, q);
-      if (o < -orient_eps(a, b, q) && tr.n[k] != kNone) {
+      // Across any edge q is beyond, however slightly: orient() is exactly
+      // antisymmetric, so the two triangles of an edge never both send q
+      // back, and the walk ends in the triangle that holds q (H4: with a
+      // tolerance here it could stop in a flat neighbour q only lines up
+      // with).
+      if (orient(a, b, q) < 0 && tr.n[k] != kNone) {
         cur = tr.n[k];
         moved = true;
       }
@@ -140,16 +174,32 @@ bool Cdt::locate(const dvec2& q, std::uint32_t& tri, std::uint32_t& edge) const 
     if (moved) continue;
     tri = cur;
     edge = kNone;
+    // The edges q lies on, within rounding. In a sliver (three nearly
+    // collinear corners) q can be within rounding of two edges without
+    // being near their shared corner: it lies on the one it projects
+    // inside of, the nearer if both (H4: this failed as a "duplicate").
+    std::uint32_t on = 0;
+    double best = std::numeric_limits<double>::infinity();
     for (std::uint32_t k = 0; k < 3; ++k) {
       const dvec2& a = p_[tr.v[inc(k)]];
       const dvec2& b = p_[tr.v[dec(k)]];
-      if (std::abs(orient(a, b, q)) <= orient_eps(a, b, q)) {
-        if (edge != kNone) return false;  // on two edges: a duplicate point
+      const double o = orient(a, b, q);
+      if (std::abs(o) > orient_eps(a, b, q)) {
+        if (o < 0) return false;  // outside the super triangle
+        continue;
+      }
+      ++on;
+      const dvec2 ab = b - a;
+      const double len2 = core::dot(ab, ab);
+      const double t = core::dot(q - a, ab) / len2;
+      if (!(t > 0 && t < 1)) continue;
+      const double off = std::abs(o) / std::sqrt(len2);
+      if (off < best) {
+        best = off;
         edge = k;
-      } else if (orient(a, b, q) < 0) {
-        return false;  // outside the super triangle
       }
     }
+    if (on > 0 && edge == kNone) return false;  // at a corner: a duplicate point
     return true;
   }
   return false;
@@ -205,8 +255,7 @@ bool Cdt::insert(std::uint32_t q) {
     }
     last_ = T0;
   }
-  legalise(stack);
-  return true;
+  return legalise(stack);
 }
 
 bool Cdt::convex_flip_ok(std::uint32_t t, std::uint32_t k) const {
@@ -241,7 +290,11 @@ void Cdt::flip(std::uint32_t t, std::uint32_t k) {
   touch(u);
 }
 
-void Cdt::legalise(std::vector<std::pair<std::uint32_t, std::uint32_t>>& stack) {
+bool Cdt::legalise(std::vector<std::pair<std::uint32_t, std::uint32_t>>& stack) {
+  // An insertion's flips each add a triangle to the new point's star, which
+  // has fewer triangles than the triangulation.
+  const std::size_t limit = 2 * t_.size() + 64;
+  std::size_t flips = 0;
   while (!stack.empty()) {
     const auto [t, q] = stack.back();
     stack.pop_back();
@@ -255,10 +308,12 @@ void Cdt::legalise(std::vector<std::pair<std::uint32_t, std::uint32_t>>& stack) 
     const std::uint32_t d = t_[u].v[3 - ca - cb];
     if (incircle(p_[tr.v[0]], p_[tr.v[1]], p_[tr.v[2]], p_[d]) <= 0) continue;
     if (!convex_flip_ok(t, k)) continue;
+    if (++flips > limit) return false;
     flip(t, k);
     stack.emplace_back(t, q);
     stack.emplace_back(u, q);
   }
+  return true;
 }
 
 bool Cdt::insert_all(std::size_t real_count) {
@@ -269,7 +324,10 @@ bool Cdt::insert_all(std::size_t real_count) {
     hi = core::max(hi, p_[i]);
   }
   const dvec2 c = (lo + hi) * 0.5;
-  const double d = std::max({hi.x - lo.x, hi.y - lo.y, 1e-9});
+  // Scaled to the points, whatever their size (a fixed floor made points
+  // under a nanometre apart all lie "on" the super triangle's edges).
+  double d = std::max(hi.x - lo.x, hi.y - lo.y);
+  if (!(d > 0)) d = std::max({std::abs(c.x), std::abs(c.y), 1.0});
   p_.resize(real_count);
   p_.push_back({c.x - 20 * d, c.y - 10 * d});
   p_.push_back({c.x + 20 * d, c.y - 10 * d});
@@ -365,8 +423,10 @@ bool Cdt::recover(std::uint32_t a, std::uint32_t b, bool wall) {
 
   const auto crosses = [&](std::uint32_t x, std::uint32_t y) {
     if (x == a || x == b || y == a || y == b) return false;
-    return orient(pa, pb, p_[x]) * orient(pa, pb, p_[y]) < 0 &&
-           orient(p_[x], p_[y], pa) * orient(p_[x], p_[y], pb) < 0;
+    // Signs, never products: a product of two tiny areas can round to zero.
+    const auto opposite = [](double p, double q) { return (p < 0 && q > 0) || (p > 0 && q < 0); };
+    return opposite(orient(pa, pb, p_[x]), orient(pa, pb, p_[y])) &&
+           opposite(orient(p_[x], p_[y], pa), orient(p_[x], p_[y], pb));
   };
   const std::size_t limit = 64 * crossing.size() * crossing.size() + 1024;
   for (std::size_t guard = 0; !crossing.empty(); ++guard) {
@@ -375,6 +435,9 @@ bool Cdt::recover(std::uint32_t a, std::uint32_t b, bool wall) {
     crossing.pop_front();
     const auto [et, ek] = find_edge(x, y);
     if (et == kNone) return false;
+    // A constrained edge in the way means the segments cross after all
+    // (within rounding): fail rather than flip an earlier segment away.
+    if (constrained(x, y)) return false;
     if (!convex_flip_ok(et, ek)) {
       crossing.emplace_back(x, y);
       continue;
@@ -465,63 +528,111 @@ bool segments_touch(const dvec2& p0, const dvec2& p1, const dvec2& q0, const dve
 }
 
 // True when two segments (of loops, or extra ones) meet anywhere they
-// shouldn't.
+// shouldn't. Candidate pairs come from a bounding-volume tree over the
+// segments' boxes, so outlines mixing long and short segments cost
+// O(M log M + pairs whose boxes touch), whatever their scales (H4; a hash
+// grid sized by the mean segment length ran out of memory on them).
 bool check_segments(std::span<const dvec2> pts, const std::vector<Loop>& loops,
                     std::span<const Segment> extra) {
   struct Seg {
     std::uint32_t a, b;
+    dvec2 lo, hi;
   };
   std::vector<Seg> segs;
-  double total = 0;
-  for (const Loop& loop : loops) {
-    for (std::size_t i = 0; i < loop.size(); ++i) {
-      const std::uint32_t a = loop[i], b = loop[(i + 1) % loop.size()];
-      segs.push_back({a, b});
-      total += core::length(pts[b] - pts[a]);
-    }
-  }
-  for (const Segment& e : extra) {
-    segs.push_back({e[0], e[1]});
-    total += core::length(pts[e[1]] - pts[e[0]]);
-  }
-  const double cell = std::max(2.0 * total / static_cast<double>(segs.size()), 1e-12);
-  std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> grid;
-  const auto cell_of = [&](double x) { return static_cast<std::int64_t>(std::floor(x / cell)); };
-  const auto key = [](std::int64_t i, std::int64_t j) {
-    return (static_cast<std::uint64_t>(i) << 32) ^ static_cast<std::uint64_t>(j & 0xffffffff);
+  const auto add = [&](std::uint32_t a, std::uint32_t b) {
+    segs.push_back({a, b, core::min(pts[a], pts[b]), core::max(pts[a], pts[b])});
   };
-  for (std::uint32_t s = 0; s < segs.size(); ++s) {
-    const dvec2 lo = core::min(pts[segs[s].a], pts[segs[s].b]);
-    const dvec2 hi = core::max(pts[segs[s].a], pts[segs[s].b]);
-    for (std::int64_t i = cell_of(lo.x); i <= cell_of(hi.x); ++i) {
-      for (std::int64_t j = cell_of(lo.y); j <= cell_of(hi.y); ++j) grid[key(i, j)].push_back(s);
-    }
+  for (const Loop& loop : loops) {
+    for (std::size_t i = 0; i < loop.size(); ++i) add(loop[i], loop[(i + 1) % loop.size()]);
   }
-  std::unordered_set<std::uint64_t> tested;
-  for (const auto& [k, list] : grid) {
-    for (std::size_t x = 0; x < list.size(); ++x) {
-      for (std::size_t y = x + 1; y < list.size(); ++y) {
-        const std::uint32_t s = std::min(list[x], list[y]), t = std::max(list[x], list[y]);
-        if (!tested.insert((static_cast<std::uint64_t>(s) << 32) | t).second) continue;
-        const Seg& p = segs[s];
-        const Seg& q = segs[t];
-        std::uint32_t shared = kNone, pe = kNone, qe = kNone;
-        if (p.a == q.a || p.a == q.b) shared = p.a;
-        if (p.b == q.a || p.b == q.b) shared = shared == kNone ? p.b : kNone - 1;
-        if (shared == kNone - 1) return true;  // the same segment twice
-        if (shared != kNone) {
-          pe = p.a == shared ? p.b : p.a;
-          qe = q.a == shared ? q.b : q.a;
-          // Adjacent segments may only meet at their shared end: not fold back.
-          const dvec2& v = pts[shared];
-          if (orient(v, pts[pe], pts[qe]) == 0 &&
-              core::dot(pts[pe] - v, pts[qe] - v) > 0) {
-            return true;
-          }
-          continue;
+  for (const Segment& e : extra) add(e[0], e[1]);
+  if (segs.size() < 2) return false;
+
+  // Two segments meeting where they shouldn't.
+  const auto bad_pair = [&](std::uint32_t s, std::uint32_t t) {
+    const Seg& p = segs[s];
+    const Seg& q = segs[t];
+    std::uint32_t shared = kNone;
+    if (p.a == q.a || p.a == q.b) shared = p.a;
+    if (p.b == q.a || p.b == q.b) shared = shared == kNone ? p.b : kNone - 1;
+    if (shared == kNone - 1) return true;  // the same segment twice
+    if (shared != kNone) {
+      const std::uint32_t pe = p.a == shared ? p.b : p.a;
+      const std::uint32_t qe = q.a == shared ? q.b : q.a;
+      // Adjacent segments may only meet at their shared end: not fold back.
+      const dvec2& v = pts[shared];
+      return orient(v, pts[pe], pts[qe]) == 0 && core::dot(pts[pe] - v, pts[qe] - v) > 0;
+    }
+    return segments_touch(pts[p.a], pts[p.b], pts[q.a], pts[q.b]);
+  };
+
+  // The tree: nodes over ranges of `order`, split at the median centre
+  // along the wider axis; leaves of up to four segments.
+  struct Node {
+    dvec2 lo, hi;
+    std::uint32_t begin = 0, end = 0;
+    std::uint32_t left = kNone, right = kNone;
+  };
+  std::vector<std::uint32_t> order(segs.size());
+  for (std::uint32_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::vector<Node> nodes;
+  nodes.reserve(segs.size());
+  std::vector<std::uint32_t> pending{0};
+  nodes.push_back({{}, {}, 0, static_cast<std::uint32_t>(segs.size())});
+  while (!pending.empty()) {
+    const std::uint32_t n = pending.back();
+    pending.pop_back();
+    const std::uint32_t begin = nodes[n].begin, end = nodes[n].end;
+    dvec2 lo = segs[order[begin]].lo, hi = segs[order[begin]].hi;
+    dvec2 clo = (segs[order[begin]].lo + segs[order[begin]].hi) * 0.5, chi = clo;
+    for (std::uint32_t i = begin; i < end; ++i) {
+      const Seg& g = segs[order[i]];
+      lo = core::min(lo, g.lo);
+      hi = core::max(hi, g.hi);
+      const dvec2 c = (g.lo + g.hi) * 0.5;
+      clo = core::min(clo, c);
+      chi = core::max(chi, c);
+    }
+    nodes[n].lo = lo;
+    nodes[n].hi = hi;
+    if (end - begin <= 4) continue;
+    const bool by_x = chi.x - clo.x >= chi.y - clo.y;
+    const std::uint32_t mid = begin + (end - begin) / 2;
+    std::nth_element(order.begin() + begin, order.begin() + mid, order.begin() + end,
+                     [&](std::uint32_t a, std::uint32_t b) {
+                       const double ca = by_x ? segs[a].lo.x + segs[a].hi.x : segs[a].lo.y + segs[a].hi.y;
+                       const double cb = by_x ? segs[b].lo.x + segs[b].hi.x : segs[b].lo.y + segs[b].hi.y;
+                       return ca != cb ? ca < cb : a < b;
+                     });
+    const auto left = static_cast<std::uint32_t>(nodes.size());
+    nodes.push_back({{}, {}, begin, mid});
+    nodes.push_back({{}, {}, mid, end});
+    nodes[n].left = left;
+    nodes[n].right = left + 1;
+    pending.push_back(left);
+    pending.push_back(left + 1);
+  }
+
+  const auto overlaps = [](const dvec2& alo, const dvec2& ahi, const dvec2& blo, const dvec2& bhi) {
+    return alo.x <= bhi.x && blo.x <= ahi.x && alo.y <= bhi.y && blo.y <= ahi.y;
+  };
+  std::vector<std::uint32_t> stack;
+  for (std::uint32_t s = 0; s < segs.size(); ++s) {
+    stack.assign(1, 0);
+    while (!stack.empty()) {
+      const Node& node = nodes[stack.back()];
+      stack.pop_back();
+      if (!overlaps(node.lo, node.hi, segs[s].lo, segs[s].hi)) continue;
+      if (node.left == kNone) {
+        for (std::uint32_t i = node.begin; i < node.end; ++i) {
+          const std::uint32_t t = order[i];
+          if (t <= s || !overlaps(segs[t].lo, segs[t].hi, segs[s].lo, segs[s].hi)) continue;
+          if (bad_pair(s, t)) return true;
         }
-        if (segments_touch(pts[p.a], pts[p.b], pts[q.a], pts[q.b])) return true;
+        continue;
       }
+      stack.push_back(node.left);
+      stack.push_back(node.right);
     }
   }
   return false;

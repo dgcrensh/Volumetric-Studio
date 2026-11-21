@@ -1,5 +1,6 @@
 #include "vs/mesh/mesh.hpp"
 
+#include <cmath>
 #include <string>
 #include <unordered_set>
 
@@ -19,6 +20,11 @@ void Mesh::add_triangle(std::uint32_t a, std::uint32_t b, std::uint32_t c, const
 }
 
 void Mesh::append(const Mesh& other) {
+  if (&other == this) {
+    const Mesh copy = other;  // inserting a vector's own range into it is undefined
+    append(copy);
+    return;
+  }
   const auto offset = static_cast<std::uint32_t>(positions.size());
   positions.insert(positions.end(), other.positions.begin(), other.positions.end());
   seam_vertices.insert(seam_vertices.end(), other.seam_vertices.begin(), other.seam_vertices.end());
@@ -61,6 +67,13 @@ Diagnostics Mesh::check(const core::SubjectRef& subject) const {
       break;
     }
   }
+  for (std::size_t v = 0; v < positions.size(); ++v) {
+    const fvec3& p = positions[v];
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
+      fail("Vertex " + std::to_string(v) + " isn't a finite position");
+      break;
+    }
+  }
   return out;
 }
 
@@ -77,12 +90,16 @@ double double_area(const Mesh& mesh, std::size_t triangle) {
 }
 
 double enclosed_volume(const Mesh& mesh) {
+  if (mesh.empty()) return 0.0;
+  // Tetrahedra to a vertex of the mesh rather than to the origin: far from
+  // the origin the products are huge and their sum cancels to noise (H4).
+  const core::dvec3 p0 = core::to_fp64(mesh.positions[mesh.indices[0]]);
   double six_v = 0.0;
   for (std::size_t t = 0; t < mesh.triangle_count(); ++t) {
     const Triangle tri = mesh.triangle(t);
-    const core::dvec3 a = core::to_fp64(mesh.positions[tri[0]]);
-    const core::dvec3 b = core::to_fp64(mesh.positions[tri[1]]);
-    const core::dvec3 c = core::to_fp64(mesh.positions[tri[2]]);
+    const core::dvec3 a = core::to_fp64(mesh.positions[tri[0]]) - p0;
+    const core::dvec3 b = core::to_fp64(mesh.positions[tri[1]]) - p0;
+    const core::dvec3 c = core::to_fp64(mesh.positions[tri[2]]) - p0;
     six_v += core::dot(a, core::cross(b, c));
   }
   return six_v / 6.0;

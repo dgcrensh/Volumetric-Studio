@@ -30,6 +30,7 @@ vs_add_library_tests(vs_mesh
     tests/meshers.cpp
     tests/test_combine.cpp
     tests/test_curved.cpp
+    tests/test_hardening.cpp
     tests/test_nested.cpp
     tests/test_module.cpp
     tests/test_seam.cpp
@@ -41,7 +42,7 @@ vs_add_library_tests(vs_mesh
     ../vs_validate/tests/fixtures.cpp)
 
 if(VS_BUILD_TESTS)
-  target_link_libraries(vs_mesh_tests PRIVATE vs_model_test_fixtures)
+  target_link_libraries(vs_mesh_tests PRIVATE vs_model_test_fixtures vs::miniz)
   target_include_directories(vs_mesh_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../vs_validate/tests)
   target_compile_definitions(vs_mesh_tests PRIVATE

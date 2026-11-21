@@ -12,7 +12,8 @@
 // Invariants (check() reports breaks as mesh.invalid):
 //   - indices.size() is a multiple of three, and every index is in range;
 //   - seam_vertices.size() == positions.size() (Id::null(): not on a seam);
-//   - triangle_volumes.size() == triangle_count().
+//   - triangle_volumes.size() == triangle_count();
+//   - every position is finite (H4).
 // Triangles wind counter-clockwise seen from outside the volume.
 
 #include <array>
@@ -54,7 +55,8 @@ struct Mesh {
   void add_triangle(std::uint32_t a, std::uint32_t b, std::uint32_t c, const Id& volume);
   void add_triangle(const Triangle& t, const Id& volume) { add_triangle(t[0], t[1], t[2], volume); }
 
-  // Appends `other`, offsetting its indices. Nothing is merged.
+  // Appends `other`, offsetting its indices. Nothing is merged. `other`
+  // may be this mesh.
   void append(const Mesh& other);
 
   [[nodiscard]] core::fbox3 bounds() const;
@@ -75,7 +77,8 @@ validate::MeshView view(const Mesh& mesh);
 double double_area(const Mesh& mesh, std::size_t triangle);
 
 // Signed volume enclosed by a closed, consistently wound mesh, mm³
-// (positive when triangles face out).
+// (positive when triangles face out). Summed over tetrahedra to one of its
+// vertices, so it keeps its digits far from the origin.
 double enclosed_volume(const Mesh& mesh);
 
 }  // namespace vs::mesh

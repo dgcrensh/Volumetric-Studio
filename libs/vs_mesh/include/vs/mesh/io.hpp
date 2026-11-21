@@ -18,11 +18,16 @@
 //     same three floats become one vertex (structurally the same point:
 //     no distance threshold).
 //   - OBJ: "v" and "f" lines (v, v/vt, v//vn, v/vt/vn and negative
-//     indices); polygons are split into fans. Everything else is ignored.
+//     indices); polygons are split into fans; "#" starts a comment
+//     anywhere on a line. Everything else is ignored.
 //   - 3MF: the model part the package's relationships name (or
 //     3D/3dmodel.model), its mesh objects and components, placed by the
 //     build items' transforms, scaled from the model's unit to mm.
-// Triangles that repeat a vertex are dropped.
+// Triangles that repeat a vertex are dropped. Coordinates must be finite
+// as floats (a value past FLT_MAX is refused), and -0 is read as +0, so a
+// position has one bit pattern (H4). 3MF elements may carry a namespace
+// prefix or end tags, and attributes numeric character references.
+// Writers refuse a mesh that fails Mesh::check() (mesh.invalid).
 //
 // Codes: mesh.io.stl, mesh.io.obj, mesh.io.3mf (a file that doesn't read
 // as one, with why), mesh.io.format (an unknown format name), mesh.io.empty

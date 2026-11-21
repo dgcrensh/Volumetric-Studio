@@ -683,15 +683,18 @@ Result<std::pair<Project, std::vector<BlobEntry>>> read_manifest(std::string_vie
     if (read_string(member(m, "format", "manifest"), "format") != "vstudio.project") {
       fail("format", "not a vstudio.project manifest", "model.project.not_project");
     }
+    // Read at full width: get<int>() wrapped 2^32 + 1 round to version 1 (H4).
     const json& version = member(m, "version", "manifest");
-    if (!version.is_number_integer() || version.get<int>() < 1) {
+    const bool whole = version.is_number_unsigned() ||
+                       (version.is_number_integer() && version.get<std::int64_t>() >= 1);
+    if (!whole || version.get<std::uint64_t>() < 1) {
       fail("version", "expected a whole number of 1 or more");
     }
-    if (version.get<int>() > kProjectFormatVersion) {
+    if (version.get<std::uint64_t>() > static_cast<std::uint64_t>(kProjectFormatVersion)) {
       fail("version",
            fmt::format("the project is format version {}, newer than this build reads (up to {}); "
                        "open it with a newer studio",
-                       version.get<int>(), kProjectFormatVersion),
+                       version.get<std::uint64_t>(), kProjectFormatVersion),
            "model.project.version");
     }
     Out out;

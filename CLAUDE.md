@@ -409,15 +409,18 @@ so they are registered. A new library must also be added to
   surface's spacing (`seam.spacing`, else a sixteenth of the diagonal).
   Flange bolt holes are hole loops. Outline segments divide into
   `ceil(length / spacing)` pieces (arcs at least 16 a turn); the interior is
-  a lattice, constrained-Delaunay triangulated (`triangulate.hpp`, our own).
-  Vertex ids derive from a hash of the inputs. Meshers never divide a seam
-  themselves: they call `add_seam_vertices()` and `add_seam_face()`, and
+  a lattice, constrained-Delaunay triangulated (`triangulate.hpp`, our own:
+  `orient()` is exactly antisymmetric, segments are checked through a box
+  tree, flips are capped; H4, decision 0026). Vertex ids derive from a
+  hash of the inputs. Meshers never divide a seam themselves: they call
+  `add_seam_vertices()` and `add_seam_face()`, and
   join their own faces to `Seam::loops` (with `segment_starts`).
 - **Weld** (`weld.hpp`): merges vertices by seam id only, checks each volume
   has exactly the seam's triangles (`mesh.weld.nonconforming`, surface
-  first), removes the paired seam faces (and paired `Seam::hole_fills`,
-  where neither side has a bolt hole) and checks the result is watertight
-  and manifold. Decision 0007 has the reasoning.
+  first; a hole fill counts, and must be whole), removes the paired seam
+  faces (and paired `Seam::hole_fills`, where neither side has a bolt
+  hole) and checks the result is watertight and manifold. Decision 0007
+  has the reasoning.
 - **B-rep tessellation** (`tessellate.hpp`, M8): BRepMesh's mesh, except
   that vertices on a seam's outline become seam vertices (snapping to the
   nearest when between two), edges along it take the seam's division,
@@ -429,20 +432,25 @@ so they are registered. A new library must also be added to
 - **Combined mesh** (`combine.hpp`): tessellate every non-keep-out volume
   (B-rep contents; mesh blobs read as they are; placeholders only with
   `placeholders`), weld. Static mesh blobs get their seam vertices back by
-  exact FP32 position (`attach_seam_vertices()`), so baked volumes weld.
-  **Files** (`io.hpp`): STL out (binary) and in, 3MF out (one object, or
-  one per volume with its id) and in (our own writer and XML reader,
-  zipped with miniz), OBJ in. `import.hpp` adds a
+  exact FP32 position (`attach_seam_vertices()`, -0 equal to +0), so baked
+  volumes weld. **Files** (`io.hpp`): STL out (binary) and in, 3MF out (one
+  object, or one per volume with its id) and in (our own writer and XML
+  reader, zipped with miniz; prefixes, end tags and character references
+  read since H4), OBJ in. Readers refuse coordinates that overflow a float
+  and store -0 as +0; writers refuse a mesh `Mesh::check()` refuses
+  (non-finite positions included). `import.hpp` adds a
   mesh file as a static volume boxed by its bounds.
 - **Curved seams** (L2, decision 0020): a `CylinderPatch` (vs_model: a
   layout axis, radius, start angle, sweep, start and length; a full turn
   is a band) gets a seam in unrolled coordinates (`Seam::curved()`,
   `band`, `to_uv()` / `to_model()` / `offset()` / `normal_at()`,
   `triangle_uv()` across a band's cut); derived spacing keeps chords
-  within `kSeamDeflection`. B-rep volumes conform by imprinting the patch
-  (`kernel::tessellate(..., imprints)`) and replacing its pieces with the
-  seam; procedural ones through the same stitch (vs_proc), a band's two
-  rims each to its loop. The engine gives triangles touching a curved
+  within `kSeamDeflection`; a band's spacing is at most a sixteenth of
+  its circumference (H4). B-rep volumes conform by imprinting the patch
+  (`kernel::tessellate(..., imprints)`; a band as two half turns, H4) and
+  replacing its pieces with the seam; procedural ones through the same
+  stitch (vs_proc), a band's two rims each to its loop. The engine gives
+  triangles touching a curved
   seam a containment slack (`MeshView::centroid_slack`). Bolted flanges
   stay planar (`model.connection.curved_flange`). Planar seams, meshes
   and hashes are exactly what they were; keep it that way.
@@ -492,7 +500,8 @@ so they are registered. A new library must also be added to
   project's `cache/` (`project_cache_files()` skips parametric contents,
   whose rebuild lives in memory). `measure.hpp` measures outputs
   of meshes too (public since M12, for vs_proc). `vstudio-cli rebuild
-  --cache` uses a folder project's `cache/`.
+  --cache` uses a folder project's `cache/`, or reads a zip project's
+  `cache/` entries and saves them back into the zip (H4).
 - **Determinism** (`thread_pool.hpp`): `run()`, `parallel_for()` and
   `parallel_reduce()` over fixed-size chunks, folded in chunk order; nested
   calls share the workers (a stack of batches; callers work on their own
@@ -513,7 +522,8 @@ so they are registered. A new library must also be added to
 - **Tests** build scenes in code (`tests/scenes.*`: a row of parametric
   boxes; a chain A → B by a link, plus C) and reuse the bracket.
   `vstudio-cli rebuild <project> [--threads N] [--check-determinism]
-  [--weld] [--cache] [--set vol.param=value] [--twice]`.
+  [--weld] [--stl out] [--3mf out [--per-volume]] [--cache]
+  [--set vol.param=value] [--twice]`.
 
 ## vs_proc essentials
 
@@ -655,7 +665,9 @@ so they are registered. A new library must also be added to
   desktop. `InstallOptions::force` (tests, `--gpu=force`) skips it.
 - **Where.** The app installs it at start on a background thread (`--cpu`
   skips; About says which stage runs where); `vstudio-cli --gpu <command>`
-  or `--gpu=force <command>`.
+  or `--gpu=force <command>`, installed only for `rebuild`, `inspect`,
+  `bake` and `bench-gyroid` (H4). `vstudio-cli selftest` says whether it
+  is available.
 
 ## vs_app essentials
 

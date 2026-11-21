@@ -1,4 +1,5 @@
 #include "proc_commands.hpp"
+#include "files.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -49,10 +50,6 @@ std::string ports(const std::vector<proc::PortSpec>& list) {
   return out.empty() ? "-" : out;
 }
 
-std::filesystem::path to_path(std::string_view arg) {
-  return std::filesystem::path(std::u8string(arg.begin(), arg.end()));
-}
-
 std::optional<double> number(std::string_view text) {
   double v = 0;
   const auto [p, ec] = std::from_chars(text.data(), text.data() + text.size(), v);
@@ -101,7 +98,7 @@ int run_nodes(std::span<const std::string_view> args, std::ostream& out, std::os
 
 int run_graph(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   if (args.size() != 1) return err << "usage: vstudio-cli graph <graph.json>\n", 2;
-  const std::filesystem::path path(std::u8string(args[0].begin(), args[0].end()));
+  const std::filesystem::path path = to_path(args[0]);
   std::ifstream in(path, std::ios::binary);
   if (!in) return err << "vstudio-cli: can't read " << args[0] << "\n", 1;
   std::stringstream text;
@@ -182,9 +179,14 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
       if (!v || !(*v > 0)) return err << kUsage, 2;
       cell = *v;
     } else if (args[i] == "--threads" && has_value) {
-      const auto v = number(args[++i]);
-      if (!v || !(*v >= 0)) return err << kUsage, 2;
-      threads = static_cast<std::size_t>(*v);
+      // A whole number: "1.5" or "1e9" used to pass as a double and be cast.
+      const auto t = args[++i];
+      std::size_t n = 0;
+      const auto [p, ec] = std::from_chars(t.data(), t.data() + t.size(), n);
+      if (ec != std::errc() || p != t.data() + t.size() || n > 256) {
+        return err << "vstudio-cli: --threads takes a number from 0 (every core) to 256\n", 2;
+      }
+      threads = n;
     } else if (args[i] == "--3mf" && has_value) {
       three_mf = args[++i];
     } else {
@@ -291,8 +293,7 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
       err << bytes.error().to_string() << "\n";
       return 1;
     }
-    std::ofstream f(to_path(*three_mf), std::ios::binary);
-    f.write(reinterpret_cast<const char*>(bytes->data()), static_cast<std::streamsize>(bytes->size()));
+    if (!write_bytes(to_path(*three_mf), *bytes, err)) return 1;
     out << "wrote       " << *three_mf << "\n";
   }
   return 0;
