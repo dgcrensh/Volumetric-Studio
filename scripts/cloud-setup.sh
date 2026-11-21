@@ -24,7 +24,7 @@ for arg in "$@"; do
   esac
 done
 
-packages=(git cmake ninja-build g++ clang pkg-config curl zip unzip tar python3
+packages=(git cmake ninja-build g++ clang libclang-rt-dev pkg-config curl zip unzip tar python3
   libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev
   libx11-dev libxext-dev libxi-dev libxmu-dev)
 missing=()

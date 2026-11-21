@@ -50,6 +50,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build clang pkg-config zip unzip curl tar
+          # Clang's sanitizer runtimes, for linux-clang-asan.
+          sudo apt-get install -y libclang-rt-dev
           # Open CASCADE (vs_kernel) builds its visualisation toolkits against
           # the system's OpenGL and X11 headers.
           sudo apt-get install -y libgl1-mesa-dev libglu1-mesa-dev libegl1-mesa-dev \

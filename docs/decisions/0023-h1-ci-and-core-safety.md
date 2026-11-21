@@ -25,9 +25,19 @@ that fails on `main`, and an item that can't be reproduced is dropped.
 - `VS_SANITIZE` (a list such as `address;undefined`) instruments everything
   this project builds, not vcpkg's ports. The `linux-clang-asan` preset sets
   it with Clang, `RelWithDebInfo`; its test preset stops on the first
-  report (`halt_on_error`, `abort_on_error`) and runs LeakSanitizer with
-  `scripts/sanitizers/lsan.supp`. CI runs it as a fourth matrix job. No
-  TSan (plan decision 6).
+  report (`halt_on_error`, `abort_on_error`) and runs LeakSanitizer. CI
+  runs it as a fourth matrix job (it needs `libclang-rt-dev`). No TSan
+  (plan decision 6). The first run flagged 22 tests, every report inside
+  OCCT, so they are suppressed rather than fixed, each with its reason:
+  UBSan's alignment check in `NCollection_TListNode.hxx` (OCCT's
+  4-byte-aligned list nodes, `scripts/sanitizers/ubsan.supp`; UBSan's
+  checks stay recoverable so that suppressions apply, and `halt_on_error`
+  still stops on anything else), and two leaks, the static
+  `TPrsStd_DriverTable` and the error text OCCT's STEP parser keeps
+  (`scripts/sanitizers/lsan.supp`). LeakSanitizer's slow unwinder would
+  let that last suppression name the parser instead of
+  `TCollection_AsciiString::allocate`, but it made the suite several times
+  slower and broke a timing test. With those, all 576 tests pass.
 - The CI `build` job is read-only. Publishing the vcpkg cache moved to a
   `publish-cache` job (`contents: write`, `push` to `main` and manual runs
   only), which restores `linux-gcc-release`'s actions cache and gets the

@@ -33,8 +33,12 @@ endfunction()
 #
 # Builds everything in this project (first-party and vendored code, not the
 # vcpkg dependencies) with the given sanitizers, such as "address;undefined"
-# (the linux-clang-asan preset, plan H1). Undefined behaviour stops the
-# program, so a test can't pass with a report in its output. Empty: nothing.
+# (the linux-clang-asan preset, plan H1). Empty: nothing.
+#
+# UBSan's checks stay recoverable so that scripts/sanitizers/ubsan.supp can
+# silence reports inside third-party headers; the preset's
+# UBSAN_OPTIONS=halt_on_error=1 still stops the program on any other report,
+# so a test can't pass with one in its output.
 function(vs_enable_sanitizers sanitizers)
   if(NOT sanitizers)
     return()
@@ -44,9 +48,6 @@ function(vs_enable_sanitizers sanitizers)
   endif()
   list(JOIN sanitizers "," list)
   set(flags "-fsanitize=${list}" -fno-omit-frame-pointer)
-  if("undefined" IN_LIST sanitizers)
-    list(APPEND flags -fno-sanitize-recover=undefined)
-  endif()
   add_compile_options(${flags})
   add_link_options(${flags})
   message(STATUS "Sanitizers: ${list}")
