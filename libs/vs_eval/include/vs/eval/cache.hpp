@@ -6,7 +6,8 @@
 // boundary, its connection surfaces and its parameters, plus its seed, its
 // content definition and the engine. The key hashes exactly those:
 //
-//   - the engine version (core::kEngineVersion) and the volume's kind;
+//   - the engine version (core::kEngineVersion), the ProductSettings (H3)
+//     and the volume's kind;
 //   - the content definition: the static file's blob path (which is its
 //     content hash) and format, the parametric feature tree (its JSON), or
 //     the procedural graph text;
@@ -60,10 +61,12 @@ namespace vs::eval {
 using core::Hash256;
 
 // The key of `document.volumes[index]`, given a build_layout() of the same
-// document. None when the volume can't generate: its boundary or a
-// parameter failed.
+// document with `settings`. None when the volume can't generate: its
+// boundary or a parameter failed. The settings are part of the key (H3):
+// the tolerance and working space change what generation accepts.
 std::optional<Hash256> cache_key(const model::Document& document,
-                                 const model::DocumentBuild& layout, std::size_t index);
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings);
 
 // Contents made by a generator outside vs_eval (generator.hpp), such as a
 // procedural graph's sampled field (vs_proc, M10). Opaque here: the engine

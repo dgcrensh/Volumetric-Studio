@@ -227,7 +227,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
       continue;
     }
     // A boundary that failed fails the composite already (finish_composite).
-    const std::optional<Hash256> key = cache_key(document, layout, i);
+    const std::optional<Hash256> key = cache_key(document, layout, i, settings_);
     if (!key) continue;
     std::shared_ptr<const LayoutOutcome> outcome;
     if (const auto it = layouts_.find(*key); it != layouts_.end()) {
@@ -372,7 +372,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     c->rebuild = vb.contents_rebuild;
     Hasher key;
     key.add(std::string_view("vstudio.eval.composite"));
-    const std::optional<Hash256> own = cache_key(ev.document, layout, i);
+    const std::optional<Hash256> own = cache_key(ev.document, layout, i, settings_);
     key.add(own.has_value());
     if (own) key.add(*own);
     Hasher out;
@@ -511,7 +511,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         ++ev.stats.blocked;
         continue;
       }
-      r.key = cache_key(ev.document, layout, i);
+      r.key = cache_key(ev.document, layout, i, settings_);
       if (!r.key) {
         r.status = VolumeStatus::Failed;  // its boundary or a parameter failed
         continue;

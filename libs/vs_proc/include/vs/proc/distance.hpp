@@ -37,6 +37,14 @@ namespace vs::proc {
 using core::dbox3;
 using core::dvec3;
 
+// The bounding volume hierarchy's shape, shared with evaluators that walk
+// it elsewhere (vs_gpu sizes its traversal stack from kMaxBvhDepth): a
+// node with at most kBvhLeafSize triangles, or at depth kMaxBvhDepth (the
+// root is depth 0), is a leaf. Each leaf's triangles are in increasing
+// index order (H3), whatever the standard library's nth_element() does.
+inline constexpr std::uint32_t kBvhLeafSize = 4;
+inline constexpr int kMaxBvhDepth = 49;
+
 class TriangleDistance {
  public:
   TriangleDistance() = default;

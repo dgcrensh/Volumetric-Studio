@@ -6,11 +6,11 @@
 #include <map>
 #include <utility>
 
+#include "vs/proc/field.hpp"
+
 namespace vs::proc {
 
 namespace {
-
-constexpr std::uint32_t kLeafSize = 4;
 
 double box_distance_squared(const dbox3& b, const dvec3& p) {
   double d = 0.0;
@@ -68,11 +68,12 @@ std::pair<dvec3, int> closest_on_triangle(const dvec3& p, const dvec3& a, const 
   return {a + ab * v + ac * w, 0};
 }
 
-// The angle at `at` between the directions to `p` and `q`.
+// The angle at `at` between the directions to `p` and `q`. atan2_det(),
+// not std::atan2: libm's may differ in the last bit between platforms (H3).
 double corner_angle(const dvec3& at, const dvec3& p, const dvec3& q) {
   const dvec3 u = normalize(p - at);
   const dvec3 v = normalize(q - at);
-  return std::atan2(length(cross(u, v)), dot(u, v));
+  return atan2_det(length(cross(u, v)), dot(u, v));
 }
 
 }  // namespace
@@ -130,7 +131,7 @@ TriangleDistance::TriangleDistance(const mesh::Mesh& m, bool closed) : closed_(c
   if (triangles_.empty()) return;
   order_.resize(triangles_.size());
   for (std::uint32_t i = 0; i < order_.size(); ++i) order_[i] = i;
-  nodes_.reserve(2 * triangles_.size() / kLeafSize + 2);
+  nodes_.reserve(2 * triangles_.size() / kBvhLeafSize + 2);
   nodes_.push_back({});
   build(0, 0, static_cast<std::uint32_t>(triangles_.size()), 0);
 }
@@ -149,7 +150,11 @@ void TriangleDistance::build(std::uint32_t node, std::uint32_t first, std::uint3
     centres.expand(c / 3.0);
   }
   nodes_[node].box = box;
-  if (count <= kLeafSize || depth > 48) {
+  if (count <= kBvhLeafSize || depth >= kMaxBvhDepth) {
+    // nth_element() leaves each side in an order the standard library
+    // chooses; sorting a leaf makes it the same everywhere (H3), and so
+    // which of two equally near triangles search() finds first.
+    std::sort(order_.begin() + first, order_.begin() + first + count);
     nodes_[node].first = first;
     nodes_[node].count = count;
     return;

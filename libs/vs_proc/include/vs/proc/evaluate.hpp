@@ -8,8 +8,9 @@
 // Parallelism lives inside nodes and in sampling (field.hpp), which split
 // work into fixed chunks, so nothing depends on the number of threads.
 //
-// Per-node cache. A node's key is a digest of the engine version, its
-// type, its settings, its derived seed, the volume's id and bounding box
+// Per-node cache. A node's key is a digest of the engine version, the
+// ProductSettings (inputs.settings, H3), its type, its settings, its
+// derived seed, the volume's id and bounding box
 // (M12: mesh nodes put the volume on their triangles, and
 // convert.field_to_mesh grids the box) and the hash of every input value
 // (types.hpp). With a NodeCache, a node whose key is cached isn't run:

@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 #include <random>
 
 #include <catch2/catch_test_macros.hpp>
@@ -9,6 +10,7 @@
 #include "vs/kernel/queries.hpp"
 #include "vs/mesh/tessellate.hpp"
 #include "vs/proc/distance.hpp"
+#include "vs/proc/field.hpp"
 
 using namespace vs;
 using core::dvec3;
@@ -91,4 +93,56 @@ TEST_CASE("An open mesh gives unsigned distances", "[proc][distance]") {
   CHECK(proc::TriangleDistance(m, false).hash() == d.hash());
   CHECK(proc::TriangleDistance(m, true).hash() != d.hash());
   CHECK(std::isinf(proc::TriangleDistance().distance({0, 0, 0})));
+}
+
+TEST_CASE("Each BVH leaf lists its triangles in increasing order (H3)", "[proc][distance]") {
+  // Random triangles: nth_element() leaves the halves it splits in an
+  // order the standard library chooses, which before H3 reached the leaves
+  // (and so which of two equally near triangles a query found).
+  mesh::Mesh m;
+  std::mt19937_64 rng(7);
+  std::uniform_real_distribution<float> u(-10.0f, 10.0f);
+  for (int t = 0; t < 3000; ++t) {
+    const auto a = m.add_vertex({u(rng), u(rng), u(rng)});
+    const auto b = m.add_vertex({u(rng), u(rng), u(rng)});
+    const auto c = m.add_vertex({u(rng), u(rng), u(rng)});
+    m.add_triangle(a, b, c, core::Id::null());
+  }
+  const proc::TriangleDistance d(m, false);
+  REQUIRE(d.nodes().size() > 1000);
+  int leaves = 0;
+  for (const auto& n : d.nodes()) {
+    if (n.count == 0) continue;
+    ++leaves;
+    CHECK(n.count <= proc::kBvhLeafSize);
+    for (std::uint32_t i = n.first + 1; i < n.first + n.count; ++i) {
+      CHECK(d.order()[i - 1] < d.order()[i]);
+    }
+  }
+  CHECK(leaves > 500);
+}
+
+TEST_CASE("atan2_det() is libm's atan2 to within an ulp, from arithmetic alone (H3)",
+          "[proc][distance]") {
+  constexpr double kPi = 3.14159265358979311600;
+  CHECK(proc::atan2_det(0.0, 0.0) == 0.0);
+  CHECK(proc::atan2_det(0.0, 1.0) == 0.0);
+  CHECK(proc::atan2_det(0.0, -1.0) == kPi);
+  CHECK(proc::atan2_det(1.0, 0.0) == kPi / 2);
+  CHECK(proc::atan2_det(-1.0, 0.0) == -kPi / 2);
+  CHECK(proc::atan2_det(1.0, 1.0) == kPi / 4);
+  CHECK(std::isnan(proc::atan2_det(std::numeric_limits<double>::quiet_NaN(), 1.0)));
+  CHECK(std::isnan(proc::atan2_det(1.0, std::numeric_limits<double>::infinity())));
+  std::mt19937_64 rng(11);
+  std::uniform_real_distribution<double> u(-1.0, 1.0);
+  std::uniform_real_distribution<double> e(-30.0, 30.0);
+  for (int i = 0; i < 200000; ++i) {
+    const double y = u(rng) * std::pow(10.0, e(rng));
+    const double x = u(rng) * std::pow(10.0, e(rng));
+    const double want = std::atan2(y, x);
+    const double got = proc::atan2_det(y, x);
+    const double ulp = std::nextafter(std::abs(want), 4.0) - std::abs(want);
+    INFO("atan2(" << y << ", " << x << ")");
+    REQUIRE(std::abs(got - want) <= ulp);
+  }
 }

@@ -221,7 +221,7 @@ TEST_CASE("A composite's generator ends in output.children, and only there",
   // Two outputs, of either kind.
   Graph two = g.graph;
   two.add("output", "Contents");
-  CHECK(has(check_graph(two), "proc.graph.output"));
+  CHECK(has(check_graph(two), "proc.graph.multiple_outputs"));
   // A template the composite doesn't have.
   Graph unknown = g.graph;
   unknown.find_node(g.grid)->settings["template"] = Setting(std::string("Bracket"));

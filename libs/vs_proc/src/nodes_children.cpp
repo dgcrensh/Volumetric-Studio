@@ -230,7 +230,7 @@ void delegate(NodeContext& ctx) {
   for (int a = 0; a < 3; ++a) {
     if (std::abs(std::abs(component(surface->normal, a)) - 1.0) < 1e-9) axis = a;
   }
-  if (axis < 0 || !surface->patch) {
+  if (axis < 0 || surface->radius || !surface->patch) {
     ctx.fail(fmt::format("surface '{}' isn't on a plane square to an axis; generated children "
                          "are boxes, so they meet such planes only",
                          surface->name));

@@ -482,7 +482,8 @@ so they are registered. A new library must also be added to
   `stale_contents`, blocks only its dependants, which get `eval.blocked`);
   Stale (blocked, cancelled, preview, procedural with no generator); Regenerating
   while running (`states()`). Failed results are cached too.
-- **Cache** (`cache.hpp`): `cache_key()` hashes engine version, kind,
+- **Cache** (`cache.hpp`): `cache_key()` hashes engine version, the
+  `ProductSettings` (H3; the node cache's keys too), kind,
   content definition, the boundary's exact shape and named faces, joining
   surfaces, parameters, seed and measured outputs; static keys leave
   parameters and seed out. Memory always; disk (`cache/<key>.brep` and
@@ -498,6 +499,8 @@ so they are registered. A new library must also be added to
   while waiting), so one volume's generation uses every thread. Catch2
   assertions aren't thread-safe: tasks record, tests check afterwards.
   `output_hashes_by_threads()` and `check_determinism` compare output hashes (BRep text, mesh, outputs).
+  Pools of size 0 take `VS_THREADS` when set (`default_thread_count()`);
+  CI reruns the vs_proc and vs_eval suites on 1, 4 and 16 threads (H3).
 - **Generators** (`generator.hpp`): a library above vs_eval plugs a
   content kind in with `Engine::set_generator(kind, g)`: `prepare()` on
   the calling thread, then a job on the pool that fills
@@ -524,13 +527,17 @@ so they are registered. A new library must also be added to
   and `sample()` give FP32 samples on a grid over a box (x fastest),
   z slices on the pool. `TriangleDistance` (`distance.hpp`) is a BVH over
   a tessellation: signed by angle-weighted pseudonormals for closed
-  meshes, unsigned for patches.
+  meshes, unsigned for patches. Leaves are sorted and the angles come
+  from `atan2_det()`, so it is the same on every standard library (H3,
+  golden hashes in `test_distance_golden.cpp`). `field_layout.hpp` is
+  where operations keep their numbers, shared with vs_gpu's shaders.
 - **Graphs** (`graph.hpp`): parameters with defaults, nodes (id, type,
   name, `settings` for unconnected Scalar/Vector inputs and properties),
   edges output → input, exactly one `output` node. JSON round-trips
   exactly. **Checks** (`check.hpp`): `check_graph()` (`proc.graph.*`);
   `edit()` / `connect()` keep a change unless it is wrong (type mismatch,
-  loop, ...), allowing unfinished graphs; `check_volume_graph()` adds
+  loop, a second output, ...), allowing unfinished graphs (`no_output`,
+  `missing_input`, H3); `check_volume_graph()` adds
   `proc.reference.surface` (only surfaces joining the volume).
 - **Nodes** (`nodes.hpp`): a `NodeType` declares ports and properties and
   evaluates from a `NodeContext` (inputs, properties, graph inputs,
