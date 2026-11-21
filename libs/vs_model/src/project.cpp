@@ -1,11 +1,13 @@
 // Project folders and zip files (project.hpp).
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <functional>
 #include <optional>
 #include <span>
 #include <system_error>
+#include <thread>
 
 #include <fmt/format.h>
 
@@ -42,6 +44,10 @@ Diagnostic io_error(const fs::path& p, std::string message) {
 }
 
 Result<Blob> read_file(const fs::path& p) {
+  // Only files: a folder opens as a stream on some systems and "reads" as
+  // an absurd size (H4).
+  std::error_code ec;
+  if (!fs::is_regular_file(p, ec)) return io_error(p, "not a file");
   std::ifstream in(p, std::ios::binary);
   if (!in) return io_error(p, "can't open it for reading");
   Blob bytes;
@@ -56,11 +62,20 @@ Result<Blob> read_file(const fs::path& p) {
   return bytes;
 }
 
+// A temporary name next to `p`, unique to this write (H4: two saves of one
+// file used to share "<name>.tmp" and rename it from under each other).
+fs::path temporary_for(const fs::path& p) {
+  const std::string tag = core::Id::random().to_string().substr(0, 16);
+  return p.parent_path() / (p.filename().u8string() + u8"." +
+                            std::u8string(tag.begin(), tag.end()) + u8".tmp");
+}
+
 // Writes next to `p`, then moves it into place, so a failed save never
 // leaves half a file.
 Diagnostics write_file(const fs::path& p, std::span<const std::byte> bytes) {
   Diagnostics out;
-  const fs::path tmp = p.parent_path() / (p.filename().u8string() + u8".tmp");
+  const fs::path tmp = temporary_for(p);
+  std::error_code ec;
   {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     if (!f) {
@@ -68,13 +83,21 @@ Diagnostics write_file(const fs::path& p, std::span<const std::byte> bytes) {
       return out;
     }
     f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    f.close();  // flushes: a full disk shows here
     if (!f) {
+      fs::remove(tmp, ec);
       out.add(io_error(p, "can't write it"));
       return out;
     }
   }
-  std::error_code ec;
-  fs::rename(tmp, p, ec);
+  // Windows refuses to replace a file while another rename is replacing
+  // it (or a scanner holds it open) with "access denied"; that clears in
+  // moments, so try again a few times before giving up.
+  for (int attempt = 0; attempt < 50; ++attempt) {
+    fs::rename(tmp, p, ec);
+    if (!ec) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2 + attempt));
+  }
   if (ec) {
     fs::remove(tmp, ec);
     out.add(io_error(p, "can't replace it"));
@@ -184,7 +207,7 @@ Diagnostics save_project(const Project& project, const fs::path& path, ProjectLa
   // Blobs the project no longer holds.
   for (const auto& entry : fs::directory_iterator(path / "blobs", ec)) {
     const std::string name = "blobs/" + display(entry.path().filename());
-    if (entry.is_regular_file() && !project.blobs.contains(name)) fs::remove(entry.path(), ec);
+    if (entry.is_regular_file(ec) && !project.blobs.contains(name)) fs::remove(entry.path(), ec);
   }
   // The manifest last, so a reader never sees it before its blobs.
   out.append(write_file(path / kManifest, bytes_of(manifest)));
@@ -196,7 +219,7 @@ Diagnostics save_project(const Project& project, const fs::path& path, ProjectLa
       if (plain_name(name)) (void)write_file(dir / fs::path(name), bytes);
     }
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
-      if (entry.is_regular_file() && !cache->contains(display(entry.path().filename()))) {
+      if (entry.is_regular_file(ec) && !cache->contains(display(entry.path().filename()))) {
         fs::remove(entry.path(), ec);
       }
     }
@@ -209,7 +232,7 @@ CacheFiles load_project_cache(const fs::path& path) {
   std::error_code ec;
   if (fs::is_directory(path, ec)) {
     for (const auto& entry : fs::directory_iterator(path / kCache, ec)) {
-      if (!entry.is_regular_file()) continue;
+      if (!entry.is_regular_file(ec)) continue;
       const std::string name = display(entry.path().filename());
       if (name.ends_with(".tmp")) continue;  // a write that didn't finish
       auto bytes = read_file(entry.path());

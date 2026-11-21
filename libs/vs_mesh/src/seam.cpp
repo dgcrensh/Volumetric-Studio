@@ -369,7 +369,7 @@ namespace {
 // A band's rectangle is triangulated whole, then its right side (x1) is
 // identified with its left (x0), so the seam closes round the axis.
 Result<Seam> make_cylinder_seam(const core::SubjectRef& surface, const SeamOutline& outline,
-                                double spacing) {
+                                double requested) {
   const auto fail = [&](std::string code, std::string message) {
     return Diagnostic::error(std::move(code), std::move(message), {surface});
   };
@@ -381,6 +381,13 @@ Result<Seam> make_cylinder_seam(const core::SubjectRef& surface, const SeamOutli
   }
   const Span& sp = *span;
   const double r = outline.radius;
+  // A band's spacing is at most its circumference over kArcPiecesPerTurn,
+  // so its lattice always reaches round it: coarser, a tall band had no
+  // interior points, and its triangles reached from one side of the cut to
+  // the other, more than half a turn round the axis, which triangle_uv()
+  // and everything after it can't tell from the short way round (H4).
+  const double spacing =
+      outline.band ? std::min(requested, sp.width() / kArcPiecesPerTurn) : requested;
   const double estimate = 2.0 * (sp.width() + sp.height()) / spacing +
                           sp.width() * sp.height() / (spacing * spacing * 0.86);
   if (estimate > static_cast<double>(kMaxSeamVertices)) {
@@ -636,10 +643,9 @@ void add_seam_face(Mesh& mesh, const Seam& seam, const std::vector<std::uint32_t
 
 std::size_t attach_seam_vertices(Mesh& mesh, std::span<const Seam* const> seams) {
   using Key = std::array<std::uint32_t, 3>;
-  const auto key = [](const fvec3& p) {
-    return Key{std::bit_cast<std::uint32_t>(p.x), std::bit_cast<std::uint32_t>(p.y),
-               std::bit_cast<std::uint32_t>(p.z)};
-  };
+  // Bit patterns, with -0 as +0: equal floats, never nearby ones (H4).
+  const auto bits = [](float f) { return std::bit_cast<std::uint32_t>(f == 0.0f ? 0.0f : f); };
+  const auto key = [&](const fvec3& p) { return Key{bits(p.x), bits(p.y), bits(p.z)}; };
   std::map<Key, core::Id> by_position;
   for (const Seam* seam : seams) {
     for (const SeamVertex& v : seam->vertices) by_position.emplace(key(v.position32), v.id);

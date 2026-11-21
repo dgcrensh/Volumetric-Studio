@@ -50,13 +50,15 @@ Commands:
                     Add a file as a static volume boxed by its bounds (or, with --into,
                     as an existing volume's contents), and save
   rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] [--stl <out.stl>]
-          [--step <out.step> [--procedural-boundary]] [--cache]
-          [--set <volume>.<parameter>=<value>]... [--twice]
+          [--3mf <out.3mf> [--per-volume]] [--step <out.step> [--procedural-boundary]]
+          [--cache] [--set <volume>.<parameter>=<value>]... [--twice]
                     Evaluate a project with the engine: regenerate what changed (meshing
                     procedural volumes), check containment, publish outputs; print
-                    statuses, cache use and the output hash. --stl writes the welded
-                    mesh when it is clean; --step writes STEP AP242, one named part per
-                    volume (procedural ones as mesh bodies, or their boundary).
+                    statuses, cache use and the output hash. --stl and --3mf write the
+                    welded mesh when it is clean (3MF: one object, or one per volume);
+                    --step writes STEP AP242, one named part per volume (procedural
+                    ones as mesh bodies, or their boundary). --cache uses the project's
+                    cache/ (a zip project's is read, then saved back into the zip).
                     Exits 1 on errors
   nodes             List the procedural node library: types, ports and properties
   graph <graph.json>
@@ -74,18 +76,44 @@ Commands:
                     Restore a baked volume's graph, and save
   bench-gyroid [--size <mm>] [--cell <mm>] [--threads N] [--3mf <file>]
                     Time the gyroid_infill template in a cube (default 100 mm at a
-                    0.5 mm grid), stage by stage: the CPU baseline
+                    0.5 mm grid), stage by stage: the CPU baseline. --threads takes
+                    0 (every core, the default) to 256
   version           Print the version (same as --version)
   help              Print this message
 
 Options:
   --version         Print the version and exit
   --gpu             Sample and mesh procedural fields on the GPU where it gives
-                    exactly the CPU's results and is faster (it says which)
+                    exactly the CPU's results and is faster (it says which); for
+                    rebuild, inspect, bake and bench-gyroid, ignored by the rest
   --gpu=force       The same, faster or not (benchmarks)
   --log-level <l>   trace, debug, info, warning, error or off (default: warning)
   -h, --help        Print this message and exit
 )";
+
+// Sampling (L1) and meshing (L1b) on the GPU where it matches the CPU.
+void install_gpu(bool force) {
+  vs::gpu::InstallOptions options;
+  options.force = force;
+  const auto status = vs::gpu::install(options);
+  if (status.installed) {
+    const auto where = [](bool gpu) { return gpu ? "GPU" : "CPU"; };
+    std::cout << "gpu         " << status.device << ": sampling on the " << where(status.sampling)
+              << ", clip on the " << where(status.clip) << ", unmerged net on the "
+              << where(status.meshing) << " (checks and calibration "
+              << static_cast<long>(status.install_ms) << " ms)\n";
+    if (!status.calibration.empty()) std::cout << "            " << status.calibration << "\n";
+    if (!status.why.empty()) std::cout << "            " << status.why << "\n";
+  } else {
+    std::cout << "gpu         not used: " << status.why << "\n";
+  }
+}
+
+// The commands that sample procedural fields, and so may use the GPU.
+bool samples_fields(std::string_view command) {
+  return command == "rebuild" || command == "inspect" || command == "bake" ||
+         command == "bench-gyroid";
+}
 
 void print_version(std::ostream& out) {
   out << "vstudio-cli " << vs::core::version_string() << " (" << vs::core::git_revision()
@@ -100,6 +128,7 @@ int main(int argc, char** argv) {
   vs::core::set_log_level(vs::core::LogLevel::Warning);
 
   std::string_view command;
+  std::string_view gpu;  // --gpu or --gpu=force, installed only for a command that samples
   std::vector<std::string_view> rest;
   for (std::size_t i = 0; i < args.size(); ++i) {
     const auto arg = args[i];
@@ -112,21 +141,7 @@ int main(int argc, char** argv) {
       std::cout << kUsage;
       return 0;
     } else if (arg == "--gpu" || arg == "--gpu=force") {
-      // Sampling (L1) and meshing (L1b) on the GPU where it matches the CPU.
-      vs::gpu::InstallOptions options;
-      options.force = arg == "--gpu=force";
-      const auto status = vs::gpu::install(options);
-      if (status.installed) {
-        const auto where = [](bool gpu) { return gpu ? "GPU" : "CPU"; };
-        std::cout << "gpu         " << status.device << ": sampling on the " << where(status.sampling)
-                  << ", clip on the " << where(status.clip) << ", unmerged net on the "
-                  << where(status.meshing) << " (checks and calibration "
-                  << static_cast<long>(status.install_ms) << " ms)\n";
-        if (!status.calibration.empty()) std::cout << "            " << status.calibration << "\n";
-        if (!status.why.empty()) std::cout << "            " << status.why << "\n";
-      } else {
-        std::cout << "gpu         not used: " << status.why << "\n";
-      }
+      gpu = arg;
     } else if (arg == "--log-level") {
       if (i + 1 >= args.size()) {
         std::cerr << "vstudio-cli: --log-level needs a value\n";
@@ -150,6 +165,9 @@ int main(int argc, char** argv) {
     std::cout << kUsage;
     return command.empty() ? 2 : 0;
   }
+  // Opening a GL context and calibrating takes seconds; only the commands
+  // that sample fields pay for it (H4).
+  if (!gpu.empty() && samples_fields(command)) install_gpu(gpu == "--gpu=force");
   if (command == "version") {
     print_version(std::cout);
     return 0;

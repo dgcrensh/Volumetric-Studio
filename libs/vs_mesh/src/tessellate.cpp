@@ -820,11 +820,25 @@ VolumeMesh tessellate(const kernel::Solid& solid, const core::SubjectRef& volume
         }
       }
     }
-    auto face = kernel::make_cylinder_face({s->frame.origin, s->normal()}, s->frame.x_axis,
-                                           s->radius, x0 / s->radius,
-                                           s->band ? 2.0 * std::numbers::pi : (x1 - x0) / s->radius, y0,
-                                           y1 - y0, settings);
-    if (face) imprints.push_back(*face);
+    // A band goes in as two half turns (H4): a whole turn's own seam edge,
+    // lying on the solid's seam line, left the solid unsplit, and lying
+    // elsewhere, imprinted a slit into what remains of the solid's face.
+    const int pieces = s->band ? 2 : 1;
+    const double sweep = s->band ? std::numbers::pi : (x1 - x0) / s->radius;
+    for (int k = 0; k < pieces; ++k) {
+      auto face = kernel::make_cylinder_face({s->frame.origin, s->normal()}, s->frame.x_axis,
+                                             s->radius, x0 / s->radius + static_cast<double>(k) * sweep, sweep, y0,
+                                             y1 - y0, settings);
+      if (!face) {
+        // The patch can't be imprinted, so the volume can't conform.
+        Diagnostic d = face.error();
+        d.subjects.insert(d.subjects.begin(), volume);
+        d.subjects.insert(d.subjects.begin(), s->subject());
+        out.diagnostics.add(std::move(d));
+        return out;
+      }
+      imprints.push_back(*face);
+    }
   }
   const core::Result<Tessellation> t =
       kernel::tessellate(solid, options.params, settings, imprints);

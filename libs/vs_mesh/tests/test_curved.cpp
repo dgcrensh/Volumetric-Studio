@@ -120,7 +120,7 @@ vs::mesh::VolumeMesh mesh_of(const Solid& solid, const SubjectRef& volume, const
 // Tessellates both volumes against the seam, welds them, and checks the
 // result is one closed shell enclosing `volume` (to the deflection).
 void check_pair(const Solid& inner, const Solid& outer, const SeamLibrary& lib, double volume,
-                long long genus = 0) {
+                long long genus = 0, double within = 2e-3) {
   const Seam& seam = lib.seams.front();
   const vs::mesh::VolumeMesh a = mesh_of(inner, kInner, seam);
   const vs::mesh::VolumeMesh b = mesh_of(outer, kOuter, seam);
@@ -133,7 +133,7 @@ void check_pair(const Solid& inner, const Solid& outer, const SeamLibrary& lib, 
   CHECK(r.topology.shells == 1);
   CHECK(r.topology.euler_characteristic() == 2 - 2 * genus);
   CHECK(r.internal_triangles >= 2 * seam.triangles.size());
-  CHECK_THAT(vs::mesh::enclosed_volume(r.mesh), WithinRel(volume, 2e-3));
+  CHECK_THAT(vs::mesh::enclosed_volume(r.mesh), WithinRel(volume, within));
 }
 
 // Every undirected edge of the triangles, with how many use it.
@@ -371,4 +371,110 @@ TEST_CASE("Documents with curved surfaces weld through the seam library",
     const double whole = kPi * 400 * 30;
     CHECK_THAT(vs::mesh::enclosed_volume(m.weld.mesh), WithinRel(half ? whole / 2 : whole, 2e-3));
   }
+}
+
+// --- H4 (decision 0026) ------------------------------------------------------------
+
+TEST_CASE("Coarse band seams keep every triangle under half a turn",
+          "[mesh][seam][curved][hardening]") {
+  // A spacing set coarser than the band's circumference left no lattice
+  // inside it: triangles reached from one side of the cut to the other,
+  // more than half a turn round the axis.
+  const vs::sketch::SketchPlane frame;
+  for (const double r : {2.0, 10.0}) {
+    for (const double spacing : {0.3 * r, 1.0 * r, 3.0 * r, 10.0 * r, 100.0 * r}) {
+      for (const double height : {0.2 * r, 3.0 * r, 20.0 * r, 60.0 * r}) {
+        INFO("r " << r << ", spacing " << spacing << ", height " << height);
+        const Seam seam = seam_for("Band", cylinder_outline(frame, r, 0.4, 2 * kPi, 0, height), spacing);
+        CHECK_THAT(seam.area(), WithinRel(2 * kPi * r * height, 1e-9));
+        for (const Triangle& t : seam.triangles) {
+          const auto q = seam.triangle_uv(t);
+          const double lo = std::min({q[0].x, q[1].x, q[2].x});
+          const double hi = std::max({q[0].x, q[1].x, q[2].x});
+          CHECK(hi - lo < kPi * r);
+          CHECK(vs::core::cross(q[1] - q[0], q[2] - q[0]) > 0);
+        }
+      }
+    }
+  }
+}
+
+TEST_CASE("A shaft bonded in a sleeve welds across a coarse band",
+          "[mesh][tessellate][curved][hardening]") {
+  // A thin shaft, long against its circumference.
+  const Solid shaft = cylinder({0, 0, 0}, 2, 120);
+  const Solid sleeve = minus(cylinder({0, 0, 0}, 5, 120), cylinder({0, 0, -1}, 2, 122));
+  const vs::sketch::SketchPlane frame;
+  for (const double spacing : {8.0, 40.0, 200.0}) {
+    INFO("spacing " << spacing);
+    const SeamLibrary lib =
+        library(seam_for("Bore", cylinder_outline(frame, 2, 0.3, 2 * kPi, 0, 120), spacing));
+    check_pair(shaft, sleeve, lib, kPi * 25 * 120);
+  }
+}
+
+TEST_CASE("A band's cut may lie on the solids' own seam lines",
+          "[mesh][tessellate][curved][hardening]") {
+  // Rotated so the shaft's and the sleeve's seam lines run along the band's
+  // cut. The band was imprinted as one whole turn, whose own seam edge then
+  // lay on the solids' seam lines, and the solids came back unsplit.
+  for (const double a0 : {0.7, 2.1, -1.3, kPi, -2.9}) {
+    INFO("a0 " << a0);
+    const auto turn = [&](const Solid& s) {
+      return vs::kernel::transformed(s, vs::core::dtransform::rotate({0, 0, 1}, a0)).value();
+    };
+    const Solid shaft = turn(cylinder({0, 0, -10}, 10, 50));
+    const Solid sleeve = turn(minus(cylinder({0, 0, 0}, 20, 30), cylinder({0, 0, -1}, 10, 32)));
+    const vs::sketch::SketchPlane frame;
+    const SeamLibrary lib =
+        library(seam_for("Bore", cylinder_outline(frame, 10, a0, 2 * kPi, 0, 30), 1.7));
+    check_pair(shaft, sleeve, lib, kPi * 400 * 30 + kPi * 100 * 20);
+  }
+}
+
+TEST_CASE("A patch round nearly all of a shaft leaves its small remainder outside",
+          "[mesh][tessellate][curved][hardening]") {
+  // The remainder of the shaft's face is a sliver of a few degrees, at
+  // most one piece of BRepMesh's wide, whose points all lie on the patch's
+  // edges. The audit expected it to be taken for a piece of the patch; it
+  // isn't (BRepMesh always divides its arcs), so this guards it.
+  for (const double r : {2.0, 10.0}) {
+    for (const double w : {0.01, 0.15}) {
+      INFO("r " << r << ", slot " << w);
+      const double half = std::asin(w / r);
+      const double R = r + 3;
+      const Solid shaft = cylinder({0, 0, 0}, r, 30);
+      // A ring round the shaft, less a slot |y| < w on the -x side.
+      const Solid ring = minus(cylinder({0, 0, 10}, R, 10), cylinder({0, 0, 9}, r, 12));
+      const Solid pad = minus(ring, box({-50, -w, 0}, {0, w, 40}));
+      const vs::sketch::SketchPlane frame;
+      const SeamLibrary lib = library(seam_for(
+          "Wrap", cylinder_outline(frame, r, -kPi + half, 2 * kPi - 2 * half, 10, 20), 0.5));
+      // The slot's share of a disc of radius q: |y| < w, x < 0.
+      const auto slot = [&](double q) { return w * std::sqrt(q * q - w * w) + q * q * std::asin(w / q); };
+      // A thin shaft loses a few tenths of a percent to its chords.
+      check_pair(shaft, pad, lib,
+                 kPi * r * r * 30 + (kPi * (R * R - r * r) - slot(R) + slot(r)) * 10, 0, 5e-3);
+    }
+  }
+}
+
+TEST_CASE("A patch the kernel can't imprint reports why",
+          "[mesh][tessellate][curved][hardening]") {
+  // A band thinner than the minimum feature size: the seam is made, but
+  // its face isn't. The kernel's reason used to be dropped, leaving only
+  // "no face covers the patch".
+  const vs::sketch::SketchPlane frame;
+  const Solid shaft = cylinder({0, 0, 0}, 10, 30);
+  const double thin = 0.5 * kSettings.min_feature_size_mm();
+  const SubjectRef s{SubjectKind::ConnectionSurface, Id::derive(Id::null(), "Thin"), "Thin"};
+  auto seam = vs::mesh::make_seam(s, cylinder_outline(frame, 10, 0, 2 * kPi, 10, 10 + thin), 1.0,
+                                  kSettings);
+  INFO((seam.ok() ? std::string() : seam.error().to_string()));
+  REQUIRE(seam.ok());
+  const Seam* seams[] = {&*seam};
+  const auto m = vs::mesh::tessellate(shaft, kInner, seams, kSettings, {kFine});
+  INFO(describe(m.diagnostics));
+  REQUIRE(m.diagnostics.has_errors());
+  CHECK(codes(m.diagnostics).find("kernel.") != std::string::npos);
 }

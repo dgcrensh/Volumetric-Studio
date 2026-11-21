@@ -1,4 +1,5 @@
 #include "kernel_commands.hpp"
+#include "files.hpp"
 
 #include <filesystem>
 #include <string>
@@ -18,7 +19,7 @@ int run_kernel_demo(std::span<const std::string_view> args, std::ostream& out,
   }
   const std::filesystem::path file =
       args.empty() ? std::filesystem::path("kernel-demo.step")
-                   : std::filesystem::path(std::u8string(args[0].begin(), args[0].end()));
+                   : to_path(args[0]);
   const auto settings = core::ProductSettings::defaults();
 
   const auto part = kernel::make_demo_part(settings);

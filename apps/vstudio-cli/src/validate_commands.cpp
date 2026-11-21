@@ -1,4 +1,5 @@
 #include "validate_commands.hpp"
+#include "files.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -17,7 +18,7 @@ int run_validate(std::span<const std::string_view> args, std::ostream& out, std:
     err << "usage: vstudio-cli validate <project.vsproj>\n";
     return 2;
   }
-  const std::filesystem::path path(std::u8string(args[0].begin(), args[0].end()));
+  const std::filesystem::path path = to_path(args[0]);
   auto loaded = model::load_project(path, /*check_document=*/false);
   if (!loaded) {
     err << loaded.error().to_string() << "\n";

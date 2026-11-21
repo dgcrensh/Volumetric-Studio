@@ -39,6 +39,7 @@ vs_add_library_tests(vs_model
     tests/test_encapsulation.cpp
     tests/test_nested.cpp
     tests/test_generated.cpp
+    tests/test_hardening.cpp
     tests/test_module.cpp
     tests/test_project.cpp
     tests/test_zip.cpp)

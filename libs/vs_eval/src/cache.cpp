@@ -294,15 +294,21 @@ std::optional<std::string> read_file(const std::filesystem::path& path) {
   return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
+// Writes next to `path` under a name unique to this write (H4: engines
+// sharing a cache folder shared "<name>.tmp"), then moves it into place.
 bool write_file(const std::filesystem::path& path, const std::string& text) {
-  const auto tmp = path.string() + ".tmp";
+  const auto tmp = path.string() + "." + core::Id::random().to_string().substr(0, 16) + ".tmp";
+  std::error_code ec;
   {
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     if (!out) return false;
     out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!out) return false;
+    out.close();  // flushes: a full disk shows here
+    if (!out) {
+      std::filesystem::remove(tmp, ec);
+      return false;
+    }
   }
-  std::error_code ec;
   std::filesystem::rename(tmp, path, ec);
   if (ec) std::filesystem::remove(tmp, ec);
   return !ec;
@@ -375,12 +381,17 @@ ContentsPtr read_entry(const Fetch& fetch, const Hash256& key) {
     }
     for (const auto& jd : j.at("diagnostics")) {
       core::Diagnostic d;
-      d.severity = static_cast<core::Severity>(jd.at("severity").get<int>());
+      // Enumerations in range, or the entry is damaged (H4).
+      const auto severity = jd.at("severity").get<std::int64_t>();
+      if (severity < 0 || severity > static_cast<std::int64_t>(core::Severity::Error)) return nullptr;
+      d.severity = static_cast<core::Severity>(severity);
       d.code = jd.at("code").get<std::string>();
       d.message = jd.at("message").get<std::string>();
       for (const auto& js : jd.at("subjects")) {
         core::SubjectRef s;
-        s.kind = static_cast<core::SubjectKind>(js.at("kind").get<int>());
+        const auto kind = js.at("kind").get<std::int64_t>();
+        if (kind < 0 || kind > static_cast<std::int64_t>(core::SubjectKind::Link)) return nullptr;
+        s.kind = static_cast<core::SubjectKind>(kind);
         s.id = core::Id::parse(js.at("id").get<std::string>()).value_or(core::Id::null());
         s.label = js.at("label").get<std::string>();
         d.subjects.push_back(std::move(s));

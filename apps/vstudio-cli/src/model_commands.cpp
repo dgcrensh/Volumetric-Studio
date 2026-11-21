@@ -1,4 +1,5 @@
 #include "model_commands.hpp"
+#include "files.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -18,10 +19,6 @@ namespace vs::cli {
 namespace {
 
 using namespace vs::model;
-
-std::filesystem::path to_path(std::string_view arg) {
-  return std::filesystem::path(std::u8string(arg.begin(), arg.end()));
-}
 
 std::string param_text(const Param& p) {
   if (!p.expression.empty()) return p.expression;

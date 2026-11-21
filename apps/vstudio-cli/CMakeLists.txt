@@ -253,3 +253,58 @@ if(VS_BUILD_TESTS)
   set_tests_properties("vstudio-cli: --gpu samples a procedural volume" PROPERTIES
     PASS_REGULAR_EXPRESSION "gpu +(.*: sampling on the|not used).*Shelled +current +regenerated.*result +ok")
 endif()
+
+if(VS_BUILD_TESTS)
+  # H4 (decision 0026).
+  set(proc_data "${PROJECT_SOURCE_DIR}/libs/vs_proc/tests/data")
+  add_test(NAME "vstudio-cli: rebuild writes a procedural project as 3MF"
+    COMMAND vstudio-cli rebuild "${proc_data}/shell_and_ball.vsproj"
+            --3mf "${CMAKE_CURRENT_BINARY_DIR}/shell_and_ball.3mf")
+  set_tests_properties("vstudio-cli: rebuild writes a procedural project as 3MF" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Shelled +current.*watertight yes, manifold yes.*wrote .*shell_and_ball\\.3mf \\(3MF, 1 object.*result +ok")
+  add_test(NAME "vstudio-cli: rebuild writes one 3MF object per volume"
+    COMMAND vstudio-cli rebuild "${proc_data}/bolt_bosses.vsproj" --per-volume
+            --3mf "${CMAKE_CURRENT_BINARY_DIR}/bolt_bosses.3mf")
+  set_tests_properties("vstudio-cli: rebuild writes one 3MF object per volume" PROPERTIES
+    PASS_REGULAR_EXPRESSION "wrote .*bolt_bosses\\.3mf \\(3MF, 2 objects.*result +ok")
+  add_test(NAME "vstudio-cli: rebuild --per-volume needs --3mf"
+    COMMAND vstudio-cli rebuild "${proc_data}/bolt_bosses.vsproj" --per-volume)
+  set_tests_properties("vstudio-cli: rebuild --per-volume needs --3mf" PROPERTIES WILL_FAIL TRUE)
+
+  # A zip project's caches: the first rebuild saves them into the zip, the
+  # second reads them back.
+  set(zip_project "${CMAKE_CURRENT_BINARY_DIR}/bolt_bosses.zip.vsproj")
+  add_test(NAME "vstudio-cli: zip project for --cache"
+    COMMAND "${CMAKE_COMMAND}" -E chdir "${proc_data}/bolt_bosses.vsproj"
+            "${CMAKE_COMMAND}" -E tar cf "${zip_project}" --format=zip project.json)
+  set_tests_properties("vstudio-cli: zip project for --cache" PROPERTIES
+    FIXTURES_SETUP zip_project)
+  add_test(NAME "vstudio-cli: rebuild --cache saves a zip project's caches"
+    COMMAND vstudio-cli rebuild "${zip_project}" --cache)
+  set_tests_properties("vstudio-cli: rebuild --cache saves a zip project's caches" PROPERTIES
+    PASS_REGULAR_EXPRESSION "cache +0 entries read.*Bosses +current +regenerated.*cache +[1-9][0-9]* files? saved with the project.*result +ok"
+    FIXTURES_REQUIRED zip_project FIXTURES_SETUP zip_cache)
+  add_test(NAME "vstudio-cli: rebuild --cache reads a zip project's caches"
+    COMMAND vstudio-cli rebuild "${zip_project}" --cache)
+  set_tests_properties("vstudio-cli: rebuild --cache reads a zip project's caches" PROPERTIES
+    PASS_REGULAR_EXPRESSION "cache +[1-9][0-9]* entr(y|ies) read.*Bosses +current +cache .*result +ok"
+    FIXTURES_REQUIRED "zip_project;zip_cache")
+
+  # --gpu costs a GL context and calibration: only commands that sample pay it.
+  add_test(NAME "vstudio-cli: --gpu is ignored by commands that don't sample"
+    COMMAND vstudio-cli --gpu nodes)
+  set_tests_properties("vstudio-cli: --gpu is ignored by commands that don't sample" PROPERTIES
+    PASS_REGULAR_EXPRESSION "node types" FAIL_REGULAR_EXPRESSION "gpu +")
+  add_test(NAME "vstudio-cli: selftest reports vs_gpu" COMMAND vstudio-cli selftest)
+  set_tests_properties("vstudio-cli: selftest reports vs_gpu" PROPERTIES
+    PASS_REGULAR_EXPRESSION "vs_gpu: .*checks passed")
+  add_test(NAME "vstudio-cli: bench-gyroid takes whole thread counts only"
+    COMMAND vstudio-cli bench-gyroid --size 10 --cell 1 --threads 1.5)
+  set_tests_properties("vstudio-cli: bench-gyroid takes whole thread counts only" PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME "vstudio-cli: bench-gyroid fails when it can't write its 3MF"
+    COMMAND vstudio-cli bench-gyroid --size 10 --cell 1
+            --3mf "${CMAKE_CURRENT_BINARY_DIR}/no-such-folder/gyroid.3mf")
+  set_tests_properties("vstudio-cli: bench-gyroid fails when it can't write its 3MF" PROPERTIES
+    WILL_FAIL TRUE)
+endif()

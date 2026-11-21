@@ -27,7 +27,9 @@
 // two sides of a seam share the same floats.
 //
 // The spacing is set per surface: ConnectionSurface::seam.spacing when
-// positive, otherwise derive_spacing(). The seam library (seam_library.hpp)
+// positive, otherwise derive_spacing(). A band (L2) uses at most its
+// circumference / 16, so no triangle reaches half a turn round its axis
+// (Seam::spacing is the one used, H4). The seam library (seam_library.hpp)
 // makes one Seam per surface; meshers use it through add_seam_vertices()
 // and add_seam_face() rather than making their own.
 //
@@ -236,7 +238,7 @@ void add_seam_face(Mesh& mesh, const Seam& seam, const std::vector<std::uint32_t
 // files keep positions but not seam ids, so every vertex of `mesh` without
 // a seam id whose position is bit for bit some seam vertex's position32
 // takes that vertex's id (the first seam's, in order, when several share a
-// position). Exact equality only, never a distance: a mesh that wasn't
+// position; -0 and +0 are equal). Exact equality only, never a distance: a mesh that wasn't
 // made against the seams gains nothing. Returns how many vertices it named.
 std::size_t attach_seam_vertices(Mesh& mesh, std::span<const Seam* const> seams);
 

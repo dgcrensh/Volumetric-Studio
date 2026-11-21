@@ -24,16 +24,19 @@ Sums operator+(const Sums& a, const Sums& b) {
 
 std::vector<model::OutputResult> measure_mesh(const model::Volume& volume, const mesh::Mesh& mesh,
                                               ThreadPool& pool) {
+  // Tetrahedra to a vertex of the mesh, not to the origin: far from the
+  // origin the products are huge and cancel to noise (H4).
+  const dvec3 p0 = mesh.empty() ? dvec3{0, 0, 0} : core::to_fp64(mesh.positions[mesh.indices[0]]);
   const Sums sums = parallel_reduce(
       pool, mesh.triangle_count(), kChunk, Sums{},
       [&](std::size_t begin, std::size_t end) {
         Sums s;
         for (std::size_t t = begin; t < end; ++t) {
           const auto tri = mesh.triangle(t);
-          const dvec3 a = core::to_fp64(mesh.positions[tri[0]]);
-          const dvec3 b = core::to_fp64(mesh.positions[tri[1]]);
-          const dvec3 c = core::to_fp64(mesh.positions[tri[2]]);
-          const double v6 = dot(a, cross(b, c));  // 6x the tetrahedron to the origin
+          const dvec3 a = core::to_fp64(mesh.positions[tri[0]]) - p0;
+          const dvec3 b = core::to_fp64(mesh.positions[tri[1]]) - p0;
+          const dvec3 c = core::to_fp64(mesh.positions[tri[2]]) - p0;
+          const double v6 = dot(a, cross(b, c));  // 6x the tetrahedron to p0
           s.volume += v6;
           s.area += length(cross(b - a, c - a));
           s.moment = s.moment + (a + b + c) * v6;  // centroid (a+b+c)/4, times 6v, times 4
@@ -54,7 +57,7 @@ std::vector<model::OutputResult> measure_mesh(const model::Volume& volume, const
         case model::OutputQuantity::Mass: r.value = vol * 1e-3 * o.density; break;
         case model::OutputQuantity::SurfaceArea: r.value = area; break;
         case model::OutputQuantity::CentreOfGravity:
-          if (vol != 0.0) r.value = sums.moment * (1.0 / (4.0 * sums.volume));
+          if (vol != 0.0) r.value = p0 + sums.moment * (1.0 / (4.0 * sums.volume));
           break;
         case model::OutputQuantity::Envelope:
           r.value = core::dbox3::from_min_max(core::to_fp64(box.min), core::to_fp64(box.max));

@@ -1,4 +1,5 @@
 #include "eval_commands.hpp"
+#include "files.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -14,6 +15,7 @@
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
 #include "vs/eval/step_export.hpp"
+#include "vs/mesh/combine.hpp"
 #include "vs/mesh/io.hpp"
 #include "vs/model/project.hpp"
 #include "vs/proc/generator.hpp"
@@ -21,10 +23,6 @@
 namespace vs::cli {
 
 namespace {
-
-std::filesystem::path to_path(std::string_view arg) {
-  return std::filesystem::path(std::u8string(arg.begin(), arg.end()));
-}
 
 std::string value_text(const model::OutputValue& v) {
   if (const auto* d = std::get_if<double>(&v)) return fmt::format("{:.6g}", *d);
@@ -90,13 +88,15 @@ void print(const eval::Evaluation& ev, double ms, std::ostream& out) {
 int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   constexpr std::string_view kUsage =
       "usage: vstudio-cli rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] "
-      "[--stl <out.stl>] [--step <out.step> [--procedural-boundary]] [--cache] "
+      "[--stl <out.stl>] [--3mf <out.3mf> [--per-volume]] [--step <out.step> "
+      "[--procedural-boundary]] [--cache] "
       "[--set <volume>.<parameter>=<value>]... [--twice]\n";
   std::optional<std::string_view> project_arg;
   eval::EngineOptions engine_options;
   eval::EvaluateOptions options;
   bool cache = false, twice = false;
-  std::optional<std::string_view> stl;
+  std::optional<std::string_view> stl, three_mf;
+  bool per_volume = false;
   std::optional<std::string_view> step;
   eval::StepExportOptions step_options;
   std::vector<std::string_view> sets;
@@ -117,6 +117,11 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
     } else if (a == "--stl" && i + 1 < args.size()) {
       stl = args[++i];
       options.weld = true;
+    } else if (a == "--3mf" && i + 1 < args.size()) {
+      three_mf = args[++i];
+      options.weld = true;
+    } else if (a == "--per-volume") {
+      per_volume = true;
     } else if (a == "--step" && i + 1 < args.size()) {
       step = args[++i];
     } else if (a == "--procedural-boundary") {
@@ -133,7 +138,7 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
       project_arg = a;
     }
   }
-  if (!project_arg) return err << kUsage, 2;
+  if (!project_arg || (per_volume && !three_mf)) return err << kUsage, 2;
 
   const std::filesystem::path path = to_path(*project_arg);
   auto loaded = model::load_project(path);
@@ -141,6 +146,11 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
     err << loaded.error().to_string() << "\n";
     return 1;
   }
+  // What a zip project's caches are saved with: the project as it was
+  // read, never with --set's changes.
+  const bool zip = !std::filesystem::is_directory(path);
+  std::optional<model::Project> as_read;
+  if (cache && zip) as_read = *loaded;
   for (const auto set : sets) {
     const auto dot = set.find('.');
     const auto eq = set.find('=');
@@ -163,16 +173,19 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
     }
     p->value = feature::Param::expr(std::string(set.substr(eq + 1)));
   }
-  if (cache) {
-    if (!std::filesystem::is_directory(path)) {
-      return err << "vstudio-cli: --cache needs a folder project\n", 2;
-    }
-    engine_options.disk_cache = path / "cache";
-  }
+  // A folder project's cache/ is the engine's disk cache; a zip's cache/
+  // entries are read into memory now and written back after (H4).
+  if (cache && !zip) engine_options.disk_cache = path / "cache";
 
   const auto settings = core::ProductSettings::defaults();
   eval::Engine engine(settings, engine_options);
   proc::install(engine);  // procedural volumes (M10)
+  if (cache && zip) {
+    const model::CacheFiles files = model::load_project_cache(path);
+    const std::size_t entries = engine.cache().insert_files(files);
+    out << fmt::format("cache       {} entr{} read from the project\n", entries,
+                       entries == 1 ? "y" : "ies");
+  }
   const std::size_t volumes = loaded->document.volumes.size();
   out << fmt::format("project     {} ({} volume{}, {} thread{}{})\n", loaded->document.name,
                      volumes, volumes == 1 ? "" : "s", engine.pool().size(),
@@ -190,13 +203,34 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
     if (stl && run + 1 == (twice ? 2 : 1) && !errors && ev.combined && ev.combined->ok()) {
       const auto bytes = mesh::write_stl(ev.combined->weld.mesh);
       if (!bytes) return err << bytes.error().to_string() << "\n", 1;
-      std::ofstream f(to_path(*stl), std::ios::binary | std::ios::trunc);
-      if (f) {
-        f.write(reinterpret_cast<const char*>(bytes->data()),
-                static_cast<std::streamsize>(bytes->size()));
-      }
-      if (!f) return err << "vstudio-cli: can't write " << *stl << "\n", 1;
+      if (!write_bytes(to_path(*stl), *bytes, err)) return 1;
       out << fmt::format("wrote       {} (STL, {} bytes)\n", *stl, bytes->size());
+    }
+    if (three_mf && run + 1 == (twice ? 2 : 1) && !errors && ev.combined && ev.combined->ok()) {
+      // One object welded from every volume, or one per volume (each as
+      // the engine meshed it: tessellated, generated or read).
+      std::vector<mesh::ThreeMfObject> objects;
+      if (per_volume) {
+        for (const mesh::VolumeTessellation& v : ev.combined->volumes) {
+          objects.push_back({v.name, v.volume, &v.mesh});
+        }
+      } else {
+        objects.push_back({ev.document.name, core::Id::null(), &ev.combined->weld.mesh});
+      }
+      const auto bytes = mesh::write_3mf(objects, ev.document.name);
+      if (!bytes) return err << bytes.error().to_string() << "\n", 1;
+      if (!write_bytes(to_path(*three_mf), *bytes, err)) return 1;
+      out << fmt::format("wrote       {} (3MF, {} object{}, {} bytes)\n", *three_mf, objects.size(),
+                         objects.size() == 1 ? "" : "s", bytes->size());
+    }
+    if (as_read && run + 1 == (twice ? 2 : 1)) {
+      const model::CacheFiles files = eval::project_cache_files(ev);
+      const core::Diagnostics saved =
+          model::save_project(*as_read, path, model::ProjectLayout::Zip, &files);
+      for (const auto& d : saved) out << "  " << d.to_string() << "\n";
+      if (saved.has_errors()) return 1;
+      out << fmt::format("cache       {} file{} saved with the project\n", files.size(),
+                         files.size() == 1 ? "" : "s");
     }
     if (step && run + 1 == (twice ? 2 : 1) && !errors) {
       const auto r = eval::export_step(ev, to_path(*step), step_options);

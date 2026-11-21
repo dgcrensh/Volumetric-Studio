@@ -1,4 +1,5 @@
 #include "mesh_commands.hpp"
+#include "files.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -22,30 +23,12 @@
 
 namespace vs::cli {
 
-namespace {
-
-std::filesystem::path to_path(std::string_view s) {
-  return std::filesystem::path(std::u8string(s.begin(), s.end()));
-}
-
-bool write_bytes(const std::filesystem::path& path, const mesh::Bytes& bytes, std::ostream& err) {
-  std::ofstream f(path, std::ios::binary | std::ios::trunc);
-  if (f) f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-  if (!f) {
-    err << "vstudio-cli: can't write " << path.string() << "\n";
-    return false;
-  }
-  return true;
-}
-
-}  // namespace
-
 int run_seams(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   if (args.size() != 1) {
     err << "usage: vstudio-cli seams <project.vsproj>\n";
     return 2;
   }
-  const std::filesystem::path path(std::u8string(args[0].begin(), args[0].end()));
+  const std::filesystem::path path = to_path(args[0]);
   auto loaded = model::load_project(path);
   if (!loaded) {
     err << loaded.error().to_string() << "\n";

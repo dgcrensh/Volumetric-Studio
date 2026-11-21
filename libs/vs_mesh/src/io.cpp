@@ -38,10 +38,22 @@ std::string_view as_text(std::span<const std::byte> bytes) {
 
 // --- building meshes from files ------------------------------------------------
 
+// -0 as +0: one position, one bit pattern (H4).
+fvec3 canonical(fvec3 p) {
+  for (float* c : {&p.x, &p.y, &p.z}) {
+    if (*c == 0.0f) *c = 0.0f;
+  }
+  return p;
+}
+
+bool finite(const fvec3& p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }
+
 // Merges corners with identical floats (STL), drops degenerate triangles.
+// Every position is canonical: a -0 coordinate is stored as +0.
 class Builder {
  public:
-  std::uint32_t vertex(const fvec3& p) {
+  std::uint32_t vertex(const fvec3& position) {
+    const fvec3 p = canonical(position);
     const std::array<std::uint32_t, 3> key{std::bit_cast<std::uint32_t>(p.x),
                                            std::bit_cast<std::uint32_t>(p.y),
                                            std::bit_cast<std::uint32_t>(p.z)};
@@ -49,7 +61,7 @@ class Builder {
     if (added) it->second = mesh_.add_vertex(p);
     return it->second;
   }
-  std::uint32_t raw_vertex(const fvec3& p) { return mesh_.add_vertex(p); }
+  std::uint32_t raw_vertex(const fvec3& p) { return mesh_.add_vertex(canonical(p)); }
   void triangle(std::uint32_t a, std::uint32_t b, std::uint32_t c) {
     if (a == b || b == c || c == a) return;
     mesh_.add_triangle(a, b, c, Id::null());
@@ -189,7 +201,7 @@ core::Result<std::map<std::string, std::string>> zip_read(std::span<const std::b
 // --- a small XML reader (elements and attributes; enough for 3MF) ---------------
 
 struct Tag {
-  std::string_view name;  // without a namespace prefix only when it had none
+  std::string_view name;  // the local name: any namespace prefix ("m:") left off
   bool closing = false;
   bool self_closing = false;
   std::vector<std::pair<std::string_view, std::string>> attributes;
@@ -201,6 +213,44 @@ struct Tag {
     return std::nullopt;
   }
 };
+
+// "#65" or "#x41": a numeric character reference's code point.
+std::optional<char32_t> character_reference(std::string_view ent) {
+  if (ent.size() < 2 || ent[0] != '#') return std::nullopt;
+  int base = 10;
+  ent.remove_prefix(1);
+  if (ent[0] == 'x' || ent[0] == 'X') {
+    base = 16;
+    ent.remove_prefix(1);
+  }
+  std::uint32_t v = 0;
+  const auto [end, ec] = std::from_chars(ent.data(), ent.data() + ent.size(), v, base);
+  if (ec != std::errc() || end != ent.data() + ent.size() || ent.empty() || v == 0 ||
+      v > 0x10ffff || (v >= 0xd800 && v <= 0xdfff)) {
+    return std::nullopt;
+  }
+  return static_cast<char32_t>(v);
+}
+
+void append_utf8(std::string& out, char32_t c) {
+  const auto byte = [&](std::uint32_t b) { out.push_back(static_cast<char>(static_cast<unsigned char>(b))); };
+  const auto v = static_cast<std::uint32_t>(c);
+  if (v < 0x80) {
+    byte(v);
+  } else if (v < 0x800) {
+    byte(0xc0 | (v >> 6));
+    byte(0x80 | (v & 0x3f));
+  } else if (v < 0x10000) {
+    byte(0xe0 | (v >> 12));
+    byte(0x80 | ((v >> 6) & 0x3f));
+    byte(0x80 | (v & 0x3f));
+  } else {
+    byte(0xf0 | (v >> 18));
+    byte(0x80 | ((v >> 12) & 0x3f));
+    byte(0x80 | ((v >> 6) & 0x3f));
+    byte(0x80 | (v & 0x3f));
+  }
+}
 
 std::string unescape(std::string_view s) {
   std::string out;
@@ -221,6 +271,7 @@ std::string unescape(std::string_view s) {
     else if (ent == "amp") out.push_back('&');
     else if (ent == "quot") out.push_back('"');
     else if (ent == "apos") out.push_back('\'');
+    else if (const std::optional<char32_t> c = character_reference(ent)) append_utf8(out, *c);
     else out.append(s.substr(i, semi - i + 1));
     i = semi;
   }
@@ -277,6 +328,11 @@ bool scan_xml(std::string_view xml, F&& f) {
     const std::size_t name_start = p;
     while (p < xml.size() && !is_space(xml[p]) && xml[p] != '>' && xml[p] != '/') ++p;
     tag.name = xml.substr(name_start, p - name_start);
+    // 3MF files may bind the core namespace to a prefix (<m:model>); the
+    // elements are the same.
+    if (const std::size_t colon = tag.name.find(':'); colon != std::string_view::npos) {
+      tag.name.remove_prefix(colon + 1);
+    }
     while (true) {
       while (p < xml.size() && is_space(xml[p])) ++p;
       if (p >= xml.size()) return false;
@@ -355,6 +411,9 @@ double determinant(const Matrix& m) {
 
 core::Result<Bytes> write_stl(const Mesh& mesh) {
   if (mesh.empty()) return Diagnostic::error("mesh.io.empty", "There are no triangles to write");
+  for (const Diagnostic& d : mesh.check()) {
+    if (d.is_error()) return d;
+  }
   Bytes out;
   out.reserve(84 + 50 * mesh.triangle_count());
   std::string header = "binary STL from Volumetric CAD Studio";
@@ -385,6 +444,12 @@ core::Result<Bytes> write_3mf(std::span<const ThreeMfObject> objects, std::strin
   std::size_t triangles = 0;
   for (const ThreeMfObject& o : objects) triangles += o.mesh ? o.mesh->triangle_count() : 0;
   if (triangles == 0) return Diagnostic::error("mesh.io.empty", "There are no triangles to write");
+  for (const ThreeMfObject& o : objects) {
+    if (o.mesh == nullptr) continue;
+    for (const Diagnostic& d : o.mesh->check()) {
+      if (d.is_error()) return d;
+    }
+  }
 
   std::string model;
   model.reserve(128 * triangles);
@@ -488,8 +553,12 @@ core::Result<Mesh> read_stl(std::span<const std::byte> file) {
           problem = io_error("stl", fmt::format("line {}: a coordinate isn't a number", number_));
           return;
         }
-        corners.push_back(b.vertex({static_cast<float>(*x), static_cast<float>(*y),
-                                    static_cast<float>(*z)}));
+        const fvec3 p{static_cast<float>(*x), static_cast<float>(*y), static_cast<float>(*z)};
+        if (!finite(p)) {
+          problem = io_error("stl", fmt::format("line {}: a coordinate is too large for a float", number_));
+          return;
+        }
+        corners.push_back(b.vertex(p));
       } else if (w[0] == "endloop") {
         if (corners.size() != 3) {
           problem = io_error("stl", fmt::format("line {}: a facet needs three vertices", number_));
@@ -511,7 +580,7 @@ core::Result<Mesh> read_obj(std::span<const std::byte> file) {
   std::optional<Diagnostic> problem;
   for_each_line(as_text(file), [&](std::string_view line, std::size_t number_) {
     if (problem) return;
-    const auto w = words(line);
+    const auto w = words(line.substr(0, line.find('#')));  // a comment may end any line
     if (w.empty()) return;
     if (w[0] == "v") {
       if (w.size() < 4) {
@@ -523,8 +592,12 @@ core::Result<Mesh> read_obj(std::span<const std::byte> file) {
         problem = io_error("obj", fmt::format("line {}: a coordinate isn't a number", number_));
         return;
       }
-      vertices.push_back(
-          b.raw_vertex({static_cast<float>(*x), static_cast<float>(*y), static_cast<float>(*z)}));
+      const fvec3 p{static_cast<float>(*x), static_cast<float>(*y), static_cast<float>(*z)};
+      if (!finite(p)) {
+        problem = io_error("obj", fmt::format("line {}: a coordinate is too large for a float", number_));
+        return;
+      }
+      vertices.push_back(b.raw_vertex(p));
     } else if (w[0] == "f") {
       std::vector<std::uint32_t> face;
       for (std::size_t i = 1; i < w.size(); ++i) {
@@ -532,7 +605,7 @@ core::Result<Mesh> read_obj(std::span<const std::byte> file) {
         long long k = 0;
         const auto [end, ec] = std::from_chars(ref.data(), ref.data() + ref.size(), k);
         const long long n = static_cast<long long>(vertices.size());
-        if (ec != std::errc() || end != ref.data() + ref.size() || k == 0 || k > n || -k > n) {
+        if (ec != std::errc() || end != ref.data() + ref.size() || k == 0 || k > n || k < -n) {
           problem = io_error("obj", fmt::format("line {}: a face refers to a vertex that isn't there", number_));
           return;
         }
@@ -580,7 +653,7 @@ core::Result<Mesh> read_3mf(std::span<const std::byte> file) {
   std::vector<std::pair<std::string, Matrix>> items;
   double scale = 1.0;
   std::string current;
-  bool in_object = false;
+  Object* object = nullptr;  // the object being read, between its tags
   std::optional<Diagnostic> problem;
   const bool scanned = scan_xml(model->second, [&](const Tag& tag) {
     const auto fail = [&](std::string why) {
@@ -597,20 +670,22 @@ core::Result<Mesh> read_3mf(std::span<const std::byte> file) {
       scale = u->second;
     } else if (tag.name == "object") {
       if (tag.closing) {
-        in_object = false;
+        object = nullptr;
       } else {
         const auto id = tag.attribute("id");
         if (!id) return fail("an object has no id");
         current = std::string(*id);
-        objects[current];
-        in_object = !tag.self_closing;
+        Object* o = &objects[current];
+        object = tag.self_closing ? nullptr : o;
       }
-    } else if (tag.name == "vertex" && in_object) {
+    } else if (tag.closing) {
+      // End tags of vertices, triangles, components and items carry nothing.
+    } else if (tag.name == "vertex" && object != nullptr) {
       const auto x = number(tag.attribute("x").value_or("")), y = number(tag.attribute("y").value_or("")),
                  z = number(tag.attribute("z").value_or(""));
       if (!x || !y || !z) return fail("a vertex of object " + current + " has a bad coordinate");
-      objects[current].vertices.push_back(core::dvec3{*x, *y, *z} * scale);
-    } else if (tag.name == "triangle" && in_object) {
+      object->vertices.push_back(core::dvec3{*x, *y, *z} * scale);
+    } else if (tag.name == "triangle" && object != nullptr) {
       std::array<std::uint32_t, 3> t{};
       const char* keys[] = {"v1", "v2", "v3"};
       for (std::size_t k = 0; k < 3; ++k) {
@@ -620,8 +695,8 @@ core::Result<Mesh> read_3mf(std::span<const std::byte> file) {
         }
         t[k] = static_cast<std::uint32_t>(*v);
       }
-      objects[current].triangles.push_back(t);
-    } else if ((tag.name == "component" && in_object) || tag.name == "item") {
+      object->triangles.push_back(t);
+    } else if ((tag.name == "component" && object != nullptr) || tag.name == "item") {
       const auto id = tag.attribute("objectid");
       if (!id) return fail("a component or build item has no objectid");
       Matrix m = kIdentity;
@@ -636,7 +711,7 @@ core::Result<Mesh> read_3mf(std::span<const std::byte> file) {
       if (tag.name == "item") {
         items.emplace_back(std::string(*id), m);
       } else {
-        objects[current].components.emplace_back(std::string(*id), m);
+        object->components.emplace_back(std::string(*id), m);
       }
     }
     return true;
@@ -666,7 +741,14 @@ core::Result<Mesh> read_3mf(std::span<const std::byte> file) {
     const bool mirror = determinant(m) < 0;
     std::vector<std::uint32_t> map;
     map.reserve(o.vertices.size());
-    for (const core::dvec3& p : o.vertices) map.push_back(b.raw_vertex(core::to_fp32(apply(m, p))));
+    for (const core::dvec3& p : o.vertices) {
+      const fvec3 q = core::to_fp32(apply(m, p));
+      if (!finite(q)) {
+        bad = io_error("3mf", "a vertex of object " + id + " lies too far away for a float");
+        return;
+      }
+      map.push_back(b.raw_vertex(q));
+    }
     for (const auto& t : o.triangles) {
       if (t[0] >= map.size() || t[1] >= map.size() || t[2] >= map.size()) {
         bad = io_error("3mf", "a triangle of object " + id + " refers to a vertex that isn't there");

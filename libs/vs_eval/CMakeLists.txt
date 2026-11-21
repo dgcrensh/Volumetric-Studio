@@ -34,6 +34,7 @@ vs_add_library_tests(vs_eval
     tests/test_import.cpp
     tests/test_module.cpp
     tests/test_nested.cpp
+    tests/test_hardening.cpp
     tests/test_step_export.cpp
     tests/test_thread_pool.cpp)
 
