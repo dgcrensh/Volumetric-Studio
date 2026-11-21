@@ -91,8 +91,11 @@
 // the reference is broken.
 //
 // Rebuilding from a changed feature: pass the previous result and the first
-// feature that changed. Results above it are reused when the tree above it
-// and the variables' values are unchanged; otherwise everything rebuilds.
+// feature that changed. Results above it are reused when every feature above
+// it (definitions, sketches, suppression) is what the previous result was
+// built from, and the variables' values and the ProductSettings are
+// unchanged; otherwise everything rebuilds. A wrong `start` therefore never
+// reuses a stale result.
 
 #include <cstddef>
 #include <map>
@@ -156,6 +159,10 @@ struct RebuildResult {
   VariableValues variables;
   // The variables' diagnostics, then every feature's, in order.
   Diagnostics diagnostics;
+  // What it was built from, so that a later rebuild reuses it only above
+  // features that are unchanged, under the same settings.
+  std::vector<Feature> built_from;
+  ProductSettings settings;
 
   [[nodiscard]] bool ok() const { return !diagnostics.has_errors(); }
   [[nodiscard]] const FeatureResult* find(const Id& feature) const;
@@ -176,7 +183,8 @@ struct RebuildResult {
 // of the tree and an input refers to the feature.
 //
 // `values` are numbers that Params and sketch dimensions can use by name, as
-// if they were variables. A variable of the tree with the same name wins.
+// if they were variables. A variable of the tree with the same name wins,
+// even when it has no value (its expression failed): it is never shadowed.
 // The variable table itself doesn't see them: variables can't use them.
 struct ExternalInput {
   core::SubjectRef subject;  // its id is the id references use

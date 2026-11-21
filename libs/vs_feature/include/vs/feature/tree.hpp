@@ -398,4 +398,23 @@ class FeatureTree {
   std::vector<Feature> features_;
 };
 
+// --- every id a tree holds ------------------------------------------------------
+
+// One id a tree holds, with the feature it belongs to. The one walk every
+// module uses to ask "is this id in that tree?", so they can't drift apart.
+enum class TreeIdKind { Variable, Feature, Sketch, SketchEntity, Constraint };
+struct TreeId {
+  Id id;
+  TreeIdKind kind = TreeIdKind::Feature;
+  Id feature;                // the feature holding it; null for a variable
+  core::SubjectRef subject;  // for messages
+};
+
+// The tree's variables, then each feature followed, for a sketch feature,
+// by its sketch's own id (when it differs from the feature's), entities and
+// constraints. In order, repeats included (callers check uniqueness).
+std::vector<TreeId> tree_ids(const FeatureTree& tree);
+// The entry for `id`, if the tree holds it; never for the null id.
+std::optional<TreeId> find_tree_id(const FeatureTree& tree, const Id& id);
+
 }  // namespace vs::feature

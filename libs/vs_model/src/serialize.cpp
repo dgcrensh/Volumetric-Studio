@@ -270,6 +270,15 @@ Id read_id(const json& j, std::string_view where) {
   return *id;
 }
 
+// The id of an authored object (a volume, surface, keep-out, link,
+// parameter, output or template): never null, which would match every
+// unset reference.
+Id read_own_id(const json& j, std::string_view where) {
+  const Id id = read_id(j, where);
+  if (id.is_null()) fail(where, "the null id; every object needs its own");
+  return id;
+}
+
 std::vector<Id> read_ids(const json& j, std::string_view key, std::string_view where) {
   const json& a = member(j, key, where);
   if (!a.is_array()) fail(fmt::format("{}.{}", where, key), "expected an array");
@@ -378,7 +387,7 @@ std::vector<VolumeParameter> read_parameters(const json& j, const std::string& w
   for (std::size_t i = 0; i < ps->size(); ++i) {
     const std::string pw = fmt::format("{}.parameters[{}]", where, i);
     const json& p = (*ps)[i];
-    out.push_back({read_id(member(p, "id", pw), pw + ".id"),
+    out.push_back({read_own_id(member(p, "id", pw), pw + ".id"),
                    read_string(member(p, "name", pw), pw + ".name"),
                    read_param(member(p, "value", pw), pw + ".value")});
   }
@@ -394,7 +403,7 @@ std::vector<PublishedOutput> read_outputs(const json& j, const std::string& wher
     const std::string ow = fmt::format("{}.outputs[{}]", where, i);
     const json& o = (*os)[i];
     PublishedOutput out;
-    out.id = read_id(member(o, "id", ow), ow + ".id");
+    out.id = read_own_id(member(o, "id", ow), ow + ".id");
     out.name = read_string(member(o, "name", ow), ow + ".name");
     out.quantity = read_quantity(member(o, "quantity", ow), ow + ".quantity");
     if (const json* d = optional_member(o, "density")) out.density = read_number(*d, ow + ".density");
@@ -433,7 +442,7 @@ Contents read_contents(const json& c, const std::string& at) {
         const std::string tw = fmt::format("{}.templates[{}]", at, i);
         const json& t = (*ts)[i];
         ChildTemplate ct;
-        ct.id = read_id(member(t, "id", tw), tw + ".id");
+        ct.id = read_own_id(member(t, "id", tw), tw + ".id");
         ct.name = read_optional_string(t, "name", tw);
         auto contents = as_template_contents(read_contents(member(t, "contents", tw), tw + ".contents"));
         if (!contents) fail(tw + ".contents.kind", "a template can't be a composite");
@@ -452,7 +461,7 @@ Contents read_contents(const json& c, const std::string& at) {
 
 Volume read_volume(const json& j, const std::string& where) {
   Volume v;
-  v.id = read_id(member(j, "id", where), where + ".id");
+  v.id = read_own_id(member(j, "id", where), where + ".id");
   v.name = read_optional_string(j, "name", where);
   if (const json* p = optional_member(j, "parent")) v.parent = read_id(*p, where + ".parent");
   const json& b = member(j, "boundary", where);
@@ -489,7 +498,7 @@ Volume read_volume(const json& j, const std::string& where) {
 
 ConnectionSurface read_connection(const json& j, const std::string& where) {
   ConnectionSurface c;
-  c.id = read_id(member(j, "id", where), where + ".id");
+  c.id = read_own_id(member(j, "id", where), where + ".id");
   c.name = read_optional_string(j, "name", where);
   c.volumes = read_ids(j, "volumes", where);
   const json& g = member(j, "geometry", where);
@@ -587,7 +596,7 @@ Document read_document(const json& j) {
     for (std::size_t i = 0; i < ks->size(); ++i) {
       const std::string kw = fmt::format("document.keep_outs[{}]", i);
       const json& k = (*ks)[i];
-      d.keep_outs.push_back({read_id(member(k, "id", kw), kw + ".id"),
+      d.keep_outs.push_back({read_own_id(member(k, "id", kw), kw + ".id"),
                              read_optional_string(k, "name", kw), read_ids(k, "cutters", kw),
                              read_ids(k, "volumes", kw)});
     }
@@ -597,7 +606,7 @@ Document read_document(const json& j) {
       const std::string lw = fmt::format("document.links[{}]", i);
       const json& l = (*ls)[i];
       const json& s = member(l, "source", lw);
-      d.links.push_back({read_id(member(l, "id", lw), lw + ".id"),
+      d.links.push_back({read_own_id(member(l, "id", lw), lw + ".id"),
                          {read_id(member(s, "volume", lw), lw + ".source.volume"),
                           read_id(member(s, "output", lw), lw + ".source.output")},
                          read_id(member(l, "target", lw), lw + ".target")});

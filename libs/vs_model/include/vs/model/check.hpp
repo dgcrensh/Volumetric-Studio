@@ -8,6 +8,7 @@
 // check() runs, in order:
 //
 //   structure      model.document.duplicate_id     two things share an id
+//                  model.document.null_id          an authored object has the null id
 //                  model.volume.duplicate_name     two volumes share a name
 //                  model.volume.keep_out_contents  a keep-out volume has contents
 //                  model.volume.bad_parameter      a parameter name isn't legal

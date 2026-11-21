@@ -143,8 +143,12 @@ struct SolidClassifier::Impl {
   double tolerance = 0.0;
 };
 
+SolidClassifier::~SolidClassifier() = default;
+SolidClassifier::SolidClassifier(SolidClassifier&&) noexcept = default;
+SolidClassifier& SolidClassifier::operator=(SolidClassifier&&) noexcept = default;
+
 SolidClassifier::SolidClassifier(const Solid& solid, const ProductSettings& settings)
-    : impl_(std::make_shared<Impl>()) {
+    : impl_(std::make_unique<Impl>()) {
   impl_->tolerance = settings.linear_tolerance_mm;
   for (const Solid& s : solids(solid)) {
     impl_->lumps.push_back(std::make_unique<BRepClass3d_SolidClassifier>(topo(s)));

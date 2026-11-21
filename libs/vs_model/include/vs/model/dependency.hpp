@@ -19,9 +19,13 @@
 //
 //   Variable  -> variables its expression names; the link driving it
 //   Feature   -> features it refers to; variables its expressions name; for a
-//                through-all extrude, the feature above it that last changed
-//                the body (it reaches as far as the body does)
-//   VolumeBoundary -> its features or points; the keep-outs that cut it
+//                feature whose result depends on the body above it (a
+//                through-all extrude, which reaches as far as the body does;
+//                a cut; a shell, fillet or chamfer; a pattern), every
+//                unsuppressed feature above it that changed the body
+//   VolumeBoundary -> its features or points (or, inside a composite, the
+//                composite's boundary and joining surfaces they name); the
+//                keep-outs that cut it
 //   KeepOut   -> its cutter features; the boundaries of keep-out volumes it uses
 //   ConnectionSurface -> its sketch or plane; variables its parameters name
 //   Parameter -> variables its expression names; the link driving it

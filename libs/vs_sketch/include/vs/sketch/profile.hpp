@@ -9,7 +9,15 @@
 //
 //   - an end that meets nothing is "sketch.profile.open";
 //   - three or more ends at one joint is "sketch.profile.branching";
-//   - two loops that cross each other are "sketch.profile.loops_cross".
+//   - two loops that cross each other (a corner inside the other, or only
+//     sides crossing, as two rectangles in a '+'), or one loop drawn twice
+//     (coincident circles), are "sketch.profile.loops_cross";
+//   - a loop that crosses itself (a bowtie) is "sketch.profile.self_crossing".
+//
+// The tests turn arcs into polygons whose chords stray no more than the
+// minimum feature size from them (more chords on larger radii), so loops
+// closer than that count as touching. Each loop's box prunes the pairs
+// compared, and sides are compared by a sweep in x.
 //
 // Loops nest by containment. A loop inside an even number of others
 // (0, 2, ...) is an outer loop; one inside an odd number is a hole in the

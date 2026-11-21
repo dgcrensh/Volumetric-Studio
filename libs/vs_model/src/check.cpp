@@ -71,7 +71,11 @@ class Checker {
   void unique_ids() {
     std::set<Id> seen;
     auto note = [&](const Id& id, const SubjectRef& what) {
-      if (id.is_null()) return;
+      if (id.is_null()) {
+        error("model.document.null_id", what,
+              "it has the null id, which every unset reference matches; give it an id of its own");
+        return;
+      }
       if (!seen.insert(id).second) {
         error("model.document.duplicate_id", what,
               fmt::format("its id {} is also used by something else in the document",
@@ -79,14 +83,7 @@ class Checker {
       }
     };
     auto note_tree = [&](const feature::FeatureTree& tree) {
-      for (const auto& v : tree.variables().variables()) note(v.id, tree.variables().subject(v.id));
-      for (const auto& f : tree.features()) {
-        note(f.id, tree.subject(f.id));
-        if (const auto* s = f.as<feature::SketchFeature>()) {
-          if (!(s->sketch.id() == f.id)) note(s->sketch.id(), tree.subject(f.id));
-          for (const auto& e : s->sketch.entities()) note(e.id, s->sketch.subject(e.id));
-        }
-      }
+      for (const auto& t : feature::tree_ids(tree)) note(t.id, t.subject);
     };
     note_tree(doc_.layout);
     for (const auto& v : doc_.volumes) {
@@ -229,7 +226,9 @@ class Checker {
         break;
       }
     }
-    if (!v.parent.is_null()) {
+    if (v.parent == v.id && !v.id.is_null()) {
+      error("model.volume.parent", self, "it is its own parent; it is inside itself");
+    } else if (!v.parent.is_null()) {
       const Volume* p = doc_.find_volume(v.parent);
       const std::vector<Id> up = ancestors(doc_, v.id);
       if (p == nullptr || !p->composite()) {

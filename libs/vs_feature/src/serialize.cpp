@@ -229,6 +229,14 @@ Id read_id(const json& j, std::string_view where) {
   return *id;
 }
 
+// The id of an authored object (a feature, a variable): never null, which
+// would match every unset reference.
+Id read_own_id(const json& j, std::string_view where) {
+  const Id id = read_id(j, where);
+  if (id.is_null()) fail(where, "the null id; every object needs its own");
+  return id;
+}
+
 bool read_bool(const json& j, std::string_view key, std::string_view where) {
   const auto it = j.find(key);
   if (it == j.end()) return false;
@@ -560,7 +568,7 @@ Result<FeatureTree> feature_tree_from_json(std::string_view text) {
       for (std::size_t i = 0; i < vars.size(); ++i) {
         const std::string where = fmt::format("variables[{}]", i);
         Variable v;
-        v.id = read_id(member(vars[i], "id", where), where + ".id");
+        v.id = read_own_id(member(vars[i], "id", where), where + ".id");
         v.name = read_string(member(vars[i], "name", where), where + ".name");
         const json& e = member(vars[i], "expression", where);
         v.expression = e.is_number() ? fmt::format("{}", e.get<double>())
@@ -575,7 +583,7 @@ Result<FeatureTree> feature_tree_from_json(std::string_view text) {
         const std::string where = fmt::format("features[{}]", i);
         const json& j = features[i];
         Feature f;
-        f.id = read_id(member(j, "id", where), where + ".id");
+        f.id = read_own_id(member(j, "id", where), where + ".id");
         if (j.contains("name")) f.name = read_string(j["name"], where + ".name");
         f.suppressed = read_bool(j, "suppressed", where);
         f.definition = read_definition(j, where);

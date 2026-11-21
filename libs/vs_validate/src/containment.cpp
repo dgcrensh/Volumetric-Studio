@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +14,7 @@
 
 #include "vs/kernel/operations.hpp"
 #include "vs/kernel/queries.hpp"
+#include "vs/kernel/tessellate.hpp"
 
 namespace vs::validate {
 
@@ -71,12 +74,29 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const kernel:
   }
   if (outside->is_empty()) return {};
   const auto mass = kernel::mass_properties(*outside);
-  if (!mass || mass->volume <= 0.0) return {};
+  if (!mass) {
+    if (mass.error().code == "kernel.mass.empty") return {};  // nothing with volume outside
+    return undecided(volume, mass.error().message);
+  }
+  if (mass->volume <= 0.0) return {};
 
   ContainmentResult r;
   r.region = kernel::bounding_box(*outside);
   r.outside_volume = mass->volume;
-  for (const dvec3& p : kernel::vertex_points(*outside)) {
+  // How far it reaches: the farthest of its vertices and of points spread
+  // over its edges and faces. Vertices alone miss a bulge: a sphere or
+  // cylinder poking out has its farthest point inside a face, and its
+  // vertices (if any) on the boundary.
+  std::vector<dvec3> points = kernel::vertex_points(*outside);
+  const double diagonal = length(r.region.size());
+  kernel::TessellationParams params;
+  params.deflection = std::max(settings.min_feature_size_mm(), diagonal * 0.01);
+  params.angle = 0.5;
+  auto tess = kernel::tessellate(*outside, params, settings);
+  if (!tess) return undecided(volume, tess.error().message);
+  for (const auto& e : tess->edges) points.insert(points.end(), e.points.begin(), e.points.end());
+  for (const auto& f : tess->faces) points.insert(points.end(), f.points.begin(), f.points.end());
+  for (const dvec3& p : points) {
     auto d = kernel::distance_to(boundary, p);
     if (!d) return undecided(volume, d.error().message);
     r.reach = std::max(r.reach, *d);
@@ -119,17 +139,20 @@ class Certifier {
     const dvec3 c = (box.min + box.max) * 0.5;
     const double r = 0.5 * length(box.max - box.min);
     if (classifier_.classify(c) == kernel::PointClass::Inside) {
-      double d = std::numeric_limits<double>::infinity();
+      bool clear = true;  // no face within r of the centre
       for (const auto& f : faces_) {
         auto fd = kernel::distance_to(f, c);
         if (!fd) {
           failed_ = true;  // leave it all to the classifier
-          d = 0.0;
+          clear = false;
           break;
         }
-        d = std::min(d, *fd);
+        if (*fd < r) {  // this node can't be certified: no need to measure the rest
+          clear = false;
+          break;
+        }
       }
-      if (d >= r) return;  // every sample in the group is inside
+      if (clear) return;  // every sample in the group is inside
     }
     std::array<std::vector<std::uint32_t>, 8> children;
     for (const auto i : group) {
@@ -137,11 +160,12 @@ class Certifier {
       const std::size_t k = (p.x > c.x ? 1u : 0u) | (p.y > c.y ? 2u : 0u) | (p.z > c.z ? 4u : 0u);
       children[k].push_back(i);
     }
+    const std::size_t size = group.size();
     group.clear();
     group.shrink_to_fit();
     for (auto& child : children) {
       if (child.empty()) continue;
-      if (child.size() == samples_.size()) {  // can't split (all at one point)
+      if (child.size() == size) {  // can't split (all at one point)
         pending.insert(pending.end(), child.begin(), child.end());
         continue;
       }
@@ -177,6 +201,45 @@ std::optional<std::vector<kernel::Plane>> convex_planes(const kernel::Solid& bou
   return planes;
 }
 
+// What one worker classifies with: its own copy of the boundary and a
+// classifier prepared on it.
+struct Worker {
+  kernel::Solid boundary;
+  kernel::SolidClassifier classifier;
+};
+
+class WorkerPool {
+ public:
+  WorkerPool(const kernel::Solid& boundary, const core::ProductSettings& settings)
+      : boundary_(boundary), settings_(settings) {}
+
+  core::Result<std::unique_ptr<Worker>> take() {
+    {
+      const std::lock_guard lock(mutex_);
+      if (!free_.empty()) {
+        auto w = std::move(free_.back());
+        free_.pop_back();
+        return core::Result<std::unique_ptr<Worker>>(std::move(w));
+      }
+    }
+    auto copy = kernel::deep_copy(boundary_);
+    if (!copy) return copy.error();
+    kernel::SolidClassifier classifier(*copy, settings_);
+    return std::make_unique<Worker>(Worker{*copy, std::move(classifier)});
+  }
+
+  void give_back(std::unique_ptr<Worker> w) {
+    const std::lock_guard lock(mutex_);
+    free_.push_back(std::move(w));
+  }
+
+ private:
+  const kernel::Solid& boundary_;
+  const core::ProductSettings& settings_;
+  std::mutex mutex_;
+  std::vector<std::unique_ptr<Worker>> free_;
+};
+
 struct ChunkResult {
   std::size_t outside = 0;
   dbox3 region = dbox3::empty();
@@ -191,8 +254,8 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const MeshVie
                                     const core::SubjectRef& volume,
                                     const core::ProductSettings& settings,
                                     const ParallelFor& parallel) {
-  if (mesh.positions.empty()) return {};
-  if (boundary.is_empty()) return undecided(volume, "the boundary is empty");
+  // The indices first: a mesh with triangles but no positions is broken,
+  // not empty.
   if (mesh.indices.size() % 3 != 0) {
     return undecided(volume, "the mesh's index count isn't a multiple of three");
   }
@@ -203,6 +266,21 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const MeshVie
     if (i >= mesh.positions.size()) {
       return undecided(volume, fmt::format("the mesh refers to vertex {}, but has only {}", i,
                                            mesh.positions.size()));
+    }
+  }
+  if (mesh.positions.empty()) return {};
+  if (boundary.is_empty()) return undecided(volume, "the boundary is empty");
+  // A NaN compares false with everything, so it would pass every test below.
+  for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
+    const core::fvec3& p = mesh.positions[i];
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
+      return undecided(volume, fmt::format("vertex {} of the mesh isn't a finite point", i));
+    }
+  }
+  for (std::size_t t = 0; t < mesh.centroid_slack.size(); ++t) {
+    if (!std::isfinite(mesh.centroid_slack[t]) || mesh.centroid_slack[t] < 0.0F) {
+      return undecided(volume,
+                       fmt::format("triangle {}'s centroid slack isn't a finite, positive amount", t));
     }
   }
 
@@ -247,15 +325,27 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const MeshVie
 
   const std::size_t chunks = (pending.size() + kChunk - 1) / kChunk;
   std::vector<ChunkResult> results(chunks);
+  // One copy of the boundary and one classifier per worker, not per chunk:
+  // chunks take a free one (or make one) and give it back, so no two
+  // threads ever read one shape, and a worker reuses its prepared
+  // classifier. Which worker ran a chunk never changes its result.
+  WorkerPool workers(boundary, settings);
   const auto chunk = [&](std::size_t k) {
     ChunkResult& out = results[k];
-    const kernel::SolidClassifier classifier(boundary, settings);
+    auto worker = workers.take();
+    if (!worker) {
+      out.failed = true;
+      out.why = worker.error().message;
+      return;
+    }
     const std::size_t end = std::min(pending.size(), (k + 1) * kChunk);
     for (std::size_t j = k * kChunk; j < end && !out.failed; ++j) {
       const Sample& s = samples[pending[j]];
       const bool surely_out = !box.contains(s.p, tol + s.slack);
-      if (!surely_out && classifier.classify(s.p) != kernel::PointClass::Outside) continue;
-      auto d = kernel::distance_to(boundary, s.p);
+      if (!surely_out && (*worker)->classifier.classify(s.p) != kernel::PointClass::Outside) {
+        continue;
+      }
+      auto d = kernel::distance_to((*worker)->boundary, s.p);
       if (!d) {
         out.failed = true;
         out.why = d.error().message;
@@ -266,6 +356,7 @@ ContainmentResult check_containment(const kernel::Solid& boundary, const MeshVie
       out.region.expand(s.p);
       out.reach = std::max(out.reach, *d);
     }
+    workers.give_back(std::move(*worker));
   };
   if (parallel && chunks > 1) {
     parallel(chunks, chunk);

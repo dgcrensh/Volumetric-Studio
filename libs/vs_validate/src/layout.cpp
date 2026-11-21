@@ -1,7 +1,9 @@
 #include "vs/validate/layout.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <map>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -10,6 +12,7 @@
 
 #include "vs/kernel/operations.hpp"
 #include "vs/kernel/queries.hpp"
+#include "vs/kernel/tessellate.hpp"
 #include "vs/model/hierarchy.hpp"
 #include "vs/validate/registry.hpp"
 
@@ -101,10 +104,17 @@ class LayoutChecker {
   const ProductSettings& settings_;
   double tol_;
   LayoutReport report_;
+  std::map<Id, bool> fills_box_;
 
+  // A bonded or bolted surface between them: they meet there by design. A
+  // clearance surface keeps them apart by its gap, so any contact between
+  // them is still reported.
   bool shares_surface(const Id& a, const Id& b) const {
     return std::any_of(doc_.connections.begin(), doc_.connections.end(),
-                       [&](const model::ConnectionSurface& c) { return c.joins(a) && c.joins(b); });
+                       [&](const model::ConnectionSurface& c) {
+                         return c.type() != model::ConnectionType::Clearance && c.joins(a) &&
+                                c.joins(b);
+                       });
   }
 
   void undecided(const Prepared& a, const Prepared& b, std::string_view what,
@@ -155,12 +165,9 @@ class LayoutChecker {
       return p.volume->id == child.volume->parent;
     });
     if (parent == vols.end()) return;  // the parent's boundary failed: reported already
-    if (parent->box.contains(child.box, tol_)) {
-      // Inside the box, but the boundary needn't be a box: check properly
-      // unless the parent fills its box.
-      const auto pm = kernel::mass_properties(parent->build->boundary);
-      if (pm && std::abs(pm->volume - parent->box.volume()) <= tol_ * parent->box.volume()) return;
-    }
+    // Inside the box of a parent that is exactly its box: nothing to check.
+    // Anything else (a notch, a curved face) needs the boolean.
+    if (parent->box.contains(child.box, tol_) && fills_box(*parent)) return;
     auto outside = kernel::cut(child.build->boundary, std::vector<Solid>{parent->build->boundary}, {tol_});
     if (!outside) {
       if (outside.error().code == "kernel.boolean.empty_result") return;
@@ -180,6 +187,53 @@ class LayoutChecker {
                     child.volume->name, mm(depth), parent->volume->name, mm(volume),
                     box_text(region)),
         {doc_.boundary_subject(child.volume->id), doc_.boundary_subject(parent->volume->id)}));
+  }
+
+  // True when the boundary is exactly its bounding box: one solid with six
+  // planar faces, each facing out of a different side of the box and
+  // spanning all of it. Decided once per volume.
+  bool fills_box(const Prepared& p) {
+    const auto known = fills_box_.find(p.volume->id);
+    if (known != fills_box_.end()) return known->second;
+    const auto faces = kernel::faces(p.build->boundary);
+    bool fills = p.build->boundary.solid_count() == 1 && faces.size() == 6;
+    std::array<bool, 6> taken{};  // -x, +x, -y, +y, -z, +z
+    for (std::size_t i = 0; fills && i < faces.size(); ++i) {
+      const auto plane = kernel::face_plane(faces[i]);
+      fills = plane.has_value() && side_of(p.box, kernel::bounding_box(faces[i]),
+                                           normalize(plane->normal), taken);
+    }
+    fills_box_.emplace(p.volume->id, fills);
+    return fills;
+  }
+
+  // Marks the side of `box` that a face (its box and outward normal) covers
+  // exactly, if any and not marked already.
+  bool side_of(const dbox3& box, const dbox3& face, const dvec3& normal,
+               std::array<bool, 6>& taken) const {
+    const auto at = [](const dvec3& v, int axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; };
+    for (int axis = 0; axis < 3; ++axis) {
+      const double along = at(normal, axis);
+      if (std::abs(along) < 1.0 - 1e-12) continue;
+      const bool high = along > 0.0;
+      const double plane = high ? at(box.max, axis) : at(box.min, axis);
+      // Flat on that side, and as large as it in the other two directions.
+      if (std::abs(at(face.min, axis) - plane) > tol_ || std::abs(at(face.max, axis) - plane) > tol_) {
+        return false;
+      }
+      for (int other = 0; other < 3; ++other) {
+        if (other == axis) continue;
+        if (std::abs(at(face.min, other) - at(box.min, other)) > tol_ ||
+            std::abs(at(face.max, other) - at(box.max, other)) > tol_) {
+          return false;
+        }
+      }
+      auto& slot = taken[static_cast<std::size_t>(axis * 2 + (high ? 1 : 0))];
+      if (slot) return false;
+      slot = true;
+      return true;
+    }
+    return false;  // not axis-aligned
   }
 
   // --- contact --------------------------------------------------------------------
@@ -291,6 +345,72 @@ class LayoutChecker {
 };
 
 // --- connection rules ------------------------------------------------------------
+
+double box_distance(const dbox3& b, const dvec3& p) {
+  const dvec3 d{std::max({b.min.x - p.x, 0.0, p.x - b.max.x}),
+                std::max({b.min.y - p.y, 0.0, p.y - b.max.y}),
+                std::max({b.min.z - p.z, 0.0, p.z - b.max.z})};
+  return length(d);
+}
+
+// Points spread over a patch: its vertices, its edges' and faces' mesh
+// points and its triangles' centres (coarse: a patch's outline and a few
+// interior points).
+core::Result<std::vector<dvec3>> patch_points(const Face& patch, const ProductSettings& settings) {
+  std::vector<dvec3> points = kernel::vertex_points(patch);
+  const double diagonal = length(kernel::bounding_box(patch).size());
+  kernel::TessellationParams params;
+  params.deflection = std::max(settings.min_feature_size_mm(), diagonal * 0.02);
+  params.angle = 0.5;
+  auto tess = kernel::tessellate(patch, params, settings);
+  if (!tess) return tess.error();
+  for (const auto& e : tess->edges) points.insert(points.end(), e.points.begin(), e.points.end());
+  for (const auto& f : tess->faces) {
+    points.insert(points.end(), f.points.begin(), f.points.end());
+    // A patch's mesh may be its outline alone (a rectangle is two
+    // triangles): each triangle's centre, taken in (u, v) and put back on
+    // the surface (a curved patch's chords are off it), reaches inside.
+    for (const auto& t : f.triangles) {
+      const core::dvec2 uv = (f.uv[t[0]] + f.uv[t[1]] + f.uv[t[2]]) / 3.0;
+      const dvec3 p = kernel::face_point(f.face, uv);
+      if (std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)) points.push_back(p);
+    }
+  }
+  return points;
+}
+
+// How deep the deepest of `points` lies inside `solid`: its distance to the
+// solid's surface (its faces, not its inside), 0 when every point is on or
+// outside it. Points outside are left to the patch's distance to the solid,
+// as before: a patch may run past the face it lies on.
+core::Result<double> deepest_inside(const std::vector<dvec3>& points, const Solid& solid,
+                                    const ProductSettings& settings, double reach) {
+  const kernel::SolidClassifier classifier(solid, settings);
+  const auto faces = kernel::faces(solid);
+  std::vector<dbox3> boxes;
+  boxes.reserve(faces.size());
+  for (const auto& f : faces) boxes.push_back(kernel::bounding_box(f));
+  double worst = 0.0;
+  for (const dvec3& p : points) {
+    if (classifier.classify(p) != kernel::PointClass::Inside) continue;
+    double best = std::numeric_limits<double>::infinity();
+    // Faces whose box is nearest first: usually one of them is the answer.
+    std::vector<std::size_t> order(faces.size());
+    for (std::size_t k = 0; k < order.size(); ++k) order[k] = k;
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+      return box_distance(boxes[a], p) < box_distance(boxes[b], p);
+    });
+    for (const std::size_t k : order) {
+      if (box_distance(boxes[k], p) >= best) break;  // no closer face is left
+      auto d = kernel::distance_to(faces[k], p);
+      if (!d) return d.error();
+      best = std::min(best, *d);
+      if (best <= reach) break;
+    }
+    worst = std::max(worst, best);
+  }
+  return worst;
+}
 
 std::string params_text(std::initializer_list<std::string_view> names) {
   std::string out;
@@ -418,25 +538,52 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
         at = model::delegate_of(document, at, c.id);
       }
     }
+    // Points spread over the patch: none may lie inside a volume it joins
+    // farther than the reach from its surface. The patch's distance to the
+    // solid alone is zero for a patch floating inside it or poking through.
+    std::optional<std::vector<dvec3>> samples;
     for (const auto& vid : met) {
       const VolumeBuild* vb = build.find_volume(vid);
       if (!vb || vb->boundary.is_empty()) continue;
-      auto d = kernel::min_distance(cb->patch, vb->boundary);
-      if (!d) {
+      auto undecided = [&](const std::string& why) {
         out.add(Diagnostic::error(
             "validate.undecided",
             fmt::format("Couldn't check that '{}' lies on '{}': {}", c.name,
-                        document.volume_subject(vid).label, d.error().message),
+                        document.volume_subject(vid).label, why),
             {self, document.boundary_subject(vid)}));
+      };
+      auto d = kernel::min_distance(cb->patch, vb->boundary);
+      if (!d) {
+        undecided(d.error().message);
         continue;
       }
-      if (d->distance > reach) {
+      double off = d->distance;
+      bool inside = false;
+      if (off <= reach) {
+        if (!samples) {
+          auto s = patch_points(cb->patch, settings);
+          if (!s) {
+            undecided(s.error().message);
+            continue;
+          }
+          samples = std::move(*s);
+        }
+        auto far = deepest_inside(*samples, vb->boundary, settings, reach);
+        if (!far) {
+          undecided(far.error().message);
+          continue;
+        }
+        inside = *far > off;
+        off = std::max(off, *far);
+      }
+      if (off > reach) {
         const bool clearance = c.type() == model::ConnectionType::Clearance;
         out.add(Diagnostic::error(
             "validate.connection.off_boundary",
-            fmt::format("'{}' is {} mm from the boundary of '{}', which it joins; a {} surface "
+            fmt::format("'{}' {} {} mm {} the boundary of '{}', which it joins; a {} surface "
                         "must lie on {} (parameters: geometry{})",
-                        c.name, mm(d->distance), document.volume_subject(vid).label,
+                        c.name, inside ? "reaches" : "is", mm(off),
+                        inside ? "inside" : "from", document.volume_subject(vid).label,
                         to_string(c.type()),
                         clearance ? "it, or within the gap of it" : "it",
                         clearance ? ", gap" : ""),

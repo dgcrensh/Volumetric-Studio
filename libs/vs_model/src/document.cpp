@@ -163,15 +163,7 @@ const T* find_by_id(const std::vector<T>& items, const Id& id) {
 }
 
 bool tree_holds(const feature::FeatureTree& tree, const Id& id) {
-  if (tree.find(id) || tree.variables().find(id)) return true;
-  for (const auto& f : tree.features()) {
-    if (const auto* s = f.as<feature::SketchFeature>()) {
-      if (s->sketch.id() == id || s->sketch.find_entity(id) || s->sketch.find_constraint(id)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return feature::find_tree_id(tree, id).has_value();
 }
 
 }  // namespace

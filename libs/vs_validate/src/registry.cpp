@@ -43,7 +43,8 @@ constexpr std::array kCodes{
     CodeInfo{"validate.containment", Severity::Error, ActOn::Contents,
              "Contents cross their volume's boundary by more than the tolerance"},
     CodeInfo{"validate.undecided", Severity::Error, ActOn::Layout,
-             "The kernel couldn't decide a check; the result is unknown"},
+             "The kernel couldn't decide a check; the result is unknown (routed by its "
+             "first subject: contents, connection surface or layout)"},
 };
 
 bool is_feature_kind(SubjectKind kind) {
@@ -70,6 +71,14 @@ Id level_of_subject(const SubjectRef& s, const model::Document& doc) {
         if (v.find_parameter(s.id)) return v.parent;
       }
       break;
+    case SubjectKind::PublishedOutput:
+      for (const auto& v : doc.volumes) {
+        if (v.find_output(s.id)) return v.parent;
+      }
+      break;
+    case SubjectKind::ConnectionSurface:
+      if (const auto* c = doc.find_connection(s.id)) return model::level_of(doc, *c);
+      break;
     default:
       break;
   }
@@ -95,6 +104,21 @@ ActTarget route(const Diagnostic& diagnostic, const model::Document& document) {
   }
   t.subject = *first;
 
+  if (diagnostic.code == "validate.undecided") {
+    // Raised by every check, so its first subject says where to act: a
+    // volume's contents (containment), a connection surface (connection
+    // rules) or the layout (overlap, contact, nesting).
+    if (first->kind == SubjectKind::Volume) {
+      t.on = ActOn::Contents;
+      t.volume = first->id;
+    } else if (first->kind == SubjectKind::ConnectionSurface) {
+      t.on = ActOn::ConnectionSurface;
+    } else {
+      t.on = ActOn::Layout;
+      t.volume = level_of_subject(*first, document);
+    }
+    return t;
+  }
   if (const CodeInfo* info = find_code(diagnostic.code)) {
     t.on = info->act_on;
     if (t.on == ActOn::Contents) {
