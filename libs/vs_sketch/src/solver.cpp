@@ -262,7 +262,10 @@ void GcsModel::add_constraint(const Constraint& c, int tag) {
     case ConstraintKind::Angle:
       if (kinds.size() == 1) {
         GCS::Line& l = line(r[0]);
-        sys_.addConstraintP2PAngle(l.p1, l.p2, value, tag);
+        // The overload with an angle increment: the one without drops the
+        // tag (third_party/planegcs GCS.cpp), so conflicts and redundancy
+        // couldn't name this constraint (plan H1).
+        sys_.addConstraintP2PAngle(l.p1, l.p2, value, 0.0, tag);
       } else {
         sys_.addConstraintL2LAngle(line(r[0]), line(r[1]), value, tag);
       }

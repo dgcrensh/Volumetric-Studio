@@ -609,7 +609,12 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       const std::size_t i = to_run[k];
       notify(ProgressEvent::Kind::VolumeStarted, ev.volumes[i].volume, VolumeStatus::Regenerating);
       generated[k].contents = generate(i);
-      if (options_.check_determinism) generated[k].second_hash = generate(i)->output_hash;
+      if (options_.check_determinism && !generated[k].contents->cancelled &&
+          !options.cancel.cancelled()) {
+        // A run cut short by a cancellation compares nothing (plan H1).
+        const auto second = generate(i);
+        if (!second->cancelled) generated[k].second_hash = second->output_hash;
+      }
       generated[k].ran = true;
     });
 
@@ -628,11 +633,17 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       const model::Volume& v = ev.document.volumes[i];
       const SubjectRef self = ev.document.volume_subject(v.id);
       if (g.second_hash && *g.second_hash != c.output_hash) {
+        // Contents that differ run to run are never current: they mustn't
+        // be shown, replace the last valid contents, unblock dependants or
+        // reach the disk cache (plan H1).
+        c.status = VolumeStatus::Failed;
         c.diagnostics.add(Diagnostic::error(
             "eval.nondeterministic",
             fmt::format("'{}': generating it twice from the same inputs gave different contents",
                         self.label),
             {self}));
+        c.output_hash = output_hash(c.status, c.solid, c.mesh ? &*c.mesh : nullptr, c.outputs,
+                                    c.extra.get());
       }
       if (c.ok()) {
         const kernel::Solid& boundary = layout.volumes[i].boundary;

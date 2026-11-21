@@ -85,6 +85,10 @@ Result<Solid> run_boolean(const Solid& a, std::span<const Solid> tools_in, Boole
         Op op;
         op.SetArguments(arguments);
         op.SetTools(tools);
+        // Never change the inputs in place (they are shared, immutable
+        // handles): where the operation has to widen a tolerance or split
+        // an edge of an argument, it works on a copy (plan H1).
+        op.SetNonDestructive(true);
         if (options.fuzzy_mm > 0.0) op.SetFuzzyValue(options.fuzzy_mm);
         op.Build();
         if (op.HasErrors()) {
@@ -143,6 +147,10 @@ Result<Shape> common_faces(const Face& a, const Face& b, const BooleanOptions& o
         BRepAlgoAPI_Common op;
         op.SetArguments(arguments);
         op.SetTools(tools);
+        // Never change the inputs in place (they are shared, immutable
+        // handles): where the operation has to widen a tolerance or split
+        // an edge of an argument, it works on a copy (plan H1).
+        op.SetNonDestructive(true);
         if (options.fuzzy_mm > 0.0) op.SetFuzzyValue(options.fuzzy_mm);
         op.Build();
         if (op.HasErrors()) {

@@ -38,6 +38,21 @@
 
 namespace vs::kernel {
 
+namespace {
+
+// What the point queries below answer for an empty handle or a kernel
+// failure (plan H1): never a crash or an exception.
+dvec3 nan3() {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  return {nan, nan, nan};
+}
+
+bool is_finite(const dvec3& p) {
+  return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+}
+
+}  // namespace
+
 using detail::from_occ;
 using detail::to_occ;
 using detail::topo;
@@ -292,7 +307,7 @@ core::Result<Tessellation> tessellate(const Shape& shape, const TessellationPara
 }
 
 std::optional<double> edge_parameter(const Edge& edge, const dvec3& point, double tolerance) {
-  if (edge.is_empty()) return std::nullopt;
+  if (edge.is_empty() || !is_finite(point) || !std::isfinite(tolerance)) return std::nullopt;
   try {
     const TopoDS_Edge& e = TopoDS::Edge(topo(edge));
     if (BRep_Tool::Degenerated(e)) return std::nullopt;
@@ -334,31 +349,45 @@ std::optional<double> edge_parameter(const Edge& edge, const dvec3& point, doubl
 }
 
 dvec3 edge_point(const Edge& edge, double t) {
-  const TopoDS_Edge& e = TopoDS::Edge(topo(edge));
-  if (BRep_Tool::Degenerated(e)) {
-    TopoDS_Vertex v0, v1;
-    TopExp::Vertices(e, v0, v1);
-    return from_occ(BRep_Tool::Pnt(v0));
+  if (edge.is_empty()) return nan3();
+  try {
+    const TopoDS_Edge& e = TopoDS::Edge(topo(edge));
+    if (BRep_Tool::Degenerated(e)) {
+      TopoDS_Vertex v0, v1;
+      TopExp::Vertices(e, v0, v1);
+      if (v0.IsNull()) return nan3();
+      return from_occ(BRep_Tool::Pnt(v0));
+    }
+    return from_occ(BRepAdaptor_Curve(e).Value(t));
+  } catch (...) {
+    return nan3();
   }
-  return from_occ(BRepAdaptor_Curve(e).Value(t));
 }
 
 dvec2 edge_uv(const Face& face, const Edge& oriented, double t) {
-  const TopoDS_Edge& e = TopoDS::Edge(topo(oriented));
-  const TopoDS_Face& f = TopoDS::Face(topo(face));
-  double first = 0, last = 0;
-  const occ::handle<Geom2d_Curve> c = BRep_Tool::CurveOnSurface(e, f, first, last);
-  if (c.IsNull()) {
-    const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  if (face.is_empty() || oriented.is_empty()) return {nan, nan};
+  try {
+    const TopoDS_Edge& e = TopoDS::Edge(topo(oriented));
+    const TopoDS_Face& f = TopoDS::Face(topo(face));
+    double first = 0, last = 0;
+    const occ::handle<Geom2d_Curve> c = BRep_Tool::CurveOnSurface(e, f, first, last);
+    if (c.IsNull()) return {nan, nan};
+    const gp_Pnt2d p = c->Value(t);
+    return {p.X(), p.Y()};
+  } catch (...) {
     return {nan, nan};
   }
-  const gp_Pnt2d p = c->Value(t);
-  return {p.X(), p.Y()};
 }
 
 dvec3 face_point(const Face& face, const dvec2& uv) {
-  const BRepAdaptor_Surface s(TopoDS::Face(topo(face)), false);
-  return from_occ(s.Value(uv.x, uv.y));
+  if (face.is_empty()) return nan3();
+  try {
+    const BRepAdaptor_Surface s(TopoDS::Face(topo(face)), false);
+    return from_occ(s.Value(uv.x, uv.y));
+  } catch (...) {
+    return nan3();
+  }
 }
 
 }  // namespace vs::kernel

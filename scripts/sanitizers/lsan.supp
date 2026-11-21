@@ -1,0 +1,3 @@
+# LeakSanitizer suppressions for the linux-clang-asan preset (plan H1).
+# Only leaks inside third-party code that we can't fix belong here, each with
+# the reason. Our own leaks are bugs: fix them instead.

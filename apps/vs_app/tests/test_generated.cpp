@@ -21,6 +21,7 @@
 #include "vs/model/hierarchy.hpp"
 #include "vs/model/project.hpp"
 #include "vs/proc/generator.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 using app::History;

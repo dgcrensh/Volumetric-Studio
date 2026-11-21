@@ -38,14 +38,11 @@ vs_add_library_tests(vs_mesh
     tests/test_topology.cpp
     tests/test_triangulate.cpp
     tests/test_weld.cpp
-    ../vs_model/tests/bracket.cpp
-    ../vs_model/tests/curved.cpp
-    ../vs_model/tests/nested.cpp
     ../vs_validate/tests/fixtures.cpp)
 
 if(VS_BUILD_TESTS)
+  target_link_libraries(vs_mesh_tests PRIVATE vs_model_test_fixtures)
   target_include_directories(vs_mesh_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../vs_model/tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../vs_validate/tests)
   target_compile_definitions(vs_mesh_tests PRIVATE
     VS_MESH_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")

@@ -120,10 +120,12 @@ core::Result<Tessellation> tessellate(const Shape& shape, const TessellationPara
 
 // The parameter of the point of `edge` nearest `point`, when that point is
 // within `tolerance` of it and within the edge's ends; nullopt otherwise.
-// For a closed edge, a point at its vertex gives the first parameter.
+// For a closed edge, a point at its vertex gives the first parameter. An
+// empty edge, or a point or tolerance that isn't finite, gives nullopt.
 std::optional<double> edge_parameter(const Edge& edge, const dvec3& point, double tolerance);
 
-// The point of `edge` at parameter `t`.
+// The point of `edge` at parameter `t`. These three give NaN for an empty
+// handle (or an edge not on the face), never a crash.
 dvec3 edge_point(const Edge& edge, double t);
 
 // The (u, v) of the point at parameter `t` of an edge use (`oriented`, from

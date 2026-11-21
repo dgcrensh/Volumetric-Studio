@@ -187,3 +187,44 @@ TEST_CASE("common faces finds where two faces lie against each other", "[kernel]
     CHECK(none->is_empty());
   }
 }
+
+TEST_CASE("Booleans leave their inputs unchanged", "[kernel][boolean][h1]") {
+  // Handles are shared and immutable (shape.hpp): a boolean must not change
+  // the shapes it was given in place, even where it has to widen tolerances
+  // to join nearly coincident faces (plan H1).
+  const auto check_inputs_kept = [](const std::vector<Solid>& inputs, auto&& op) {
+    std::vector<vs::core::Hash256> before;
+    std::vector<double> tolerance_before;
+    for (const Solid& s : inputs) {
+      before.push_back(shape_hash(s));
+      tolerance_before.push_back(audit_tolerances(s, kSettings).edges.max);
+    }
+    const auto result = op();
+    REQUIRE(result.ok());
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      INFO("input " << i);
+      CHECK(shape_hash(inputs[i]) == before[i]);
+      CHECK(audit_tolerances(inputs[i], kSettings).edges.max == tolerance_before[i]);
+    }
+  };
+  const BooleanOptions fuzzy{.fuzzy_mm = kSettings.linear_tolerance_mm};
+
+  SECTION("faces closer than the fuzzy distance, united") {
+    const Solid a = box({0, 0, 0}, {10, 10, 10});
+    const Solid b = box({10 + 4e-7, 2, 3}, {20, 7, 8});
+    check_inputs_kept({a, b}, [&] { return unite(a, b, fuzzy); });
+  }
+  SECTION("a cylinder cut from a box, its end nearly flush") {
+    const Solid a = box({0, 0, 0}, {10, 10, 10});
+    const Solid c =
+        make_cylinder({{5, 5, 2 + 3e-7}, {0, 0, 1}}, 3.0, 8.0 - 3e-7, kSettings).value();
+    check_inputs_kept({a, c}, [&] { return cut(a, c, fuzzy); });
+  }
+  SECTION("several tools at once") {
+    const Solid a = box({0, 0, 0}, {10, 10, 10});
+    const Solid t1 = box({-5, 2 + 2e-7, 2}, {5, 4, 4});
+    const Solid t2 = make_sphere({10 + 5e-7, 5, 5}, 2.0, kSettings).value();
+    const std::vector<Solid> tools{t1, t2};
+    check_inputs_kept({a, t1, t2}, [&] { return cut(a, std::span<const Solid>(tools), fuzzy); });
+  }
+}

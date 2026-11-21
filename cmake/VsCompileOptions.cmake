@@ -28,3 +28,26 @@ function(vs_set_compile_options target)
     endif()
   endif()
 endfunction()
+
+# vs_enable_sanitizers(<list>)
+#
+# Builds everything in this project (first-party and vendored code, not the
+# vcpkg dependencies) with the given sanitizers, such as "address;undefined"
+# (the linux-clang-asan preset, plan H1). Undefined behaviour stops the
+# program, so a test can't pass with a report in its output. Empty: nothing.
+function(vs_enable_sanitizers sanitizers)
+  if(NOT sanitizers)
+    return()
+  endif()
+  if(MSVC)
+    message(FATAL_ERROR "VS_SANITIZE is for GCC and Clang builds")
+  endif()
+  list(JOIN sanitizers "," list)
+  set(flags "-fsanitize=${list}" -fno-omit-frame-pointer)
+  if("undefined" IN_LIST sanitizers)
+    list(APPEND flags -fno-sanitize-recover=undefined)
+  endif()
+  add_compile_options(${flags})
+  add_link_options(${flags})
+  message(STATUS "Sanitizers: ${list}")
+endfunction()

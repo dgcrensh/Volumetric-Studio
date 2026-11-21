@@ -35,13 +35,10 @@ vs_add_library_tests(vs_eval
     tests/test_module.cpp
     tests/test_nested.cpp
     tests/test_step_export.cpp
-    tests/test_thread_pool.cpp
-    ../vs_model/tests/bracket.cpp
-    ../vs_model/tests/nested.cpp)
+    tests/test_thread_pool.cpp)
 
 if(VS_BUILD_TESTS)
-  target_include_directories(vs_eval_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../vs_model/tests)
+  target_link_libraries(vs_eval_tests PRIVATE vs_model_test_fixtures)
   target_compile_definitions(vs_eval_tests PRIVATE
     VS_MESH_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/../vs_mesh/tests/data")
 endif()

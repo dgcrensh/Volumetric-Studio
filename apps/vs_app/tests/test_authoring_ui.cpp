@@ -29,6 +29,7 @@
 #include "vs/model/build.hpp"
 #include "vs/validate/validate.hpp"
 #include "widgets.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 using core::Id;

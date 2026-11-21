@@ -131,11 +131,26 @@ std::string from_extended(const TCollection_ExtendedString& s) {
   return out;
 }
 
-occ::handle<TDocStd_Document> new_xcaf_document() {
-  occ::handle<TDocStd_Document> doc;
-  XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc);
-  return doc;
-}
+// An XCAF document, closed on every way out: the OCCT application keeps a
+// list of open documents (and everything in them) until Close() (plan H1).
+class XcafDocument {
+ public:
+  XcafDocument() { XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", doc_); }
+  ~XcafDocument() {
+    try {
+      if (!doc_.IsNull() && doc_->IsOpened()) XCAFApp_Application::GetApplication()->Close(doc_);
+    } catch (...) {
+      // Nothing to do: a failed close can only leak.
+    }
+  }
+  XcafDocument(const XcafDocument&) = delete;
+  XcafDocument& operator=(const XcafDocument&) = delete;
+
+  [[nodiscard]] const occ::handle<TDocStd_Document>& get() const { return doc_; }
+
+ private:
+  occ::handle<TDocStd_Document> doc_;
+};
 
 std::string label_name(const TDF_Label& label) {
   occ::handle<TDataStd_Name> name;
@@ -163,7 +178,8 @@ Diagnostics write_step(std::span<const NamedShape> parts, const std::filesystem:
       "kernel.step.write_failed", "Writing STEP", [&]() -> Result<bool> {
         const std::lock_guard lock(exchange_mutex());
         STEPControl_Controller::Init();
-        occ::handle<TDocStd_Document> doc = new_xcaf_document();
+        const XcafDocument xcaf;
+        const occ::handle<TDocStd_Document>& doc = xcaf.get();
         occ::handle<XCAFDoc_ShapeTool> tool = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
         const TDF_Label assembly = tool->NewShape();
         TDataStd_Name::Set(assembly, extended(assembly_name));
@@ -207,7 +223,8 @@ Result<std::vector<NamedShape>> read_step_parts(const std::filesystem::path& pat
         }
         const std::lock_guard lock(exchange_mutex());
         STEPControl_Controller::Init();
-        occ::handle<TDocStd_Document> doc = new_xcaf_document();
+        const XcafDocument xcaf;
+        const occ::handle<TDocStd_Document>& doc = xcaf.get();
         STEPCAFControl_Reader reader;
         reader.SetNameMode(true);
         if (reader.ReadFile(utf8(path).c_str()) != IFSelect_RetDone || !reader.Transfer(doc)) {

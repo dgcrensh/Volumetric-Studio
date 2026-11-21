@@ -31,22 +31,35 @@ vs_add_library(vs_model
 
 vs_add_library_tests(vs_model
   SOURCES
-    tests/bracket.cpp
     tests/test_build.cpp
     tests/test_curved.cpp
-    tests/curved.cpp
     tests/test_dependency.cpp
     tests/test_document.cpp
     tests/test_encapsulation.cpp
-    tests/nested.cpp
     tests/test_nested.cpp
-    tests/rack.cpp
     tests/test_generated.cpp
     tests/test_module.cpp
     tests/test_project.cpp
     tests/test_zip.cpp)
 
 if(VS_BUILD_TESTS)
+  # The shared test models (bracket.*, curved.*, nested.*, rack.*),
+  # compiled once for every suite that uses them (vs_model up to vs_app).
+  add_library(vs_model_test_fixtures STATIC
+    tests/bracket.cpp
+    tests/bracket.hpp
+    tests/curved.cpp
+    tests/curved.hpp
+    tests/nested.cpp
+    tests/nested.hpp
+    tests/rack.cpp
+    tests/rack.hpp)
+  target_include_directories(vs_model_test_fixtures PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  target_link_libraries(vs_model_test_fixtures PUBLIC vs::vs_model Catch2::Catch2)
+  vs_set_compile_options(vs_model_test_fixtures)
+  vs_register_module_target(vs_model_test_fixtures vs_model)
+  target_link_libraries(vs_model_tests PRIVATE vs_model_test_fixtures)
+
   target_compile_definitions(vs_model_tests PRIVATE
     VS_MODEL_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 endif()

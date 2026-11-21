@@ -330,3 +330,35 @@ TEST_CASE("Solving through the interface matches the free functions", "[sketch][
   CHECK(ra.status == rb.status);
   CHECK(test::same_geometry(a.sketch, b.sketch));
 }
+
+// --- plan H1 ---------------------------------------------------------------
+
+TEST_CASE("A one-line angle that conflicts is named", "[sketch][solver][h1]") {
+  Sketch s;
+  const Id a = s.add_point({0, 0});
+  s.fix(a);
+  const Id l = s.add_line(a, s.add_point({10, 1}));
+  const Id h = s.horizontal(l);
+  s.length(l, 10);
+  const Id angle = s.add_constraint(ConstraintKind::Angle, {l}, kPi / 6);
+  const auto report = solve(s, kSettings);
+  CHECK(report.status == SolveStatus::OverConstrained);
+  CHECK_FALSE(report.applied);
+  CHECK(contains(report.conflicting, angle));
+  CHECK(contains(report.conflicting, h));
+}
+
+TEST_CASE("A one-line angle that repeats another constraint is named", "[sketch][solver][h1]") {
+  Sketch s;
+  const Id a = s.add_point({0, 0});
+  s.fix(a);
+  const Id l = s.add_line(a, s.add_point({10, 1}));
+  const Id h = s.horizontal(l);
+  s.length(l, 10);
+  const Id angle = s.add_constraint(ConstraintKind::Angle, {l}, 0.0);
+  const auto report = solve(s, kSettings);
+  CHECK(report.applied);
+  REQUIRE(report.redundant.size() == 1);
+  CHECK((report.redundant.front() == angle || report.redundant.front() == h));
+  check_point(s, a, {0, 0});
+}

@@ -24,6 +24,7 @@
 #include "samples.hpp"
 #include "viewport.hpp"
 #include "vs/mesh/io.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 using app::Selection;

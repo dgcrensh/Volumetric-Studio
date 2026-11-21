@@ -23,6 +23,7 @@
 #include "vs/model/check.hpp"
 #include "vs/model/hierarchy.hpp"
 #include "vs/model/project.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 using app::History;

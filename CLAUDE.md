@@ -42,16 +42,18 @@ ctest --preset windows-msvc-debug      # add -R <regex> or -L <module> to filter
 build/windows-msvc-debug/apps/vstudio-cli/vstudio-cli selftest
 ```
 
-Presets: `windows-msvc-{debug,release,app}`, `linux-{gcc,clang}-{debug,release}`.
+Presets: `windows-msvc-{debug,release,app}`, `linux-{gcc,clang}-{debug,release}`,
+`linux-clang-asan` (AddressSanitizer + UndefinedBehaviorSanitizer, plan H1).
 Release presets are `RelWithDebInfo`. Build trees go to `build/<preset>/`.
 
 ### Options and vcpkg features
 
 | CMake option | Default | Effect |
 | --- | --- | --- |
-| `VS_BUILD_APP` | OFF | Builds the Qt app (`vs_app`, `vs_app_tests`) and turns on the vcpkg `app` feature (Qt 6). Only the `windows-msvc-app` preset sets it. |
+| `VS_BUILD_APP` | OFF | Builds the Qt app (`vs_app_ui`, `vs_app`, `vs_app_tests`) and turns on the vcpkg `app` feature (Qt 6). Only the `windows-msvc-app` preset sets it. `vs_app_core` and `vs_app_core_tests` build either way. |
 | `VS_BUILD_TESTS` | ON | Builds the Catch2 suites and registers them with CTest. |
 | `VS_WARNINGS_AS_ERRORS` | ON | `/WX` or `-Werror` on first-party code. |
+| `VS_SANITIZE` | empty | Sanitizers for everything built here (not vcpkg's ports), e.g. `address;undefined`; GCC and Clang. `linux-clang-asan` sets it; LeakSanitizer suppressions are in `scripts/sanitizers/lsan.supp`. |
 
 Heavy dependencies sit behind vcpkg manifest features so that each milestone
 installs only what it uses (see `docs/decisions/0000-optional-vcpkg-features.md`):
@@ -299,6 +301,9 @@ so they are registered. A new library must also be added to
   JSON plus the blobs. `vstudio-cli info <project> [--build]` prints one.
   `.gitattributes` keeps `*.vsproj/**` byte-exact; regenerate the samples
   (`bracket.vsproj`, `nested.vsproj`) with `vs_model_tests "[.generate]"`.
+  The shared test models (`tests/bracket.*`, `curved.*`, `nested.*`,
+  `rack.*`) are the `vs_model_test_fixtures` library: suites link it
+  rather than compiling them again.
 - **Composites** (L3, decision 0021, `hierarchy.hpp`): `Volume::parent`
   names a composite (null at the root; written to JSON only when set, so
   flat documents and their hashes are what they were). A **level** is the
@@ -627,9 +632,16 @@ so they are registered. A new library must also be added to
 
 - **Build** with the `windows-msvc-app` preset only (Qt 6 from the vcpkg
   `app` feature; its first build compiles qtbase twice, for the host tools
-  and the target). CI doesn't build the app. Everything but `main.cpp` is
-  `vs_app_lib`; `vs_app_tests` drives it. Tests tagged `[gui]` open
-  windows and render with OpenGL, so they need a desktop session and a GPU.
+  and the target). CI doesn't build the app. The Qt-free files
+  (`authoring`, `dimension_drag`, `exporter`, `graph_edit`, `guidance`,
+  `history`, `node_preview`, `outline`, `picking`, `reference_choices`,
+  `scene`, `ship`, `sketch_editor`) are `vs_app_core`, built on every
+  platform and tested by `vs_app_core_tests` on every CI job (plan H1);
+  keep Qt and OCCT's visualisation out of them. The rest but `main.cpp` is
+  `vs_app_ui`; `vs_app_tests` drives it (`tests/wait.*` waits on Qt's
+  event loop; `tests/samples.*` is shared and Qt-free). Tests tagged
+  `[gui]` open windows and render with OpenGL, so they need a desktop
+  session and a GPU.
 - **Layers** (decision 0013): `scene.*` turns an `eval::Evaluation` into
   display meshes (B-reps via `kernel::tessellate()`, meshes as they are),
   `outline.*` is the panels' data (selection, rows, inspector, diagnostic

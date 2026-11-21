@@ -17,20 +17,28 @@ jobs:
   build:
     name: ${{ matrix.preset }}
     runs-on: ${{ matrix.os }}
+    # Read-only: publishing the vcpkg cache is the publish-cache job's.
     permissions:
-      # contents: write lets linux-gcc-release publish the vcpkg cache as
-      # release assets (see the last step).
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-2022
             preset: windows-msvc-release
+            family: windows
           - os: ubuntu-24.04
             preset: linux-gcc-release
+            family: linux
           - os: ubuntu-24.04
             preset: linux-clang-debug
+            family: linux
+          # AddressSanitizer and UndefinedBehaviorSanitizer over every suite
+          # (plan H1). vcpkg's dependencies aren't instrumented; they are the
+          # same binaries as the other Linux jobs'.
+          - os: ubuntu-24.04
+            preset: linux-clang-asan
+            family: linux
     env:
       # vcpkg's binary cache, kept between runs by actions/cache below.
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-binary-cache
@@ -65,7 +73,13 @@ jobs:
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
           key: vcpkg-${{ matrix.preset }}-restore
-          restore-keys: vcpkg-${{ matrix.preset }}-
+          # This preset's newest entry, else any of the same OS: every Linux
+          # preset uses the same x64-linux binaries (vcpkg builds them with
+          # the system compiler whatever the preset's), so a new preset
+          # doesn't build Open CASCADE again.
+          restore-keys: |
+            vcpkg-${{ matrix.preset }}-
+            vcpkg-${{ matrix.family }}-
 
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
@@ -101,16 +115,72 @@ jobs:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
           key: ${{ steps.vcpkg-cache-key.outputs.key }}
 
-      # actions/cache is readable only from inside Actions. Publish the Linux
-      # cache as assets of the "vcpkg-cache-x64-linux" prerelease too, so cloud
-      # dev sessions can fetch it with scripts/vcpkg-cache.sh fetch. Only from
-      # main and manual runs, never from pull requests.
-      - name: Publish vcpkg binary cache for machines outside Actions
+      # The publish-cache job needs to know which archives this build used:
+      # each installed port's vcpkg_abi_info.txt (a few KB in all), kept in
+      # vcpkg_installed's layout.
+      - name: Pack the installed ports' ABI files for publish-cache
+        id: abi
         if: >-
           !cancelled() && matrix.preset == 'linux-gcc-release' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          cd "build/${{ matrix.preset }}/vcpkg_installed"
+          find . -path './*/share/*/vcpkg_abi_info.txt' -print0 |
+            tar -cf "$GITHUB_WORKSPACE/vcpkg-abi.tar" --null -T -
+
+      - name: Keep them for publish-cache
+        if: ${{ !cancelled() && steps.abi.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: vcpkg-abi
+          path: vcpkg-abi.tar
+          retention-days: 1
+
+  # actions/cache is readable only from inside Actions. Publish the Linux
+  # cache as assets of the "vcpkg-cache-x64-linux" prerelease too, so cloud
+  # dev sessions can fetch it with scripts/vcpkg-cache.sh fetch. Only from
+  # main and manual runs, never from pull requests, and in a job of its own
+  # so that only this job can write to the repository.
+  publish-cache:
+    name: publish vcpkg cache
+    needs: build
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-binary-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the installed ports' ABI files
+        id: abi
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: vcpkg-abi
+
+      # The newest entry linux-gcc-release saved: the one its build just
+      # stored, or the one it restored when it added nothing.
+      - name: Restore linux-gcc-release's vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-binary-cache
+          key: vcpkg-linux-gcc-release-restore
+          restore-keys: vcpkg-linux-gcc-release-
+
+      - name: Publish vcpkg binary cache for machines outside Actions
+        if: steps.vcpkg-cache.outputs.cache-matched-key != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          ./scripts/vcpkg-cache.sh publish "$VCPKG_DEFAULT_BINARY_CACHE"
-          "build/${{ matrix.preset }}/vcpkg_installed"
+        run: |
+          # Without the ABI files, publish takes every archive in the cache.
+          installed=()
+          if [[ -f vcpkg-abi.tar ]]; then
+            mkdir -p vcpkg-abi && tar -xf vcpkg-abi.tar -C vcpkg-abi
+            installed=(vcpkg-abi)
+          fi
+          ./scripts/vcpkg-cache.sh publish "$VCPKG_DEFAULT_BINARY_CACHE" "${installed[@]}"
