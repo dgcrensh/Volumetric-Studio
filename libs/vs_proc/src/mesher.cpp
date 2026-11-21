@@ -571,28 +571,45 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
     for (std::size_t c = 0; c < cubes; ++c) merger.merge_cube(first(c), end(c), w);
   } else {
     // Cube (i, j, k) of the padded grid goes in wave i + 3j + 9k; the
-    // cubes of each wave in grid order (a counting sort).
+    // cubes of each wave in grid order. `order` lists the crossed cubes
+    // wave by wave and `runs` where each non-empty wave starts in it. A
+    // counting sort over every wave number when they're no more than the
+    // cubes; otherwise (a long, thin grid with few crossings, where the
+    // waves along it far outnumber the cubes, H3) a sort of the cubes'
+    // waves, so memory follows the cubes, not the grid's length.
     const std::uint64_t nx = std::uint64_t{grid.nx} + 1;  // cubes of the padded grid
     const std::uint64_t ny = std::uint64_t{grid.ny} + 1;
     const std::uint64_t nz = std::uint64_t{grid.nz} + 1;
-    const std::size_t waves = static_cast<std::size_t>((nx - 1) + 3 * (ny - 1) + 9 * (nz - 1) + 1);
-    std::vector<std::uint32_t> wave_of(cubes);
-    std::vector<std::size_t> wave_at(waves + 1, 0);
-    for (std::size_t c = 0; c < cubes; ++c) {
+    const std::uint64_t waves = (nx - 1) + 3 * (ny - 1) + 9 * (nz - 1) + 1;
+    const auto wave_of = [&](std::size_t c) {
       const std::uint64_t key = net.cubes[c];
-      const std::uint64_t i = key % nx;
-      const std::uint64_t j = (key / nx) % ny;
-      const std::uint64_t k = key / (nx * ny);
-      wave_of[c] = static_cast<std::uint32_t>(i + 3 * j + 9 * k);
-      ++wave_at[wave_of[c] + 1];
-    }
-    for (std::size_t t = 0; t < waves; ++t) wave_at[t + 1] += wave_at[t];
+      return key % nx + 3 * ((key / nx) % ny) + 9 * (key / (nx * ny));
+    };
     std::vector<std::uint32_t> order(cubes);
-    {
+    std::vector<std::size_t> runs;
+    if (waves <= cubes) {
+      std::vector<std::uint32_t> wave(cubes);
+      std::vector<std::size_t> wave_at(static_cast<std::size_t>(waves) + 1, 0);
+      for (std::size_t c = 0; c < cubes; ++c) {
+        wave[c] = static_cast<std::uint32_t>(wave_of(c));
+        ++wave_at[wave[c] + 1];
+      }
+      for (std::size_t t = 0; t < waves; ++t) wave_at[t + 1] += wave_at[t];
       std::vector<std::size_t> fill(wave_at.begin(), wave_at.end() - 1);
-      for (std::size_t c = 0; c < cubes; ++c) order[fill[wave_of[c]]++] = static_cast<std::uint32_t>(c);
+      for (std::size_t c = 0; c < cubes; ++c) order[fill[wave[c]]++] = static_cast<std::uint32_t>(c);
+      for (std::size_t t = 0; t < waves; ++t) {
+        if (wave_at[t + 1] > wave_at[t]) runs.push_back(wave_at[t]);
+      }
+    } else {
+      std::vector<std::pair<std::uint64_t, std::uint32_t>> keyed(cubes);
+      for (std::size_t c = 0; c < cubes; ++c) keyed[c] = {wave_of(c), static_cast<std::uint32_t>(c)};
+      std::sort(keyed.begin(), keyed.end());
+      for (std::size_t s = 0; s < cubes; ++s) {
+        order[s] = keyed[s].second;
+        if (s == 0 || keyed[s].first != keyed[s - 1].first) runs.push_back(s);
+      }
     }
-    wave_of = {};
+    runs.push_back(cubes);
 
     // Workers' arenas and scratch, handed to each chunk of a wave.
     std::vector<std::unique_ptr<MergeWorker>> workers;
@@ -614,10 +631,9 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
     };
     constexpr std::size_t kWaveChunk = 64;
     MergeWorker* own = acquire();
-    for (std::size_t t = 0; t < waves; ++t) {
-      const std::size_t b = wave_at[t];
-      const std::size_t n = wave_at[t + 1] - b;
-      if (n == 0) continue;
+    for (std::size_t t = 0; t + 1 < runs.size(); ++t) {
+      const std::size_t b = runs[t];
+      const std::size_t n = runs[t + 1] - b;
       if (n <= kWaveChunk || pool->size() == 1) {
         for (std::size_t s = b; s < b + n; ++s) merger.merge_cube(first(order[s]), end(order[s]), *own);
         continue;

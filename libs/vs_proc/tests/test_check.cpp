@@ -88,10 +88,30 @@ TEST_CASE("Unfinished graphs can be authored but not run", "[proc][check]") {
   Graph g;
   const auto d = edit(g, [](Graph& x) { x.add("field.union", "Join"); });
   CHECK(has(d, "proc.graph.missing_input"));
-  CHECK(has(d, "proc.graph.output"));
+  CHECK(has(d, "proc.graph.no_output"));
   CHECK(g.nodes.size() == 1);  // kept
-  CHECK(is_unfinished("proc.graph.output"));
+  CHECK(is_unfinished("proc.graph.no_output"));
+  CHECK_FALSE(is_unfinished("proc.graph.multiple_outputs"));
   CHECK_FALSE(is_unfinished("proc.graph.loop"));
+}
+
+TEST_CASE("A second output node is refused, not unfinished (H3)", "[proc][check]") {
+  Graph g;
+  Id first;
+  REQUIRE_FALSE(edit(g, [&](Graph& x) { first = x.add("output", "Contents"); }).empty());
+  REQUIRE(g.nodes.size() == 1);
+  Id second;
+  const auto d = edit(g, [&](Graph& x) { second = x.add("output", "Again"); });
+  const auto two = d.with_code("proc.graph.multiple_outputs");
+  REQUIRE(two.size() == 1);
+  REQUIRE(two[0]->subjects.size() == 2);
+  CHECK(two[0]->subjects[0].id == second);
+  CHECK(two[0]->subjects[1].id == first);
+  CHECK_FALSE(has(d, "proc.graph.no_output"));
+  CHECK(g.nodes.size() == 1);  // refused
+  // output.children counts too.
+  CHECK(has(edit(g, [](Graph& x) { x.add("output.children"); }), "proc.graph.multiple_outputs"));
+  CHECK(g.nodes.size() == 1);
 }
 
 TEST_CASE("Structural problems are reported", "[proc][check]") {
@@ -115,7 +135,7 @@ TEST_CASE("Structural problems are reported", "[proc][check]") {
   SECTION("a second output") {
     s.graph.add("output");
     const auto d = check_graph(s.graph);
-    CHECK(has(d, "proc.graph.output"));
+    CHECK(has(d, "proc.graph.multiple_outputs"));
     CHECK(has(d, "proc.graph.missing_input"));
   }
   SECTION("settings") {

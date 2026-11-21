@@ -163,6 +163,11 @@ Field instances_field(Field templ, const FrameSet& frames, double radius);
 // or two of libm for |x| < 1e6, and the same bits on every platform.
 double sin_det(double x);
 double cos_det(double x);
+// atan2 from arithmetic alone (H3): fdlibm's atan (its reduction table and
+// polynomial), so TriangleDistance's angle-weighted pseudonormals are the
+// same bits on every platform. Within an ulp of libm; NaN for non-finite
+// arguments, 0 for (0, 0).
+double atan2_det(double y, double x);
 
 // The polynomial smooth minimum and maximum the smooth booleans use.
 double smooth_min(double a, double b, double radius);

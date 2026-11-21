@@ -192,15 +192,27 @@ void add_inputs(NodeRegistry& r) {
       "input.surface", "input",
       "A connection surface joining the volume: its plane, frame, type parameters and bolt holes",
       {},
-      {out("plane", P::Field, "signed distance to the surface's plane, positive along its normal"),
-       out("origin", P::Vector), out("normal", P::Vector), out("area", P::Scalar),
+      {out("plane", P::Field,
+           "signed distance to the surface's plane, positive along its normal (a curved "
+           "surface: to its cylinder, positive away from the axis)"),
+       out("origin", P::Vector),
+       out("normal", P::Vector, "the plane's normal (a curved surface: its axis's direction)"),
+       out("area", P::Scalar),
        out("gap", P::Scalar, "clearance gap (0 otherwise)"),
        out("min_wall", P::Scalar, "bolted flange minimum wall (0 otherwise)"),
        out("holes", P::Frames, "a frame at each bolt hole, z along the normal")},
       [](NodeContext& ctx) {
         const ConnectionInput* c = surface_of(ctx);
         if (c == nullptr) return;
-        ctx.set("plane", half_space_field(c->origin, c->normal));
+        if (c->radius) {
+          // H3: a curved surface is a cylinder round its axis (origin,
+          // normal), not the plane square to it. Capped far beyond the
+          // working space, so within it the caps are never nearest.
+          const double reach = 4.0 * ctx.settings().working_half_extent_mm + *c->radius;
+          ctx.set("plane", cylinder_field(c->origin, c->normal, *c->radius, 2.0 * reach));
+        } else {
+          ctx.set("plane", half_space_field(c->origin, c->normal));
+        }
         ctx.set("origin", c->origin);
         ctx.set("normal", c->normal);
         ctx.set("area", c->area);

@@ -32,8 +32,10 @@
 //                               (the first node or none)
 //   proc.graph.publish          two output.publish nodes publish the same name
 //   proc.graph.loop             the edges form a loop: every node on it, in order
-//   proc.graph.output           no output node, or more than one (output and
-//                               output.children both count)
+//   proc.graph.no_output        no output node yet (output and output.children
+//                               both count; unfinished, H3)
+//   proc.graph.multiple_outputs more than one output node: every one of them,
+//                               the second first (refused by edit(), H3)
 //   proc.graph.output_kind      (check_volume_graph, L4) output.children outside a
 //                               composite's generator, or output in one
 //   proc.reference.surface      (check_volume_graph) a node reads a connection
@@ -58,8 +60,8 @@ core::Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry =
 core::Diagnostics check_volume_graph(const Graph& graph, const model::Document& document,
                                      const Id& volume, const NodeRegistry& registry = library());
 
-// proc.graph.missing_input and proc.graph.output: the graph can't run yet,
-// but nothing in it is wrong.
+// proc.graph.missing_input and proc.graph.no_output: the graph can't run
+// yet, but nothing in it is wrong.
 bool is_unfinished(std::string_view code);
 
 // "output" and "output.children" (L4): the nodes a graph needs exactly one of.

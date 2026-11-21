@@ -40,10 +40,18 @@
 
 namespace vs::eval {
 
+// The most threads VS_THREADS may ask for.
+inline constexpr std::size_t kMaxThreads = 1024;
+
+// What a pool of 0 threads gets: the VS_THREADS environment variable when
+// it is a whole number from 1 to kMaxThreads (CI runs the suites on 1, 4
+// and 16 threads that way, plan H3), else one per hardware thread.
+std::size_t default_thread_count();
+
 class ThreadPool {
  public:
-  // `threads` counts the calling thread: 1 starts no workers. 0 means one
-  // per hardware thread.
+  // `threads` counts the calling thread: 1 starts no workers. 0 means
+  // default_thread_count().
   explicit ThreadPool(std::size_t threads = 0);
   ~ThreadPool();
   ThreadPool(const ThreadPool&) = delete;

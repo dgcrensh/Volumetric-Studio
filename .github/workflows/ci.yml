@@ -92,6 +92,18 @@ jobs:
         if: runner.os == 'Linux'
         run: ./scripts/build.sh ${{ matrix.preset }}
 
+      # Procedural and evaluation results must not depend on the thread
+      # count (plan H3): their suites again with every default-sized pool
+      # at 1, 4 and 16 threads (eval::default_thread_count()).
+      - name: vs_proc and vs_eval on 1, 4 and 16 threads
+        if: matrix.preset == 'linux-gcc-release'
+        run: |
+          for threads in 1 4 16; do
+            echo "::group::VS_THREADS=$threads"
+            VS_THREADS=$threads ctest --preset ${{ matrix.preset }} -L 'vs_proc|vs_eval' --output-on-failure -j 2
+            echo "::endgroup::"
+          done
+
       # Saved even when the build or tests fail, so a long dependency build
       # (OCCT) is never paid twice. Never from a cancelled run, though: a
       # newer push cancels a pull request's run mid-build, and saving then

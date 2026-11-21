@@ -7,10 +7,27 @@
 
 #include <fmt/format.h>
 
+#include "vs/proc/distance.hpp"
+#include "vs/proc/field_layout.hpp"
+
 namespace vs::gpu {
 
 using proc::FieldExpr;
 using proc::FieldOp;
+namespace layout = proc::field_layout;
+
+// The layout contract with vs_proc (H3): the shaders compare these
+// ordinals as ints (lattice_distance(), tpms_distance())...
+static_assert(static_cast<int>(proc::LatticeCell::Cubic) == 0 &&
+              static_cast<int>(proc::LatticeCell::Bcc) == 1 &&
+              static_cast<int>(proc::LatticeCell::Octet) == 2);
+static_assert(static_cast<int>(proc::TpmsSurface::Gyroid) == 0 &&
+              static_cast<int>(proc::TpmsSurface::SchwarzP) == 1 &&
+              static_cast<int>(proc::TpmsSurface::Diamond) == 2);
+// ...and walk the BVH with a fixed stack: at most one waiting sibling per
+// level below the root, plus the node in hand.
+constexpr int kBvhStack = 64;
+static_assert(proc::kMaxBvhDepth + 2 <= kBvhStack);
 
 std::string glsl_double(double x) {
   const auto bits = std::bit_cast<std::uint64_t>(x);
@@ -324,8 +341,8 @@ double mesh_nearest(uint s, dvec3 p, out dvec3 point, out uint tri, out int feat
   tri = 0u;
   feature = 0;
   if ((U[s + 7u] & 2u) == 0u) return best;
-  uint stack_node[64];
-  double stack_bound[64];
+  uint stack_node[BVH_STACK];
+  double stack_bound[BVH_STACK];
   int top = 0;
   stack_node[0] = 0u;
   stack_bound[0] = -inf_d();
@@ -379,6 +396,10 @@ double mesh_signed(uint s, dvec3 p) {
   return dot3(sub3(p, q), normal) < 0.0lf ? -d : d;
 }
 )";
+  // The stack's size is spelled out, so the source stays what it was.
+  for (std::size_t at = s.find("BVH_STACK"); at != std::string::npos; at = s.find("BVH_STACK", at)) {
+    s.replace(at, 9, std::to_string(kBvhStack));
+  }
   return s;
 }
 
@@ -446,7 +467,8 @@ void main() {{
             "  P double qx = radial - {}; P double qy = abs(along) - {};\n"
             "  P double ox = mx(qx, 0.0lf); P double oy = mx(qy, 0.0lf);\n"
             "  r = sqrt_rn(ox * ox + oy * oy) + mn(mx(qx, qy), 0.0lf);",
-            vec(j, 3), vec(j, 0), num(j, 6), num(j, 7));
+            vec(j, layout::kCylinderAxis), vec(j, layout::kCylinderCentre), num(j, layout::kCylinderRadius),
+            num(j, layout::kCylinderHalfHeight));
         break;
       case FieldOp::Plane: body = fmt::format("r = abs(dot3(sub3(p, {}), {}));", vec(j, 0), vec(j, 3)); break;
       case FieldOp::HalfSpace: body = fmt::format("r = dot3(sub3(p, {}), {});", vec(j, 0), vec(j, 3)); break;
@@ -480,13 +502,17 @@ void main() {{
       case FieldOp::Lattice:
       case FieldOp::Tpms: {
         const std::string thickness =
-            e.children().empty() ? num(j, 5) : fmt::format("mx({}, 0.0lf)", c(0));
+            e.children().empty() ? num(j, layout::kInfillThickness) : fmt::format("mx({}, 0.0lf)", c(0));
         body = fmt::format("P double t = {}; P double d = {}(int({}), p, {}, {}); r = d - 0.5lf * t;", thickness,
-                           e.op() == FieldOp::Lattice ? "lattice_distance" : "tpms_distance", num(j, 0),
-                           vec(j, 2), num(j, 1));
+                           e.op() == FieldOp::Lattice ? "lattice_distance" : "tpms_distance",
+                           num(j, layout::kInfillKind), vec(j, layout::kInfillOrigin), num(j, layout::kInfillCell));
         break;
       }
       case FieldOp::Instances:
+        static_assert(layout::kInstancesFirst == 1 && layout::kInstanceStride == 13 &&
+                          layout::kInstanceInverse == 0 && layout::kInstanceOrigin == 9 &&
+                          layout::kInstanceReach == 12,
+                      "the shader below spells out field_layout's Instances numbers");
         body = fmt::format(
             "P double best = inf_d();\n"
             "  uint copies = (U[{}u + U[0]] - 1u) / 13u;\n"

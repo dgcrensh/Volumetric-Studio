@@ -12,7 +12,9 @@ std::string_view version_string();
 std::string_view git_revision();
 
 // The engine version that goes into every cache key (spec: "Cache key").
-// Bump it whenever generated output changes for identical inputs.
-inline constexpr unsigned kEngineVersion = 1;
+// Bump it whenever generated output changes for identical inputs. 2 (H3):
+// TriangleDistance's sorted BVH leaves and atan2_det(), and the
+// ProductSettings in cache keys.
+inline constexpr unsigned kEngineVersion = 2;
 
 }  // namespace vs::core
