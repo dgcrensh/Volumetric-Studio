@@ -14,8 +14,10 @@
 // immutable snapshots), not an inverse operation. So undo restores exactly
 // the project that was there, ids and order included, and its content hash
 // (model::content_hash()) is identical: the acceptance test of M14. Copies
-// are cheap next to an evaluation (documents are kilobytes; blobs are
-// shared byte vectors copied once per step that changes them).
+// are cheap next to an evaluation: documents are kilobytes, and blobs are
+// shared, immutable byte vectors (model::BlobPtr), never copied by a step
+// (H5). The undo stack keeps at most undo_limit() steps, dropping the
+// oldest.
 //
 // A document opened with errors (the app opens what the validator opens)
 // can still be edited: a change is refused only when it adds an error that
@@ -69,6 +71,12 @@ class History {
   [[nodiscard]] std::size_t undo_count() const { return undo_.size(); }
   [[nodiscard]] std::size_t redo_count() const { return redo_.size(); }
 
+  // The deepest the undo stack gets (H5); the oldest steps go first. At
+  // least 1.
+  static constexpr std::size_t kDefaultUndoLimit = 200;
+  [[nodiscard]] std::size_t undo_limit() const { return undo_limit_; }
+  void set_undo_limit(std::size_t limit);
+
   bool undo();
   bool redo();
 
@@ -88,10 +96,16 @@ class History {
   std::shared_ptr<const model::Project> saved_;
   std::vector<Step> undo_;
   std::vector<Step> redo_;
+  std::size_t undo_limit_ = kDefaultUndoLimit;
+
+  void trim();
 };
 
-// The errors in `after` that `before` didn't have (compared by code,
-// subjects and message): what makes a change unacceptable.
+// The errors in `after` that `before` didn't have: what makes a change
+// unacceptable. Errors are compared by code and subjects (kind and id; the
+// label only for a subject without an id), never by message (H5): a message
+// that names a value or a label changes with an edit that doesn't add the
+// error.
 core::Diagnostics new_errors(const core::Diagnostics& before, const core::Diagnostics& after);
 
 }  // namespace vs::app

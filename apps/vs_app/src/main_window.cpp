@@ -1967,16 +1967,16 @@ void MainWindow::import_dialog() {
   if (!d.has_errors()) status_label_->setText(tr("Imported %1").arg(QFileInfo(path).fileName()));
 }
 
-void MainWindow::check_then(const QString& what, std::function<void()> go) {
-  validate([this, what, go = std::move(go)](const ShipCheck& check) {
-    if (!check.ok()) {
-      QMessageBox box(QMessageBox::Warning, what, qstr(summary(check)), QMessageBox::Ok, this);
+void MainWindow::check_then(const QString& what, ShipTarget target, std::function<void()> go) {
+  validate([this, what, target, go = std::move(go)](const ShipCheck& check) {
+    if (!check.ok_for(target)) {
+      QMessageBox box(QMessageBox::Warning, what, qstr(summary(check, target)), QMessageBox::Ok, this);
       box.setInformativeText(tr("The Diagnostics panel lists every problem; click one to go to it."));
       box.exec();
       return;
     }
-    if (check.warnings > 0 &&
-        QMessageBox::question(this, what, qstr(summary(check)) + QStringLiteral("\n\n") + tr("Export anyway?")) !=
+    if ((check.warnings > 0 || !check.ok()) &&
+        QMessageBox::question(this, what, qstr(summary(check, target)) + QStringLiteral("\n\n") + tr("Export anyway?")) !=
             QMessageBox::Yes) {
       return;
     }
@@ -1986,7 +1986,7 @@ void MainWindow::check_then(const QString& what, std::function<void()> go) {
 
 void MainWindow::export_dialog(ExportFormat format) {
   const bool stl = format == ExportFormat::Stl;
-  check_then(stl ? tr("Export STL") : tr("Export 3MF"), [this, stl, format] {
+  check_then(stl ? tr("Export STL") : tr("Export 3MF"), ShipTarget::Mesh, [this, stl, format] {
     const QString path = QFileDialog::getSaveFileName(this, stl ? tr("Export STL") : tr("Export 3MF"), QString(),
                                                       stl ? tr("STL (*.stl)") : tr("3MF (*.3mf)"));
     if (path.isEmpty()) return;
@@ -1995,7 +1995,7 @@ void MainWindow::export_dialog(ExportFormat format) {
 }
 
 void MainWindow::export_step_dialog() {
-  check_then(tr("Export STEP"), [this] {
+  check_then(tr("Export STEP"), ShipTarget::Step, [this] {
     // The user's choice for procedural volumes, and what else to include.
     QDialog options(this);
     options.setWindowTitle(tr("Export STEP"));
@@ -2068,9 +2068,13 @@ void MainWindow::export_to(const std::filesystem::path& path, ExportFormat forma
   status_label_->setText(tr("Exporting…"));
   auto result = std::make_shared<ExportResult>();
   const core::ProductSettings settings = session_->settings();
+  // The weld Validate just made of this same snapshot, if any (H5).
+  std::shared_ptr<const mesh::CombinedMesh> combined;
+  if (last_check_ && last_check_snapshot_.lock() == s) combined = last_check_->combined;
   session_->run_in_background(
-      [s, result, path, format, settings] {
-        *result = export_mesh(s->evaluation, s->project->blobs, settings, format);
+      [s, result, path, format, settings, combined] {
+        *result = combined ? export_mesh(s->evaluation, *combined, format)
+                           : export_mesh(s->evaluation, s->project->blobs, settings, format);
         if (result->ok()) result->diagnostics.append(write_file(path, result->bytes));
       },
       [this, result, path, done] {
@@ -2091,8 +2095,9 @@ void MainWindow::validate(std::function<void(const ShipCheck&)> done) {
   const bool interactive = !done;
   session_->run_in_background(
       [s, check, settings] { *check = check_for_export(*s->project, s->evaluation, settings); },
-      [this, check, done, interactive] {
+      [this, s, check, done, interactive] {
         last_check_ = *check;
+        last_check_snapshot_ = s;
         show_diagnostics(check->diagnostics, tr("Validation"));
         status_label_->setText(qstr(summary(*check)));
         if (done) {

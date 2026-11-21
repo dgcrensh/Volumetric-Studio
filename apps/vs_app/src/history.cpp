@@ -1,22 +1,53 @@
 #include "history.hpp"
 
+#include <algorithm>
 #include <set>
+#include <string>
+#include <tuple>
 #include <utility>
+#include <vector>
 
 #include "vs/model/check.hpp"
 
 namespace vs::app {
 
+namespace {
+
+using SubjectKey = std::tuple<int, std::string, std::string>;
+using ErrorKey = std::pair<std::string, std::vector<SubjectKey>>;
+
+ErrorKey key_of(const core::Diagnostic& d) {
+  ErrorKey key{d.code, {}};
+  for (const auto& s : d.subjects) {
+    key.second.emplace_back(static_cast<int>(s.kind), s.id.to_string(),
+                            s.id.is_null() ? s.label : std::string());
+  }
+  return key;
+}
+
+}  // namespace
+
 core::Diagnostics new_errors(const core::Diagnostics& before, const core::Diagnostics& after) {
-  std::set<std::string> known;
+  std::set<ErrorKey> known;
   for (const auto& d : before) {
-    if (d.severity == core::Severity::Error) known.insert(d.to_string());
+    if (d.severity == core::Severity::Error) known.insert(key_of(d));
   }
   core::Diagnostics out;
   for (const auto& d : after) {
-    if (d.severity == core::Severity::Error && known.count(d.to_string()) == 0) out.add(d);
+    if (d.severity == core::Severity::Error && known.count(key_of(d)) == 0) out.add(d);
   }
   return out;
+}
+
+void History::set_undo_limit(std::size_t limit) {
+  undo_limit_ = std::max<std::size_t>(limit, 1);
+  trim();
+}
+
+void History::trim() {
+  if (undo_.size() > undo_limit_) {
+    undo_.erase(undo_.begin(), undo_.begin() + static_cast<std::ptrdiff_t>(undo_.size() - undo_limit_));
+  }
 }
 
 History::History() : History(model::Project{}) {}
@@ -62,6 +93,7 @@ core::Diagnostics History::apply(const Command& command) {
   auto next = try_apply(command, &d);
   if (!next) return d;
   undo_.push_back({command.label, current_, next});
+  trim();
   redo_.clear();
   current_ = std::move(next);
   return d;
@@ -89,6 +121,7 @@ bool History::redo() {
   redo_.pop_back();
   current_ = step.after;
   undo_.push_back(std::move(step));
+  trim();
   return true;
 }
 

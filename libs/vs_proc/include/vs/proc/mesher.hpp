@@ -74,6 +74,7 @@
 #include "vs/core/diagnostic.hpp"
 #include "vs/core/id.hpp"
 #include "vs/core/vec.hpp"
+#include "vs/eval/cancel.hpp"
 #include "vs/eval/thread_pool.hpp"
 #include "vs/mesh/mesh.hpp"
 #include "vs/mesh/seam.hpp"
@@ -90,9 +91,15 @@ struct FieldMesh {
   [[nodiscard]] bool empty() const { return triangles.empty(); }
 };
 
+// Cancellation (H5): every function below that takes a CancellationToken
+// checks it between its stages and its chunks (the merge once per wave)
+// and, once cancelled, stops and returns an empty result. Callers check the
+// token, never the result, to tell "cancelled" from "empty".
+
 // The surface of {samples < 0}. With a pool, the passes run on it (L1b);
 // the mesh is the same, bit for bit, on any number of threads.
-FieldMesh surface_nets(const SampledField& samples, eval::ThreadPool* pool = nullptr);
+FieldMesh surface_nets(const SampledField& samples, eval::ThreadPool* pool = nullptr,
+                       const eval::CancellationToken* cancel = nullptr);
 
 // --- surface nets in two steps (L1b; decision 0019) ------------------------------------
 //
@@ -126,12 +133,15 @@ struct UnmergedNet {
 
 // The unmerged net of {samples < 0}: the installed MeshingBackend's when
 // it takes the grid, else unmerged_net_cpu().
-UnmergedNet unmerged_net(const SampledField& samples, eval::ThreadPool* pool = nullptr);
-UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool = nullptr);
+UnmergedNet unmerged_net(const SampledField& samples, eval::ThreadPool* pool = nullptr,
+                         const eval::CancellationToken* cancel = nullptr);
+UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool = nullptr,
+                             const eval::CancellationToken* cancel = nullptr);
 
 // Merges each cube's vertices (see surface_nets() above) and compacts.
 // `grid` is the grid the net was made on.
-FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool = nullptr);
+FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool = nullptr,
+                    const eval::CancellationToken* cancel = nullptr);
 
 // M11's serial surface nets, unchanged: what surface_nets() must give.
 // For tests and self-checks.
@@ -149,9 +159,11 @@ inline constexpr double kContentsInset = kInputDeflection;
 // point: the installed MeshingBackend's when it takes the grid, else
 // clip_to_boundary_cpu() (z slices on `pool` when given).
 SampledField clip_to_boundary(const SampledField& samples, const TriangleDistance& boundary,
-                              double inset = 0.0, eval::ThreadPool* pool = nullptr);
+                              double inset = 0.0, eval::ThreadPool* pool = nullptr,
+                              const eval::CancellationToken* cancel = nullptr);
 SampledField clip_to_boundary_cpu(const SampledField& samples, const TriangleDistance& boundary,
-                                  double inset = 0.0, eval::ThreadPool* pool = nullptr);
+                                  double inset = 0.0, eval::ThreadPool* pool = nullptr,
+                                  const eval::CancellationToken* cancel = nullptr);
 
 // --- meshing backends (L1b) ------------------------------------------------------------
 //
@@ -202,6 +214,8 @@ struct ContentsMesh {
   std::vector<core::Id> stitched;  // surfaces whose seams the mesh conforms to
   std::size_t moved_vertices = 0;  // moved inward by step 4
   core::Diagnostics diagnostics;
+  // Stopped early by the token (H5): the mesh is empty and means nothing.
+  bool cancelled = false;
 
   [[nodiscard]] bool ok() const { return !diagnostics.has_errors(); }
 };
@@ -212,6 +226,7 @@ struct ContentsMesh {
 // it (its id goes on every triangle).
 ContentsMesh mesh_contents(const SampledField& samples, const TriangleDistance& boundary,
                            std::span<const mesh::Seam> seams, const core::SubjectRef& volume,
-                           eval::ThreadPool* pool = nullptr);
+                           eval::ThreadPool* pool = nullptr,
+                           const eval::CancellationToken* cancel = nullptr);
 
 }  // namespace vs::proc

@@ -61,6 +61,12 @@ struct Mesh {
 
   [[nodiscard]] core::fbox3 bounds() const;
 
+  // The bytes its arrays hold (capacity, not size): what caches count (H5).
+  [[nodiscard]] std::size_t memory_bytes() const {
+    return positions.capacity() * sizeof(fvec3) + seam_vertices.capacity() * sizeof(Id) +
+           indices.capacity() * sizeof(std::uint32_t) + triangle_volumes.capacity() * sizeof(Id);
+  }
+
   // The volumes its triangles belong to, each once, in order of first use.
   [[nodiscard]] std::vector<Id> volumes() const;
 

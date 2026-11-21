@@ -43,6 +43,12 @@
 
 namespace vs::app {
 
+// Dimensions whose value has a sign: a horizontal or vertical distance
+// (second minus first) and an angle. Dragging one may cross zero; dragging
+// any other stops at kMinDraggedDimension (H5).
+bool signed_dimension(sketch::ConstraintKind kind);
+inline constexpr double kMinDraggedDimension = 0.01;  // mm
+
 using core::dvec2;
 using core::Id;
 
@@ -124,6 +130,8 @@ class SketchEditor {
   // as it can. A dimension driven by an expression is refused
   // (app.sketch.dimension_driven): its variables decide it. `record` as
   // for drag().
+  // A length, radius or diameter stays at least kMinDraggedDimension; a
+  // signed dimension (signed_dimension()) takes any value, through zero (H5).
   core::Diagnostics drag_dimension(const Id& constraint, double value, bool record = true);
 
   [[nodiscard]] bool can_undo() const { return !undo_.empty(); }

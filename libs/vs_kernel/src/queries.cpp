@@ -211,6 +211,22 @@ std::optional<Plane> face_plane(const Face& face) {
     return std::nullopt;
   }
 }
+std::optional<Plane> face_surface_plane(const Face& face) {
+  if (face.is_empty()) return std::nullopt;
+  try {
+    const TopoDS_Face& f = TopoDS::Face(topo(face));
+    BRepAdaptor_Surface surface(f, /*theRestriction=*/false);
+    if (surface.GetType() != GeomAbs_Plane) return std::nullopt;
+    const gp_Pln pln = surface.Plane();
+    dvec3 normal = detail::from_occ(pln.Axis().Direction());
+    if (!pln.Direct()) normal = -normal;
+    if (f.Orientation() == TopAbs_REVERSED) normal = -normal;
+    return Plane{detail::from_occ(pln.Location()), normal};
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
 std::optional<Cylinder> face_cylinder(const Face& face) {
   if (face.is_empty()) return std::nullopt;
   try {

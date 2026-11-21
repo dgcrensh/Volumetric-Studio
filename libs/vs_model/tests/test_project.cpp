@@ -94,7 +94,11 @@ TEST_CASE("Hashes see every change", "[model][project]") {
   std::get<BoltedFlangeParams>(p.document.find_connection(b.flange)->params).thread = "M5";
   CHECK(content_hash(p) != hash);
   p = b.project;
-  p.blobs.begin()->second.push_back(std::byte{0});
+  {
+    auto grown = *p.blobs.begin()->second;
+    grown.push_back(std::byte{0});
+    p.blobs.begin()->second = std::make_shared<const Blob>(std::move(grown));
+  }
   CHECK(content_hash(p) != hash);
   CHECK(content_hash(b.project) == hash);
 }
@@ -309,6 +313,39 @@ TEST_CASE("Blobs are named by their content", "[model][project]") {
   CHECK(a.starts_with("blobs/"));
   CHECK(a.ends_with(".stl"));
   CHECK(a.size() == std::string("blobs/").size() + 32 + 4);
+}
+
+TEST_CASE("Copies of a project share its blobs; equality compares their bytes (H5)", "[model][project]") {
+  auto b = bracket::make_bracket();
+  REQUIRE_FALSE(b.project.blobs.empty());
+  const Project copy = b.project;
+  for (const auto& [path, blob] : b.project.blobs) {
+    REQUIRE(copy.blobs.at(path) != nullptr);
+    CHECK(copy.blobs.at(path).get() == blob.get());  // shared, not copied
+  }
+  CHECK(copy == b.project);
+
+  // The same bytes in a separate buffer are still equal.
+  Project separate = b.project;
+  for (auto& [path, blob] : separate.blobs) blob = std::make_shared<const Blob>(*blob);
+  CHECK(separate.blobs.begin()->second.get() != b.project.blobs.begin()->second.get());
+  CHECK(separate == b.project);
+  CHECK(content_hash(separate) == content_hash(b.project));
+
+  // Other bytes aren't.
+  auto changed = *separate.blobs.begin()->second;
+  changed.push_back(std::byte{1});
+  separate.blobs.begin()->second = std::make_shared<const Blob>(std::move(changed));
+  CHECK_FALSE(separate == b.project);
+
+  // Adding bytes already held keeps the one shared copy.
+  const Blob bytes = *b.project.blobs.begin()->second;
+  Project again = b.project;
+  const auto before = again.blobs.begin()->second.get();
+  CHECK(again.add_blob(bytes, "step") == b.project.blobs.begin()->first);
+  CHECK(again.blobs.begin()->second.get() == before);
+  CHECK(again.blob(b.project.blobs.begin()->first) == before);
+  CHECK(again.blob("blobs/none") == nullptr);
 }
 
 // The checked-in sample used by `vstudio-cli info`'s test. It is generated

@@ -6,6 +6,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -62,6 +63,15 @@ class Builder {
     return it->second;
   }
   std::uint32_t raw_vertex(const fvec3& p) { return mesh_.add_vertex(canonical(p)); }
+  // Room for about this many (H5): a closed mesh has half as many vertices
+  // as triangles.
+  void reserve(std::size_t vertices, std::size_t triangles) {
+    mesh_.positions.reserve(vertices);
+    mesh_.seam_vertices.reserve(vertices);
+    mesh_.indices.reserve(3 * triangles);
+    mesh_.triangle_volumes.reserve(triangles);
+    index_.reserve(vertices);
+  }
   void triangle(std::uint32_t a, std::uint32_t b, std::uint32_t c) {
     if (a == b || b == c || c == a) return;
     mesh_.add_triangle(a, b, c, Id::null());
@@ -464,7 +474,8 @@ core::Result<Bytes> write_3mf(std::span<const ThreeMfObject> objects, std::strin
   for (const ThreeMfObject& o : objects) {
     if (o.mesh == nullptr || o.mesh->empty()) continue;
     ++id;
-    model += fmt::format("  <object id=\"{}\" type=\"model\" name=\"{}\">\n", id, escape(o.name));
+    fmt::format_to(std::back_inserter(model), "  <object id=\"{}\" type=\"model\" name=\"{}\">\n", id,
+                   escape(o.name));
     if (!o.volume.is_null()) {
       model += "   <metadatagroup>\n    <metadata name=\"vstudio:volume\">" + o.volume.to_string() +
                "</metadata>\n   </metadatagroup>\n";
@@ -473,20 +484,25 @@ core::Result<Bytes> write_3mf(std::span<const ThreeMfObject> objects, std::strin
     // Only the vertices its triangles use, in order of first use.
     std::vector<std::uint32_t> index(o.mesh->vertex_count(), 0xffffffffu);
     std::uint32_t next = 0;
+    // Written in place (H5): no string per vertex or triangle.
     std::string tris;
+    tris.reserve(64 * o.mesh->triangle_count());
     for (std::size_t t = 0; t < o.mesh->triangle_count(); ++t) {
       Triangle tri = o.mesh->triangle(t);
       for (std::uint32_t& v : tri) {
         if (index[v] == 0xffffffffu) {
           index[v] = next++;
           const fvec3& p = o.mesh->positions[v];
-          model += fmt::format("     <vertex x=\"{}\" y=\"{}\" z=\"{}\"/>\n", p.x, p.y, p.z);
+          fmt::format_to(std::back_inserter(model), "     <vertex x=\"{}\" y=\"{}\" z=\"{}\"/>\n", p.x, p.y, p.z);
         }
         v = index[v];
       }
-      tris += fmt::format("     <triangle v1=\"{}\" v2=\"{}\" v3=\"{}\"/>\n", tri[0], tri[1], tri[2]);
+      fmt::format_to(std::back_inserter(tris), "     <triangle v1=\"{}\" v2=\"{}\" v3=\"{}\"/>\n", tri[0], tri[1],
+                     tri[2]);
     }
-    model += "    </vertices>\n    <triangles>\n" + tris + "    </triangles>\n   </mesh>\n  </object>\n";
+    model += "    </vertices>\n    <triangles>\n";
+    model += tris;
+    model += "    </triangles>\n   </mesh>\n  </object>\n";
   }
   model += " </resources>\n <build>\n";
   for (int i = 1; i <= id; ++i) model += fmt::format("  <item objectid=\"{}\"/>\n", i);
@@ -519,6 +535,7 @@ core::Result<Mesh> read_stl(std::span<const std::byte> file) {
   }
   if (binary) {
     const std::uint32_t n = get_u32(file, 80);
+    b.reserve(n / 2 + 3, n);
     for (std::uint32_t t = 0; t < n; ++t) {
       const std::size_t at = 84 + 50 * static_cast<std::size_t>(t) + 12;
       std::uint32_t v[3];

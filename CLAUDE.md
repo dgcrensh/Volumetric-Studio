@@ -312,7 +312,9 @@ so they are registered. A new library must also be added to
 - **Files.** `.vsproj` is a folder or a zip of `project.json` plus
   `blobs/<hash>.<ext>` (`project.hpp`, decision 0005), and optional
   `cache/` files (`save_project(..., &cache)`, `load_project_cache()`;
-  never hashed, in zips too since M17). Zips go through the
+  never hashed, in zips too since M17). Blobs are shared
+  (`BlobPtr`, `std::shared_ptr<const Blob>`): copying a project copies
+  pointers, and equality and hashes compare bytes (H5). Zips go through the
   vendored miniz (deflated, zero timestamps, decision 0006). Loading checks
   blob hashes and runs `check()` (`load_project(path, false)` skips it, for
   validation). `content_hash()` hashes the document's
@@ -494,7 +496,9 @@ so they are registered. A new library must also be added to
   `ProductSettings` (H3; the node cache's keys too), kind,
   content definition, the boundary's exact shape and named faces, joining
   surfaces, parameters, seed and measured outputs; static keys leave
-  parameters and seed out. Memory always; disk (`cache/<key>.brep` and
+  parameters and seed out. Memory always, an LRU under
+  `EngineOptions::memory_cache_bytes` (2 GiB; meshes by their arrays,
+  solids an estimated 256 KiB, H5); disk (`cache/<key>.brep` and
   `.json`) for clean B-rep contents, and since M17 `.mesh` for meshes;
   `encode_entry()` / `insert_files()` move entries in and out of a
   project's `cache/` (`project_cache_files()` skips parametric contents,
@@ -559,7 +563,8 @@ so they are registered. A new library must also be added to
   `gather_inputs()` tessellates the boundary and joining patches on the
   calling thread; `evaluate_graph()` runs nodes in topological order with
   a `NodeCache` keyed by type, settings, seed and input hashes (input and
-  query nodes always run).
+  query nodes always run), an LRU under 1 GiB sized by `value_bytes()`
+  (H5).
 - **Engine** (`generator.hpp`): `proc::install(engine)` registers the
   procedural `eval::ContentsGenerator`; contents are a mesh
   (`GeneratedContents::mesh`, `contents_mesh()`), which the engine checks
@@ -575,6 +580,10 @@ so they are registered. A new library must also be added to
   vertex and centroid is contained. `convert.field_to_mesh` (with its
   `samples` cost) and `convert.mesh_to_field` convert inside graphs.
   `mesh::combine()` takes generated meshes from the engine. Decision 0011.
+  Every meshing stage takes an optional `CancellationToken*` and returns
+  empty (`ContentsMesh::cancelled`) within a fraction of a second;
+  `NodeContext::cancelled()` stops heavy nodes, and a stopped node or job
+  is never cached (H5, decision 0027).
 - **Parallel surface nets** (L1b, decision 0019): `surface_nets(samples,
   pool)` is `unmerged_net()` (vertex and polygon passes in z layers,
   joined in grid order; a `MeshingBackend` may take it) then
@@ -629,7 +638,8 @@ so they are registered. A new library must also be added to
   welded mesh; `templates`, `inspect <project> <volume> <node>
   [--preview]`, `bake` / `unbake <project> <volume> [--out <path>]` and
   `bench-gyroid [--size mm] [--cell mm] [--threads N] [--3mf out]` (the
-  CPU baseline) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
+  CPU baseline; on Linux it prints the stages' and the engine's peak
+  RSS) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
   block out, fill, iterate, swap and ship end to end.
 
 ## vs_gpu essentials (L1, L1b)
@@ -693,7 +703,7 @@ so they are registered. A new library must also be added to
   only; no OCCT in any header). `main_window.*` lays out the docks.
 - **Authoring** (M14, decision 0014): every edit is a `Command`
   (`authoring.hpp`) applied through `History` (`history.hpp`), which keeps
-  whole project snapshots, so undo restores identical hashes and refuses
+  whole project snapshots (blobs shared, at most 200 undo steps, H5), so undo restores identical hashes and refuses
   changes that add a `model::check()` error. `reference_choices.hpp` lists
   what a feature may refer to (inside a volume: only its boundary faces,
   connection surfaces and own features). `sketch_editor.*` is sketch mode's
@@ -757,7 +767,9 @@ so they are registered. A new library must also be added to
 - **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
   `check_for_export()`: `validate()`, the shown evaluation's volume
   diagnostics, volumes not current, and the weld; Model > Validate and every
-  export run it first (errors stop, warnings ask). `MainWindow::validate()`,
+  export run it first (errors stop, warnings ask). A weld error stops
+  STL and 3MF but not STEP (`ok_for(ShipTarget)`), and export reuses
+  the check's weld (`ShipCheck::combined`, H5). `MainWindow::validate()`,
   `export_step_to()`, `import_file()` (a new static volume) and
   `save_to()` (with the shown evaluation's caches while File > Save Caches
   With Project is on) are the entry points tests drive; `Session::open()`

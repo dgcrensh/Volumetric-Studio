@@ -58,7 +58,7 @@ TEST_CASE("Acceptance 2: bake then unbake round-trips the volume's content hash"
   CHECK(model::content_hash(m.project) != before);
   // The blob holds the generated mesh exactly: the same triangles, corner
   // for corner (3MF numbers vertices in order of use).
-  auto read = mesh::read_3mf(m.project.blobs.at(stat.blob));
+  auto read = mesh::read_3mf(*m.project.blobs.at(stat.blob));
   REQUIRE(read);
   REQUIRE(read->triangle_count() == pm->triangle_count());
   bool same = true;

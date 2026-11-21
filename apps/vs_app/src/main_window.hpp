@@ -58,6 +58,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "authoring.hpp"
@@ -291,8 +292,8 @@ class MainWindow : public QMainWindow {
   void export_step_dialog();
   void import_dialog();
   // Validates, then runs `go` unless errors stop it (shown in a dialog);
-  // warnings ask first.
-  void check_then(const QString& what, std::function<void()> go);
+  // warnings ask first. For STEP the weld's errors don't stop it (H5).
+  void check_then(const QString& what, ShipTarget target, std::function<void()> go);
   void report(const core::Diagnostics& diagnostics, const QString& what);
   void show_project();  // the history's current project, to the session
 
@@ -330,6 +331,9 @@ class MainWindow : public QMainWindow {
   QAction* cancel_action_ = nullptr;
   QAction* save_caches_action_ = nullptr;
   std::optional<ShipCheck> last_check_;
+  // The snapshot last_check_ was made from: export_to() reuses its weld
+  // only for that same snapshot (H5). Weak, so it keeps nothing alive.
+  std::weak_ptr<const Snapshot> last_check_snapshot_;
   QAction* undo_action_ = nullptr;
   QAction* redo_action_ = nullptr;
   QAction* leave_context_action_ = nullptr;

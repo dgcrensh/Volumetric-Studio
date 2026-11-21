@@ -1,9 +1,12 @@
 #include "vs/proc/types.hpp"
 
 #include <array>
+#include <set>
+#include <vector>
 
 #include <fmt/format.h>
 
+#include "vs/proc/distance.hpp"
 #include "vs/proc/field.hpp"
 
 namespace vs::proc {
@@ -20,7 +23,56 @@ void append_transform(Hasher& h, const core::ftransform& t) {
   h.add(t.translation);
 }
 
+std::size_t field_bytes(const FieldExpr* root) {
+  std::set<const void*> seen;
+  std::vector<const FieldExpr*> stack;
+  if (root != nullptr) stack.push_back(root);
+  std::size_t bytes = 0;
+  while (!stack.empty()) {
+    const FieldExpr* f = stack.back();
+    stack.pop_back();
+    if (!seen.insert(f).second) continue;
+    bytes += sizeof(FieldExpr) + f->numbers().capacity() * sizeof(double) +
+             f->children().capacity() * sizeof(Field);
+    if (const TriangleDistance* m = f->mesh(); m != nullptr && seen.insert(m).second) {
+      // Positions, triangles and about two BVH nodes per triangle.
+      bytes += sizeof(TriangleDistance) + m->positions().capacity() * sizeof(dvec3) +
+               m->triangle_count() * 160;
+    }
+    for (const Field& c : f->children()) {
+      if (c) stack.push_back(c.get());
+    }
+  }
+  return bytes;
+}
+
 }  // namespace
+
+std::size_t value_bytes(const Value& value) {
+  struct Visitor {
+    std::size_t operator()(double) const { return sizeof(double); }
+    std::size_t operator()(const dvec3&) const { return sizeof(dvec3); }
+    std::size_t operator()(const Field& f) const { return field_bytes(f.get()); }
+    std::size_t operator()(const MeshValue& m) const { return m ? m->memory_bytes() : 0; }
+    std::size_t operator()(const Frames& f) const {
+      return f ? f->frames.capacity() * sizeof(core::ftransform) : 0;
+    }
+    std::size_t operator()(const Curves& c) const {
+      if (!c) return 0;
+      std::size_t bytes = c->polylines.capacity() * sizeof(std::vector<fvec3>);
+      for (const auto& p : c->polylines) bytes += p.capacity() * sizeof(fvec3);
+      return bytes;
+    }
+    std::size_t operator()(const List& l) const { return l.capacity() * sizeof(double); }
+    std::size_t operator()(const Children& c) const {
+      if (!c) return 0;
+      return c->children.size() * (sizeof(model::GeneratedChild) + 64) +
+             c->surfaces.size() * sizeof(model::GeneratedSurface) +
+             c->delegations.size() * sizeof(model::GeneratedDelegation);
+    }
+  };
+  return sizeof(Value) + std::visit(Visitor{}, value);
+}
 
 std::string_view to_string(PortType type) { return kNames[static_cast<std::size_t>(type)]; }
 

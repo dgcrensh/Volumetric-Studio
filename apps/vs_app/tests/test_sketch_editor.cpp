@@ -302,3 +302,85 @@ TEST_CASE("Dragging, deleting, construction geometry and undo", "[app][sketch]")
   CHECK(ed.nearest_entity({10, 0.3}, 1.0) == lines[0]);
   CHECK(ed.nearest_entity({10, 5}, 1.0).is_null());
 }
+
+TEST_CASE("A signed dimension drags through zero; a length stops short of it (H5)", "[app][sketch]") {
+  CHECK(app::signed_dimension(ConstraintKind::HorizontalDistance));
+  CHECK(app::signed_dimension(ConstraintKind::VerticalDistance));
+  CHECK(app::signed_dimension(ConstraintKind::Angle));
+  CHECK_FALSE(app::signed_dimension(ConstraintKind::Distance));
+  CHECK_FALSE(app::signed_dimension(ConstraintKind::Radius));
+
+  SketchEditor ed(sketch::Sketch(), kSettings);
+  ed.set_tool(SketchTool::Line);
+  ed.click({0, 0});
+  ed.click({10, 7});
+  ed.finish_tool();
+  const Id a = ed.nearest_point({0, 0}, 0.5);
+  const Id b = ed.nearest_point({10, 7}, 0.5);
+  REQUIRE_FALSE(a.is_null());
+  REQUIRE_FALSE(b.is_null());
+  const Id dx = ed.constrain(ConstraintKind::HorizontalDistance, {a, b});
+  REQUIRE_FALSE(dx.is_null());
+  // Dragged in steps from +10 through zero to -4: one undo step.
+  bool first = true;
+  for (const double v : {6.0, 2.0, 0.0, -2.0, -4.0}) {
+    INFO("value " << v);
+    const auto d = ed.drag_dimension(dx, v, first);
+    first = false;
+    REQUIRE_FALSE(d.has_errors());
+    CHECK_THAT(ed.sketch().point(b)->x - ed.sketch().point(a)->x, WithinAbs(v, 1e-6));
+  }
+  REQUIRE(ed.undo());
+  CHECK_THAT(ed.sketch().point(b)->x - ed.sketch().point(a)->x, WithinAbs(10.0, 1e-6));
+
+  // A circle's radius stops at the minimum, never at zero or below.
+  ed.set_tool(SketchTool::Circle);
+  ed.click({50, 0});
+  ed.click({55, 0});
+  ed.set_tool(SketchTool::Select);
+  const auto circles = of_kind(ed.sketch(), sketch::EntityKind::Circle);
+  REQUIRE(circles.size() == 1);
+  const Id r = ed.constrain(ConstraintKind::Radius, {circles[0]});
+  REQUIRE_FALSE(r.is_null());
+  REQUIRE_FALSE(ed.drag_dimension(r, -3.0).has_errors());
+  const auto& c = *ed.sketch().find_constraint(r);
+  REQUIRE(c.dimension);
+  CHECK_THAT(c.dimension->value, WithinAbs(app::kMinDraggedDimension, 1e-12));
+}
+
+TEST_CASE("A zero-size click leaves no undo step and keeps the redo stack (H5)", "[app][sketch]") {
+  SketchEditor ed(sketch::Sketch(), kSettings);
+  ed.set_tool(SketchTool::Circle);
+  ed.click({0, 0});
+  ed.click({5, 0});
+  REQUIRE(ed.undo());
+  REQUIRE(ed.can_redo());
+  CHECK_FALSE(ed.can_undo());
+  const auto before = ed.sketch();
+
+  // A circle of radius zero and an arc whose end is its start: nothing,
+  // no step, and the circle is still there to redo.
+  CHECK(ed.click({1, 1}).empty());
+  CHECK(ed.click({1, 1}).empty());
+  ed.set_tool(SketchTool::Arc);
+  CHECK(ed.click({0, 0}).empty());
+  CHECK(ed.click({2, 0}).empty());
+  CHECK(ed.click({2, 0}).empty());
+  CHECK(ed.sketch() == before);
+  CHECK_FALSE(ed.can_undo());
+  REQUIRE(ed.redo());
+  CHECK(count(ed.sketch(), sketch::EntityKind::Circle) == 1);
+
+  // A line from a point onto that same point: nothing either.
+  const Id centre = ed.nearest_point({0, 0}, 0.5);
+  REQUIRE_FALSE(centre.is_null());
+  const auto with_circle = ed.sketch();
+  ed.set_tool(SketchTool::Line);
+  CHECK(ed.click({0, 0}, centre).empty());
+  CHECK(ed.click({0, 0}, centre).empty());
+  ed.finish_tool();
+  CHECK(ed.sketch() == with_circle);
+  REQUIRE(ed.undo());  // the circle's step is still the last one
+  CHECK(ed.sketch() == before);
+  CHECK_FALSE(ed.can_undo());
+}

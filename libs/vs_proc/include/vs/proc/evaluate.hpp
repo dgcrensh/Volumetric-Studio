@@ -33,6 +33,7 @@
 // last subject, so routing (vs_validate) can find the volume a node is in.
 
 #include <cstddef>
+#include <list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -52,20 +53,35 @@
 namespace vs::proc {
 
 // Node outputs by key. Thread-safe; shared by evaluations of any graphs
-// (keys include everything a node's outputs depend on). When it holds
-// more than `capacity` entries it forgets them all and starts again.
+// (keys include everything a node's outputs depend on).
+//
+// Bounded by bytes (H5): entries count value_bytes() of their outputs, and
+// once they add up to more than the budget the least recently found or
+// inserted ones are forgotten (the newest always stays, however big).
 class NodeCache {
  public:
-  explicit NodeCache(std::size_t capacity = 4096) : capacity_(capacity) {}
+  inline static constexpr std::size_t kDefaultBudget = std::size_t{1} << 30;  // 1 GiB
+
+  explicit NodeCache(std::size_t byte_budget = kDefaultBudget) : budget_(byte_budget) {}
   [[nodiscard]] std::optional<std::vector<Value>> find(const Hash256& key) const;
   void insert(const Hash256& key, std::vector<Value> outputs);
   void clear();
   [[nodiscard]] std::size_t size() const;
+  [[nodiscard]] std::size_t bytes() const;
+  [[nodiscard]] std::size_t budget() const { return budget_; }
 
  private:
+  struct Entry {
+    std::vector<Value> outputs;
+    std::size_t bytes = 0;
+    std::list<Hash256>::iterator use;
+  };
+
   mutable std::mutex mutex_;
-  std::map<Hash256, std::vector<Value>> entries_;
-  std::size_t capacity_;
+  std::map<Hash256, Entry> entries_;
+  mutable std::list<Hash256> uses_;  // most recently used first
+  std::size_t bytes_ = 0;
+  std::size_t budget_;
 };
 
 struct EvaluateGraphOptions {

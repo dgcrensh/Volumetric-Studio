@@ -15,8 +15,9 @@ ShipCheck check_for_export(const model::Project& project, const eval::Evaluation
   ShipCheck out;
   std::set<std::tuple<int, std::string, std::string>> seen;
   const auto add = [&](const core::Diagnostic& d) {
-    if (!seen.emplace(static_cast<int>(d.severity), d.code, d.message).second) return;
+    if (!seen.emplace(static_cast<int>(d.severity), d.code, d.message).second) return false;
     out.diagnostics.add(d);
+    return true;
   };
 
   const validate::ValidationReport report = validate::validate(project.document, settings, &project.blobs);
@@ -40,11 +41,15 @@ ShipCheck check_for_export(const model::Project& project, const eval::Evaluation
   }
 
   if (evaluation.checked) {
-    // The weld STL and 3MF export would make (its errors only matter there).
-    const ExportResult weld = export_mesh(evaluation, project.blobs, settings, ExportFormat::Stl);
-    for (const auto& d : weld.diagnostics) {
-      if (d.code != "mesh.combine.empty") add(d);
+    // The weld STL and 3MF export would make (its errors only matter
+    // there), kept for the export to reuse (H5: it used to write the STL
+    // here too, and weld again to export).
+    auto combined = std::make_shared<mesh::CombinedMesh>(combine_for_export(evaluation, project.blobs, settings));
+    for (const auto& d : combined->diagnostics) {
+      if (d.code == "mesh.combine.empty") continue;
+      if (add(d) && d.is_error()) ++out.weld_errors;
     }
+    out.combined = std::move(combined);
   }
 
   out.errors = out.diagnostics.count(core::Severity::Error);
@@ -52,18 +57,26 @@ ShipCheck check_for_export(const model::Project& project, const eval::Evaluation
   return out;
 }
 
-std::string summary(const ShipCheck& check) {
+std::string summary(const ShipCheck& check, ShipTarget target) {
   if (check.ok()) {
     return check.warnings == 0
                ? fmt::format("Ready to export: every check passed for {} volume(s).", check.volumes)
                : fmt::format("Ready to export, with {} warning(s) to review.", check.warnings);
   }
+  if (check.ok_for(target)) {
+    return fmt::format("Ready to export STEP. The mesh doesn't weld ({} error(s)), so STL and 3MF "
+                       "export would stop{}.",
+                       check.weld_errors,
+                       check.warnings > 0 ? fmt::format("; {} warning(s) to review", check.warnings) : "");
+  }
+  // The first error that stops this export.
   std::string first;
+  const bool weld_only = target == ShipTarget::Step;
   for (const auto& d : check.diagnostics) {
-    if (d.is_error()) {
-      first = d.message;
-      break;
-    }
+    if (!d.is_error()) continue;
+    if (weld_only && d.code.starts_with("mesh.")) continue;
+    first = d.message;
+    break;
   }
   return fmt::format("Not ready to export: {} error(s){}. First: {}", check.errors,
                      check.warnings > 0 ? fmt::format(", {} warning(s)", check.warnings) : "", first);

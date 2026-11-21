@@ -664,8 +664,8 @@ std::string manifest_json(const Project& project) {
   ojson blobs = ojson::array();
   for (const auto& [path, bytes] : project.blobs) {
     blobs.push_back(ojson{{"path", path},
-                          {"size", bytes.size()},
-                          {"blake3", core::blake3_of_bytes(bytes).to_hex()}});
+                          {"size", bytes->size()},
+                          {"blake3", core::blake3_of_bytes(*bytes).to_hex()}});
   }
   j["blobs"] = std::move(blobs);
   return j.dump(2) + "\n";
@@ -743,7 +743,7 @@ core::Hash256 content_hash(const Project& project) {
   h.add(project.blobs.size());
   for (const auto& [path, bytes] : project.blobs) {
     h.add(path);
-    h.add(core::blake3_of_bytes(bytes));
+    h.add(core::blake3_of_bytes(*bytes));
   }
   return h.finalize();
 }

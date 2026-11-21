@@ -37,6 +37,15 @@ struct ExportResult {
 ExportResult export_mesh(const eval::Evaluation& evaluation, const model::BlobStore& blobs,
                          const core::ProductSettings& settings, ExportFormat format);
 
+// The two halves of export_mesh() (H5), so a weld made once (by
+// check_for_export(), ship.hpp) serves the export too: the combined mesh
+// of `evaluation` (app.export.unchecked when it wasn't checked), and the
+// file of a combined mesh made from that same evaluation.
+mesh::CombinedMesh combine_for_export(const eval::Evaluation& evaluation, const model::BlobStore& blobs,
+                                      const core::ProductSettings& settings);
+ExportResult export_mesh(const eval::Evaluation& evaluation, const mesh::CombinedMesh& combined,
+                         ExportFormat format);
+
 // Writes `bytes` to `path` (replacing it). Diagnoses app.export.io.
 core::Diagnostics write_file(const std::filesystem::path& path, const mesh::Bytes& bytes);
 

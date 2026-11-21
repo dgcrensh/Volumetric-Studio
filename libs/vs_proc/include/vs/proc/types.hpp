@@ -24,6 +24,7 @@
 // cached and handed to several consumers. hash_value() gives each value a
 // content digest, which the per-node cache keys on (evaluate.hpp).
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -79,6 +80,11 @@ using Value = std::variant<double, dvec3, Field, MeshValue, Frames, Curves, List
 // A digest of the value's contents: equal values hash equal, whatever
 // pointers they hold. Fields hash their expression tree (field.hpp).
 [[nodiscard]] Hash256 hash_value(const Value& value);
+
+// About how many bytes `value` holds, for the node cache's budget (H5):
+// arrays by capacity, a field by its distinct expressions and the meshes
+// of its distance leaves (shared subtrees counted once).
+[[nodiscard]] std::size_t value_bytes(const Value& value);
 void hash_append(Hasher& h, const Value& value);
 
 // A short, readable rendering, for the CLI and messages.

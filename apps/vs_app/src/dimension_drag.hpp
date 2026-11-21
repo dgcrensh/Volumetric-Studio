@@ -45,6 +45,7 @@ struct DimensionHandle {
   std::string label;   // "Base outline: Distance 1 (width)"
   double value = 0.0;  // now, mm
   double rate = 1.0;   // value change per mm the handle moves
+  bool signed_value = false;  // a signed sketch dimension: may cross zero (H5)
   core::dvec3 anchor{};     // where the handle is drawn, model space
   core::dvec3 direction{};  // unit: moving this way makes the value grow
 };
@@ -64,7 +65,8 @@ std::optional<SketchHandle> sketch_dimension_handle(const sketch::Sketch& sketch
 std::vector<DimensionHandle> dimension_handles(const eval::Evaluation& evaluation, const Id& tree, const Id& feature);
 
 // The value a handle reaches after moving `distance` mm along its
-// direction from where it started (never below `minimum`).
+// direction from where it started (never below `minimum`, unless the
+// handle's value is signed).
 double dragged_value(const DimensionHandle& handle, double distance, double minimum = 0.01);
 
 // The edit that sets the handle's number to `value`: one Command, labelled

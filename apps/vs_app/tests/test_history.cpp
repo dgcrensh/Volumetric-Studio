@@ -3,6 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <map>
+#include <string>
 #include <vector>
 
 #include "authoring.hpp"
@@ -156,4 +158,55 @@ TEST_CASE("Undoing every step of a session restores each document hash", "[app][
     CHECK(hash(h) == hashes[i]);
   }
   CHECK_FALSE(h.can_redo());
+}
+
+TEST_CASE("Fifty edits share the project's blobs instead of copying them (H5)", "[app][history]") {
+  History h(samples::static_mesh());
+  REQUIRE_FALSE(h.project().blobs.empty());
+  std::map<std::string, const model::Blob*> first;
+  for (const auto& [path, blob] : h.project().blobs) first[path] = blob.get();
+  for (int i = 0; i < 50; ++i) {
+    const auto d = h.apply(app::rename_document("Edit " + std::to_string(i)));
+    REQUIRE_FALSE(d.has_errors());
+  }
+  // Every snapshot, the first and the last included, holds the same bytes.
+  for (const auto& [path, blob] : h.project().blobs) CHECK(blob.get() == first.at(path));
+  while (h.undo()) {
+  }
+  for (const auto& [path, blob] : h.project().blobs) CHECK(blob.get() == first.at(path));
+}
+
+TEST_CASE("The undo stack keeps at most its limit, dropping the oldest (H5)", "[app][history]") {
+  History h(samples::load("bracket.vsproj"));
+  CHECK(h.undo_limit() == app::History::kDefaultUndoLimit);
+  h.set_undo_limit(3);
+  for (int i = 0; i < 5; ++i) REQUIRE_FALSE(h.apply(app::rename_document("Name " + std::to_string(i))).has_errors());
+  int undone = 0;
+  while (h.undo()) ++undone;
+  CHECK(undone == 3);
+  CHECK(h.project().document.name == "Name 1");
+  // Redo goes back to the newest.
+  while (h.redo()) {
+  }
+  CHECK(h.project().document.name == "Name 4");
+  // Lowering the limit trims at once.
+  h.set_undo_limit(1);
+  CHECK(h.undo());
+  CHECK_FALSE(h.undo());
+}
+
+TEST_CASE("An error is new by its code and subjects, not its wording (H5)", "[app][history]") {
+  const core::SubjectRef v{core::SubjectKind::Volume, Id::random(), "Box"};
+  const core::SubjectRef w{core::SubjectKind::Volume, Id::random(), "Lid"};
+  core::Diagnostics before;
+  before.add(core::Diagnostic::error("model.test", "Box is too big (10 mm)", {v}));
+  core::Diagnostics after;
+  // The same problem, its message now quoting another number: not new.
+  after.add(core::Diagnostic::error("model.test", "Box is too big (12 mm)", {v}));
+  CHECK(app::new_errors(before, after).empty());
+  // The same code on another volume: new.
+  after.add(core::Diagnostic::error("model.test", "Lid is too big (12 mm)", {w}));
+  const auto added = app::new_errors(before, after);
+  REQUIRE(added.size() == 1);
+  CHECK(added.begin()->subjects.front().id == w.id);
 }

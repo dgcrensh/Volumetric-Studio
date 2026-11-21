@@ -143,6 +143,7 @@ std::vector<DimensionHandle> dimension_handles(const eval::Evaluation& evaluatio
       h.constraint = c.id;
       if (!drive(h, c.dimension->expression, c.dimension->value)) continue;
       h.rate = sh->rate;
+      h.signed_value = signed_dimension(c.kind);
       h.anchor = plane.to_model(sh->anchor);
       h.direction = normalize(plane.to_model(sh->anchor + sh->direction) - h.anchor);
       h.label = feature_label(*tree, sketch_feature) + ": " + placed.label(c.id);
@@ -200,7 +201,8 @@ std::vector<DimensionHandle> dimension_handles(const eval::Evaluation& evaluatio
 }
 
 double dragged_value(const DimensionHandle& handle, double distance, double minimum) {
-  return std::max(minimum, handle.value + handle.rate * distance);
+  const double value = handle.value + handle.rate * distance;
+  return handle.signed_value ? value : std::max(minimum, value);
 }
 
 Command drag_command(const DimensionHandle& h, double value, core::ProductSettings settings) {
