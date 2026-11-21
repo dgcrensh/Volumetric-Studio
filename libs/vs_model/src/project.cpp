@@ -1,11 +1,13 @@
 // Project folders and zip files (project.hpp).
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <functional>
 #include <optional>
 #include <span>
 #include <system_error>
+#include <thread>
 
 #include <fmt/format.h>
 
@@ -88,7 +90,14 @@ Diagnostics write_file(const fs::path& p, std::span<const std::byte> bytes) {
       return out;
     }
   }
-  fs::rename(tmp, p, ec);
+  // Windows refuses to replace a file while another rename is replacing
+  // it (or a scanner holds it open) with "access denied"; that clears in
+  // moments, so try again a few times before giving up.
+  for (int attempt = 0; attempt < 50; ++attempt) {
+    fs::rename(tmp, p, ec);
+    if (!ec) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2 + attempt));
+  }
   if (ec) {
     fs::remove(tmp, ec);
     out.add(io_error(p, "can't replace it"));

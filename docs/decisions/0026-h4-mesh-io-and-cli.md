@@ -103,7 +103,8 @@ repeated" used to read only "0 of N missing").
   `model.project.blob_missing` instead of `bad_alloc`; every directory
   iteration uses the `error_code` overloads; each write has its own
   temporary name (two saves of one zip used to rename each other's file
-  away) and checks `close()`. A manifest `version` above the format's, or
+  away) and checks `close()`; on Windows, where replacing a file another
+  rename is replacing fails for a moment, the rename is retried briefly. A manifest `version` above the format's, or
   not a whole number, is refused (2³² + 1 was read as 1).
 - Cache entries: the same temporary names; a severity or subject kind out
   of range is a miss.
