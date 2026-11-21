@@ -1,20 +1,24 @@
 #include "proc_commands.hpp"
 #include "files.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <optional>
 #include <fstream>
+#include <span>
 #include <sstream>
 #include <string>
 
 #include <fmt/format.h>
 
+#include "vs/core/hash.hpp"
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
 #include "vs/feature/tree.hpp"
 #include "vs/mesh/io.hpp"
+#include "vs/mesh/mesh.hpp"
 #include "vs/model/build.hpp"
 #include "vs/model/check.hpp"
 #include "vs/model/project.hpp"
@@ -61,6 +65,29 @@ void reset_peak_rss() {
 std::string peak_text() {
   const auto mb = peak_rss_mb();
   return mb ? fmt::format("peak RSS {:.0f} MB", *mb) : std::string("peak RSS not measured here");
+}
+
+// Each stage's own peak: the peak since the last reset, then a reset.
+std::string stage_peak() {
+  const auto mb = peak_rss_mb();
+  reset_peak_rss();
+  return mb ? fmt::format(", peak {:.0f} MB", *mb) : std::string();
+}
+
+// A digest of a mesh's exact bits, to compare runs (merge variants,
+// thread counts, compilers).
+std::string mesh_digest(std::span<const core::dvec3> positions, std::span<const mesh::Triangle> triangles) {
+  core::Hasher h;
+  h.add_bytes(positions.data(), positions.size_bytes());
+  h.add_bytes(triangles.data(), triangles.size_bytes());
+  return h.finalize().to_hex().substr(0, 16);
+}
+
+std::string mesh_digest(const mesh::Mesh& m) {
+  core::Hasher h;
+  h.add_bytes(m.positions.data(), m.positions.size() * sizeof(core::fvec3));
+  h.add_bytes(m.indices.data(), m.indices.size() * sizeof(std::uint32_t));
+  return h.finalize().to_hex().substr(0, 16);
 }
 
 std::string setting_text(const proc::Setting& s) {
@@ -256,6 +283,7 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
   // results are dropped when the next no longer needs them, and all of
   // them before the engine runs, so the peaks below are the stages' and
   // the engine's own (H5).
+  reset_peak_rss();
   auto t = std::chrono::steady_clock::now();
   const model::DocumentBuild layout = model::build_layout(doc, settings);
   auto inputs = proc::gather_inputs(doc, layout, 0, settings);
@@ -263,8 +291,13 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
     err << inputs.error().to_string() << "\n";
     return 1;
   }
+  double stages_peak = 0.0;
+  const auto stage_end = [&] {
+    if (const auto mb = peak_rss_mb()) stages_peak = std::max(stages_peak, *mb);
+    return stage_peak();
+  };
   {
-    out << fmt::format("  inputs        {:9.1f} ms  (layout, boundary tessellation)\n", ms_since(t));
+    out << fmt::format("  inputs        {:9.1f} ms  (layout, boundary tessellation{})\n", ms_since(t), stage_end());
     t = std::chrono::steady_clock::now();
     const auto graph = proc::graph_from_json(std::get<model::ProceduralContents>(v.contents).graph);
     const proc::GraphEvaluation ev = proc::evaluate_graph(*graph, *inputs);
@@ -274,39 +307,44 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
       return 1;
     }
     proc::SampledField samples = proc::sample(**ev.contents, *grid, &pool);
-    out << fmt::format("  sample        {:9.1f} ms  ({} x {} x {} = {} samples)\n", ms_since(t),
-                       grid->nx, grid->ny, grid->nz, grid->size());
+    out << fmt::format("  sample        {:9.1f} ms  ({} x {} x {} = {} samples{})\n", ms_since(t),
+                       grid->nx, grid->ny, grid->nz, grid->size(), stage_end());
     t = std::chrono::steady_clock::now();
     {
       proc::SampledField clipped =
           proc::clip_to_boundary(samples, *inputs->boundary, proc::kContentsInset, &pool);
-      out << fmt::format("  clip          {:9.1f} ms\n", ms_since(t));
+      out << fmt::format("  clip          {:9.1f} ms{}\n", ms_since(t), stage_end());
       t = std::chrono::steady_clock::now();
       proc::UnmergedNet unmerged = proc::unmerged_net(clipped, &pool);
-      out << fmt::format("  unmerged net  {:9.1f} ms  ({} triangles)\n", ms_since(t),
-                         unmerged.triangles.size());
+      out << fmt::format("  unmerged net  {:9.1f} ms  ({} triangles, {} vertices, {} cubes{})\n", ms_since(t),
+                         unmerged.triangles.size(), unmerged.sums.size(), unmerged.cubes.size(), stage_end());
       const proc::GridSpec net_grid = clipped.grid;
       clipped = {};
       t = std::chrono::steady_clock::now();
       const proc::FieldMesh nets = proc::merge_net(std::move(unmerged), net_grid, &pool);
-      out << fmt::format("  merge         {:9.1f} ms  ({} triangles)\n", ms_since(t),
-                         nets.triangles.size());
+      out << fmt::format("  merge         {:9.1f} ms  ({} triangles, {} vertices, mesh {}{})\n", ms_since(t),
+                         nets.triangles.size(), nets.positions.size(),
+                         mesh_digest(nets.positions, nets.triangles), stage_end());
     }
     t = std::chrono::steady_clock::now();
     const proc::ContentsMesh cm = proc::mesh_contents(samples, *inputs->boundary, {},
                                                       doc.volume_subject(v.id), &pool);
     out << fmt::format("  mesh contents {:9.1f} ms  (clip, nets, seams, containment moves; {} "
-                       "triangles, {} vertices moved)\n",
-                       ms_since(t), cm.mesh.triangle_count(), cm.moved_vertices);
+                       "triangles, {} vertices moved{})\n",
+                       ms_since(t), cm.mesh.triangle_count(), cm.moved_vertices, stage_end());
     t = std::chrono::steady_clock::now();
     const auto contained = validate::check_containment(
         layout.volumes[0].boundary, validate::MeshView{cm.mesh.positions, cm.mesh.indices, {}},
         doc.volume_subject(v.id), settings,
         [&pool](std::size_t n, const std::function<void(std::size_t)>& task) { pool.run(n, task); });
-    out << fmt::format("  containment   {:9.1f} ms  ({})\n", ms_since(t),
-                       contained.contained ? "contained" : "OUTSIDE");
+    out << fmt::format("  containment   {:9.1f} ms  ({}{})\n", ms_since(t),
+                       contained.contained ? "contained" : "OUTSIDE", stage_end());
   }
-  out << fmt::format("stages      {}\n", peak_text());
+  if (peak_rss_mb()) {
+    out << fmt::format("stages      peak RSS {:.0f} MB\n", stages_peak);
+  } else {
+    out << "stages      peak RSS not measured here\n";
+  }
 
   // And the whole generation through the engine, as a project rebuild runs it.
   reset_peak_rss();
@@ -321,8 +359,8 @@ int run_bench_gyroid(std::span<const std::string_view> args, std::ostream& out, 
     out << "result      failed\n";
     return 1;
   }
-  out << fmt::format("engine      {:.1f} ms total: {} triangles, {} vertices, {}\n", total,
-                     m->triangle_count(), m->vertex_count(), peak_text());
+  out << fmt::format("engine      {:.1f} ms total: {} triangles, {} vertices, mesh {}, {}\n", total,
+                     m->triangle_count(), m->vertex_count(), mesh_digest(*m), peak_text());
   if (const auto& c = result.volumes[0].contents; c && !c->outputs.empty() && c->outputs[0].value) {
     out << fmt::format("mass        {:.1f} g at 1.24 g/cm³\n", std::get<double>(*c->outputs[0].value));
   }

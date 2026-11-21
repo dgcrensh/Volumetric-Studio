@@ -131,6 +131,63 @@ TEST_CASE("Parallel surface nets give the serial reference's mesh on a gyroid",
   require_same(surface_nets(s, &many), ref);
 }
 
+TEST_CASE("The merge gives the serial reference's mesh in slabs of any size (decision 0028)",
+          "[proc][mesher][parallel]") {
+  // Slabs of one, two and three layers put a slab boundary next to every
+  // layer; the waves inside each slab run rows on several threads.
+  std::mt19937_64 rng(28);
+  std::uniform_int_distribution<std::uint32_t> size(1, 11);
+  eval::ThreadPool three(3);
+  eval::ThreadPool many(12);
+  for (int round = 0; round < 1000; ++round) {
+    const SampledField s = random_grid(rng, size(rng), size(rng), size(rng), round % 3);
+    INFO("round " << round);
+    const FieldMesh ref = surface_nets_reference(s);
+    const UnmergedNet net = unmerged_net_cpu(s);
+    for (const std::size_t slab : {1u, 2u, 3u}) {
+      INFO("slab " << slab);
+      require_same(merge_net(net, s.grid, nullptr, nullptr, slab), ref);
+      require_same(merge_net(net, s.grid, &three, nullptr, slab), ref);
+      require_same(merge_net(net, s.grid, &many, nullptr, slab), ref);
+    }
+  }
+  for (int round = 0; round < 6; ++round) {
+    const std::uint32_t n = 30 + static_cast<std::uint32_t>(round) * 4;
+    const SampledField s = random_grid(rng, n + 3, n, n - 4, round % 3);
+    INFO("large round " << round);
+    const FieldMesh ref = surface_nets_reference(s);
+    REQUIRE_FALSE(ref.empty());
+    const UnmergedNet net = unmerged_net_cpu(s, &many);
+    for (const std::size_t slab : {1u, 2u, 5u, 16u, 1000u}) {
+      INFO("slab " << slab);
+      require_same(merge_net(net, s.grid, nullptr, nullptr, slab), ref);
+      require_same(merge_net(net, s.grid, &three, nullptr, slab), ref);
+      require_same(merge_net(net, s.grid, &many, nullptr, slab), ref);
+    }
+  }
+}
+
+TEST_CASE("The unmerged net and the merge hold no spare capacity (decision 0028)", "[proc][mesher][parallel]") {
+  // The net is counted, then filled in place; the merge compacts in place
+  // and copies out what it kept. Neither leaves a second copy or a
+  // doubled vector behind.
+  const auto f = tpms_field(TpmsSurface::Gyroid, 6.0, dvec3{0, 0, 0}, 0.6);
+  const auto grid = grid_covering(core::dbox3::from_min_max({0, 0, 0}, {20, 18, 16}), 0.4);
+  REQUIRE(grid);
+  const SampledField s = sample(*f, *grid);
+  eval::ThreadPool pool(4);
+  UnmergedNet net = unmerged_net_cpu(s, &pool);
+  CHECK(net.sums.capacity() == net.sums.size());
+  CHECK(net.counts.capacity() == net.counts.size());
+  CHECK(net.triangles.capacity() == net.triangles.size());
+  CHECK(net.cubes.capacity() == net.cubes.size());
+  CHECK(net.group_starts.capacity() == net.group_starts.size());
+  const FieldMesh m = merge_net(std::move(net), s.grid, &pool);
+  REQUIRE_FALSE(m.empty());
+  CHECK(m.positions.capacity() == m.positions.size());
+  CHECK(m.triangles.capacity() == m.triangles.size());
+}
+
 namespace {
 
 // Declines everything, counting what it was offered.

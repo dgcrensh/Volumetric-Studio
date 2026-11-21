@@ -2,7 +2,7 @@
 
 Nov 20, 2026 · follows L4 · precedes L5 (configurations and design tables)
 
-**Status: in progress.** H1 done (PR 31, decision 0023); H2 done (PR 32, decision 0024); H3 done (PR 33, decision 0025); H4 done (PR 34, decision 0026); H5 in review (decision 0027).
+**Status: in progress.** H1 done (PR 31, decision 0023); H2 done (PR 32, decision 0024); H3 done (PR 33, decision 0025); H4 done (PR 34, decision 0026); H5 done (PR 35, decision 0027); the merge's peak memory, a follow-up to H5, in review (decision 0028).
 
 **Revised.** The first draft (`1e2a378`) also moved procedural fields and the unmerged surface net to FP32 for the GPU. Review cut that (see "What was cut" below) and reordered the phases so that everything a Linux cloud session can build and test runs first, and the work that needs the Windows desktop (a GPU, the Qt app, `[gui]` suites) is grouped at the end. Dallas accepted the revision on Nov 20, 2026.
 
@@ -165,7 +165,7 @@ H1 CI & core safety ──> H2 design-rule bypasses ──> H3 determinism & cac
 - `weld()` (`weld.cpp:70-119`) takes `std::span<const Mesh* const>` (no copy in `combine.cpp:108`) and indexes only defect edges and vertices (`weld.cpp:250-264`).
 - `pln.Location()` instead of `kernel::face_plane()` in `faces_of()` (`rebuild.cpp:56-59`); multi-tool `Builder::merge()` for multi-profile extrudes and revolves (`L942-948, 1000-1006`); one `build_graph()` in `VariableTable::evaluate()` (`variables.cpp:305-306`).
 - Batch canonicalised floats into BLAKE3 blocks in `SampledField::hash()` (`field.cpp:479`); `format_to` and `reserve` in the 3MF and STL readers and writers.
-- **The merge** is the largest remaining meshing stage (3.1 s of 10.8 s on the 100 mm gyroid, decision 0019) and stays exact; profile it here and note any further win for a later plan.
+- **The merge** is the largest remaining meshing stage (3.1 s of 10.8 s on the 100 mm gyroid, decision 0019) and stays exact; profile it here and note any further win for a later plan. (Done after H5: merged in slabs, decision 0028.)
 
 ### Qt-free app fixes (`vs_app_core`)
 - `sketch_editor.cpp`: signed drag clamping and degenerate-click undo steps.
