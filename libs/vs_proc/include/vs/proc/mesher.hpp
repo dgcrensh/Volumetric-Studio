@@ -112,11 +112,17 @@ FieldMesh surface_nets(const SampledField& samples, eval::ThreadPool* pool = nul
 // The merge is not independent: whether a collapse in one cube passes the
 // link condition depends on collapses already made in the cubes round it.
 // But only on those: a triangle's vertices lie in cubes sharing a grid
-// edge. So merge_net() visits the cubes in waves, cube (i, j, k) in wave
-// i + 3j + 9k: every neighbour that the serial order visits first is in an
-// earlier wave, and two cubes of one wave are at least three apart, so
-// they touch nothing in common and run in parallel without locks. The
-// result is the serial merge's, bit for bit.
+// edge, so cubes three apart touch nothing in common. merge_net() goes up
+// the grid in slabs of whole cube layers, one after another, and inside a
+// slab merges whole rows of cubes (along x, each in grid order) in waves,
+// row (j, k) in wave j + 3k: every row that the serial order visits first
+// and that touches it is in an earlier wave, and two rows of one wave are
+// three rows or layers apart, so they run in parallel without locks. The
+// result is the serial merge's, bit for bit. A slab only needs the fans
+// (triangles round each vertex) of its own layers and one each side, and
+// the vertices and triangles below it are compacted in place as it goes,
+// so the merge needs little more memory than the net it is given
+// (decision 0028).
 struct UnmergedNet {
   std::vector<dvec3> sums;             // per vertex: the sum of its crossing points
   std::vector<std::uint8_t> counts;    // per vertex: how many (the vertex is sum / count)
@@ -139,9 +145,13 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
                              const eval::CancellationToken* cancel = nullptr);
 
 // Merges each cube's vertices (see surface_nets() above) and compacts.
-// `grid` is the grid the net was made on.
+// `grid` is the grid the net was made on. `slab_layers` is how many cube
+// layers a slab takes: the result is the same for any value (tests vary
+// it); more costs more memory and gives the waves more rows.
+inline constexpr std::size_t kMergeSlabLayers = 16;
 FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool = nullptr,
-                    const eval::CancellationToken* cancel = nullptr);
+                    const eval::CancellationToken* cancel = nullptr,
+                    std::size_t slab_layers = kMergeSlabLayers);
 
 // M11's serial surface nets, unchanged: what surface_nets() must give.
 // For tests and self-checks.

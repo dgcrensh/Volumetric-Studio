@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -13,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -21,6 +23,7 @@
 
 #include "surface_nets_grid.hpp"
 #include "vs/mesh/topology.hpp"
+
 
 namespace vs::proc {
 
@@ -80,37 +83,65 @@ const NetTables& net_tables() {
 // --- the unmerged net ------------------------------------------------------------------
 //
 // The serial loops of surface_nets_reference(), split by z: each layer of
-// cubes (vertices) or of grid points (polygons) fills arrays of its own,
-// and the layers are joined in order. Every value is computed by the same
-// expressions from the same samples; only where it is stored changes.
+// cubes (vertices) or of grid points (polygons) is counted first, then
+// filled straight into the net's arrays at its offset, so no array exists
+// twice (decision 0028). Every value is computed by the same expressions
+// from the same samples; only where it is stored changes.
 
 namespace {
 
-// One z layer of cubes: its vertices and crossed cubes, ids local.
-struct CubeLayer {
-  std::vector<dvec3> sums;
-  std::vector<std::uint8_t> counts;
-  std::vector<std::uint32_t> firsts;  // each crossed cube's first vertex
-  std::vector<std::uint64_t> cubes;
-  std::vector<std::array<std::uint32_t, 6>> cells;  // each crossed cube's six tetrahedra's vertices
-};
+// Which of a cube's six tetrahedra the surface crosses (bit t), from the
+// mask of its corners inside: those whose corners aren't all on one side.
+unsigned crossed_tets(unsigned mask) {
+  unsigned out = 0;
+  for (Index t = 0; t < 6; ++t) {
+    const auto c = tet_corners(t);
+    unsigned in = 0;
+    for (const Index k : c) in += (mask >> k) & 1u;
+    if (in != 0 && in != 4) out |= 1u << t;
+  }
+  return out;
+}
 
-void cube_layer(const Padded& g, std::int64_t k, CubeLayer& out) {
+unsigned cube_mask(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t k, std::array<float, 8>& v) {
+  unsigned mask = 0;
+  for (Index c = 0; c < 8; ++c) {
+    v[c] = g.at(i + bit(c, 0), j + bit(c, 1), k + bit(c, 2));
+    if (inside(v[c])) mask |= 1u << c;
+  }
+  return mask;
+}
+
+// One z layer of cubes: how many vertices and crossed cubes it has.
+std::pair<std::size_t, std::size_t> count_cube_layer(const Padded& g, std::int64_t k) {
+  std::size_t vertices = 0;
+  std::size_t cubes = 0;
+  std::array<float, 8> v{};
   for (std::int64_t j = 0; j + 1 < g.n[1]; ++j) {
     for (std::int64_t i = 0; i + 1 < g.n[0]; ++i) {
-      std::array<float, 8> v{};
-      unsigned mask = 0;
-      for (Index c = 0; c < 8; ++c) {
-        v[c] = g.at(i + bit(c, 0), j + bit(c, 1), k + bit(c, 2));
-        if (inside(v[c])) mask |= 1u << c;
-      }
+      const unsigned mask = cube_mask(g, i, j, k, v);
+      if (mask == 0 || mask == 0xffu) continue;
+      ++cubes;
+      vertices += static_cast<std::size_t>(std::popcount(crossed_tets(mask)));
+    }
+  }
+  return {vertices, cubes};
+}
+
+// One z layer of cubes, written at vertex v0 and crossed cube c0.
+void cube_layer(const Padded& g, std::int64_t k, std::uint32_t v0, std::size_t c0, UnmergedNet& out,
+                std::vector<std::uint8_t>& tets, std::vector<std::uint32_t>& cell_of) {
+  std::uint32_t vertex = v0;
+  std::size_t cube = c0;
+  std::array<float, 8> v{};
+  for (std::int64_t j = 0; j + 1 < g.n[1]; ++j) {
+    for (std::int64_t i = 0; i + 1 < g.n[0]; ++i) {
+      const unsigned mask = cube_mask(g, i, j, k, v);
       if (mask == 0 || mask == 0xffu) continue;
       const auto in = [&](Index c) { return ((mask >> c) & 1u) != 0; };
-      std::array<std::uint32_t, 6> ids{};
-      ids.fill(kNone);
       // Every crossed cube has a crossed cube edge, and every cube edge is
       // an edge of one of its tetrahedra: at least one vertex.
-      out.firsts.push_back(static_cast<std::uint32_t>(out.sums.size()));
+      out.group_starts[cube] = vertex;
       for (Index t = 0; t < 6; ++t) {
         const auto c = tet_corners(t);
         dvec3 sum{};
@@ -129,12 +160,15 @@ void cube_layer(const Padded& g, std::int64_t k, CubeLayer& out) {
           }
         }
         if (n == 0.0) continue;
-        ids[t] = static_cast<std::uint32_t>(out.sums.size());
-        out.sums.push_back(sum);
-        out.counts.push_back(static_cast<std::uint8_t>(n));
+        out.sums[vertex] = sum;
+        out.counts[vertex] = static_cast<std::uint8_t>(n);
+        ++vertex;
       }
-      out.cubes.push_back(g.cell_key(i, j, k));
-      out.cells.push_back(ids);
+      const std::uint64_t key = g.cell_key(i, j, k);
+      out.cubes[cube] = key;
+      tets[cube] = static_cast<std::uint8_t>(crossed_tets(mask));
+      cell_of[key] = static_cast<std::uint32_t>(cube);
+      ++cube;
     }
   }
 }
@@ -149,13 +183,23 @@ struct Centres {
   dvec3 operator[](std::uint32_t v) const { return sums[v] * (1.0 / static_cast<double>(counts[v])); }
 };
 
-// The fan of one crossed edge's polygon, appended to `out` (the serial
-// loop's body for one grid point and direction).
-void edge_polygon(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t k, bool in0, Index di,
-                  const std::vector<std::uint32_t>& cell_of,
-                  const std::vector<std::array<std::uint32_t, 6>>& cells,
-                  const Centres& P, std::vector<std::uint32_t>& polygon,
-                  std::vector<Triangle>& out) {
+// Tetrahedron t of crossed cube c's vertex (kNone: not crossed): the
+// cube's vertices are its crossed tetrahedra's, in order.
+struct CubeVertices {
+  const std::vector<std::uint32_t>& group_starts;
+  const std::vector<std::uint8_t>& tets;
+  std::uint32_t operator()(std::uint32_t c, Index t) const {
+    const unsigned m = tets[c];
+    if (((m >> t) & 1u) == 0) return kNone;
+    return group_starts[c] + static_cast<std::uint32_t>(std::popcount(m & ((1u << t) - 1u)));
+  }
+};
+
+// The polygon round one crossed edge (the serial loop's lookups), into
+// `polygon`; false if it is incomplete (which can't happen) or too small.
+bool edge_polygon(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t k, Index di,
+                  const std::vector<std::uint32_t>& cell_of, const CubeVertices& vertex_of,
+                  std::vector<std::uint32_t>& polygon) {
   const Vec3i p{i, j, k};
   polygon.clear();
   for (const auto& [offset, t] : rounds()[di].tets) {
@@ -165,10 +209,16 @@ void edge_polygon(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t 
       if (m[axis] < 0 || m[axis] + 1 >= g.n[axis]) ok = false;
     }
     const std::uint32_t c = ok ? cell_of[g.cell_key(m[0], m[1], m[2])] : kNone;
-    if (c == kNone || cells[c][t] == kNone) break;  // can't happen
-    polygon.push_back(cells[c][t]);
+    const std::uint32_t v = c == kNone ? kNone : vertex_of(c, t);
+    if (v == kNone) break;  // can't happen
+    polygon.push_back(v);
   }
-  if (polygon.size() != rounds()[di].tets.size() || polygon.size() < 3) return;
+  return polygon.size() == rounds()[di].tets.size() && polygon.size() >= 3;
+}
+
+// The fan of a polygon (the serial loop's body for one grid point and
+// direction), written at out[0], out[1], ...
+void fan_polygon(std::vector<std::uint32_t>& polygon, bool in0, const Centres& P, Triangle* out) {
   if (!in0) std::reverse(polygon.begin(), polygon.end());  // inside at the far end
   const Index n = polygon.size();
   Index apex = 0;
@@ -185,14 +235,16 @@ void edge_polygon(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t 
     }
   }
   for (Index f = 1; f + 1 < n; ++f) {
-    out.push_back({polygon[apex], polygon[(apex + f) % n], polygon[(apex + f + 1) % n]});
+    *out++ = {polygon[apex], polygon[(apex + f) % n], polygon[(apex + f + 1) % n]};
   }
 }
 
-void point_layer(const Padded& g, std::int64_t k, const std::vector<std::uint32_t>& cell_of,
-                 const std::vector<std::array<std::uint32_t, 6>>& cells, const Centres& P,
-                 std::vector<Triangle>& out) {
+// One z layer of grid points: with `out` null, how many triangles it
+// makes; else writes them there.
+std::size_t point_layer(const Padded& g, std::int64_t k, const std::vector<std::uint32_t>& cell_of,
+                        const CubeVertices& vertex_of, const Centres& P, Triangle* out) {
   std::vector<std::uint32_t> polygon;
+  std::size_t made = 0;
   for (std::int64_t j = 0; j < g.n[1]; ++j) {
     for (std::int64_t i = 0; i < g.n[0]; ++i) {
       const bool in0 = inside(g.at(i, j, k));
@@ -201,10 +253,13 @@ void point_layer(const Padded& g, std::int64_t k, const std::vector<std::uint32_
         const Vec3i q{i + bit(d, 0), j + bit(d, 1), k + bit(d, 2)};
         if (q[0] >= g.n[0] || q[1] >= g.n[1] || q[2] >= g.n[2]) continue;
         if (inside(g.at(q[0], q[1], q[2])) == in0) continue;
-        edge_polygon(g, i, j, k, in0, di, cell_of, cells, P, polygon, out);
+        if (!edge_polygon(g, i, j, k, di, cell_of, vertex_of, polygon)) continue;
+        if (out != nullptr) fan_polygon(polygon, in0, P, out + made);
+        made += polygon.size() - 2;
       }
     }
   }
+  return made;
 }
 
 bool stopped(const eval::CancellationToken* cancel) { return cancel != nullptr && cancel->cancelled(); }
@@ -234,16 +289,16 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
   const auto cube_layers = static_cast<std::size_t>(g.n[2] - 1);
   const auto point_layers = static_cast<std::size_t>(g.n[2]);
 
-  // Vertices, layer by layer, then joined.
-  std::vector<CubeLayer> layers(cube_layers);
-  each(pool, cube_layers, [&](std::size_t k) { cube_layer(g, static_cast<std::int64_t>(k), layers[k]); },
-       cancel);
-  if (stopped(cancel)) return {};
+  // Vertices: each layer counted, then filled at its offsets.
   std::vector<std::size_t> vertex_at(cube_layers + 1, 0);
   std::vector<std::size_t> cube_at(cube_layers + 1, 0);
+  each(pool, cube_layers, [&](std::size_t k) {
+    std::tie(vertex_at[k + 1], cube_at[k + 1]) = count_cube_layer(g, static_cast<std::int64_t>(k));
+  }, cancel);
+  if (stopped(cancel)) return {};
   for (std::size_t k = 0; k < cube_layers; ++k) {
-    vertex_at[k + 1] = vertex_at[k] + layers[k].sums.size();
-    cube_at[k + 1] = cube_at[k] + layers[k].cubes.size();
+    vertex_at[k + 1] += vertex_at[k];
+    cube_at[k + 1] += cube_at[k];
   }
   const std::size_t nv = vertex_at.back();
   const std::size_t nc = cube_at.back();
@@ -251,44 +306,30 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
   out.counts.resize(nv);
   out.group_starts.resize(nc + 1);
   out.cubes.resize(nc);
-  std::vector<std::array<std::uint32_t, 6>> cells(nc);
+  std::vector<std::uint8_t> tets(nc);
   std::vector<std::uint32_t> cell_of(
       static_cast<std::size_t>((g.n[0] - 1) * (g.n[1] - 1) * (g.n[2] - 1)), kNone);
   each(pool, cube_layers, [&](std::size_t k) {
-    CubeLayer& l = layers[k];
-    const auto v0 = static_cast<std::uint32_t>(vertex_at[k]);
-    const std::size_t c0 = cube_at[k];
-    for (std::size_t v = 0; v < l.sums.size(); ++v) {
-      out.sums[v0 + v] = l.sums[v];
-      out.counts[v0 + v] = l.counts[v];
-    }
-    for (std::size_t c = 0; c < l.cubes.size(); ++c) {
-      out.group_starts[c0 + c] = v0 + l.firsts[c];
-      out.cubes[c0 + c] = l.cubes[c];
-      cell_of[l.cubes[c]] = static_cast<std::uint32_t>(c0 + c);
-      for (Index t = 0; t < 6; ++t) {
-        cells[c0 + c][t] = l.cells[c][t] == kNone ? kNone : v0 + l.cells[c][t];
-      }
-    }
-    l = CubeLayer{};
+    cube_layer(g, static_cast<std::int64_t>(k), static_cast<std::uint32_t>(vertex_at[k]), cube_at[k], out, tets,
+               cell_of);
   }, cancel);
   if (stopped(cancel)) return {};
   out.group_starts[nc] = static_cast<std::uint32_t>(nv);
 
-  // Polygons, layer by layer, then joined.
-  std::vector<std::vector<Triangle>> tris(point_layers);
+  // Polygons: each layer counted, then filled at its offset.
   const Centres positions{out.sums, out.counts};
+  const CubeVertices vertex_of{out.group_starts, tets};
+  std::vector<std::size_t> tri_at(point_layers + 1, 0);
   each(pool, point_layers, [&](std::size_t k) {
-    point_layer(g, static_cast<std::int64_t>(k), cell_of, cells, positions, tris[k]);
+    tri_at[k + 1] = point_layer(g, static_cast<std::int64_t>(k), cell_of, vertex_of, positions, nullptr);
   }, cancel);
   if (stopped(cancel)) return {};
-  std::vector<std::size_t> tri_at(point_layers + 1, 0);
-  for (std::size_t k = 0; k < point_layers; ++k) tri_at[k + 1] = tri_at[k] + tris[k].size();
+  for (std::size_t k = 0; k < point_layers; ++k) tri_at[k + 1] += tri_at[k];
   out.triangles.resize(tri_at.back());
   each(pool, point_layers, [&](std::size_t k) {
-    std::copy(tris[k].begin(), tris[k].end(), out.triangles.begin() + static_cast<std::ptrdiff_t>(tri_at[k]));
-    tris[k] = {};
-  });
+    point_layer(g, static_cast<std::int64_t>(k), cell_of, vertex_of, positions, out.triangles.data() + tri_at[k]);
+  }, cancel);
+  if (stopped(cancel)) return {};
   return out;
 }
 
@@ -352,7 +393,7 @@ std::vector<std::size_t> offsets(eval::ThreadPool* pool, std::size_t n, const Ke
 }
 
 // Storage that never moves once handed out, for fans that outgrow their
-// room. One per worker.
+// room. One per worker; emptied between slabs.
 class Arena {
  public:
   std::uint32_t* allocate(std::size_t n) {
@@ -365,6 +406,11 @@ class Arena {
     used_ += n;
     return p;
   }
+  void reset() {
+    blocks_.clear();
+    used_ = 0;
+    size_ = 0;
+  }
 
  private:
   static constexpr std::size_t kBlock = std::size_t{1} << 16;
@@ -373,23 +419,31 @@ class Arena {
   std::size_t size_ = 0;
 };
 
-// The triangles round each vertex: a run per vertex, first in one flat
-// array with room for its first triangles; a run that outgrows its room
-// moves to the caller's arena with twice the room. Workers growing
-// different vertices' runs never touch each other's memory. (Millions of
-// small vectors cost more than the merging itself.)
+// A dead triangle (collapsed away) is marked in place.
+constexpr Triangle kDeadTriangle{kNone, kNone, kNone};
+bool dead(const Triangle& t) { return t[0] == kNone; }
+
+// The live triangles round each vertex of a window [base, base + n) of
+// vertices, from the triangles [tb, te) (which hold every live triangle
+// touching the window): a run per vertex, first in one flat array with
+// room for its first triangles; a run that outgrows its room moves to the
+// caller's arena with twice the room. Workers growing different vertices'
+// runs never touch each other's memory. (Millions of small vectors cost
+// more than the merging itself.) The merge never depends on the order of
+// a run (it sorts what it reads), so a window's runs may be built afresh
+// from the triangles at any time; they are built in increasing order.
 class Fans {
  public:
-  // Each run in increasing triangle order, however many threads fill it.
   // A cancelled `cancel` leaves the fans unfinished: the caller drops them.
-  Fans(std::size_t vertices, const std::vector<Triangle>& triangles, eval::ThreadPool* pool,
-       const eval::CancellationToken* cancel = nullptr)
-      : run_(vertices, nullptr), size_(vertices, 0), room_(vertices, 0) {
-    in_chunks(pool, triangles.size(), [&](std::size_t b, std::size_t e) {
+  Fans(std::uint32_t base, std::size_t vertices, const std::vector<Triangle>& triangles, std::size_t tb,
+       std::size_t te, eval::ThreadPool* pool, const eval::CancellationToken* cancel = nullptr)
+      : base_(base), run_(vertices, nullptr), size_(vertices, 0), room_(vertices, 0) {
+    const auto in = [&](std::uint32_t v) { return v - base_ < size_.size(); };  // dead: kNone, never in
+    in_chunks(pool, te - tb, [&](std::size_t b, std::size_t e) {
       if (stopped(cancel)) return;
-      for (std::size_t t = b; t < e; ++t) {
+      for (std::size_t t = tb + b; t < tb + e; ++t) {
         for (const std::uint32_t v : triangles[t]) {
-          std::atomic_ref<std::uint32_t>(room_[v]).fetch_add(1, std::memory_order_relaxed);
+          if (in(v)) std::atomic_ref<std::uint32_t>(room_[v - base_]).fetch_add(1, std::memory_order_relaxed);
         }
       }
     });
@@ -402,12 +456,14 @@ class Fans {
       run_[v] = data_.data() + at;
       at += room_[v];
     }
-    in_chunks(pool, triangles.size(), [&](std::size_t b, std::size_t e) {
+    in_chunks(pool, te - tb, [&](std::size_t b, std::size_t e) {
       if (stopped(cancel)) return;
-      for (std::size_t t = b; t < e; ++t) {
+      for (std::size_t t = tb + b; t < tb + e; ++t) {
         for (const std::uint32_t v : triangles[t]) {
-          const std::uint32_t s = std::atomic_ref<std::uint32_t>(size_[v]).fetch_add(1, std::memory_order_relaxed);
-          run_[v][s] = static_cast<std::uint32_t>(t);
+          if (!in(v)) continue;
+          const std::uint32_t s =
+              std::atomic_ref<std::uint32_t>(size_[v - base_]).fetch_add(1, std::memory_order_relaxed);
+          run_[v - base_][s] = static_cast<std::uint32_t>(t);
         }
       }
     });
@@ -419,9 +475,10 @@ class Fans {
     }
   }
   [[nodiscard]] std::span<const std::uint32_t> operator[](std::uint32_t v) const {
-    return {run_[v], size_[v]};
+    return {run_[v - base_], size_[v - base_]};
   }
   void push_back(std::uint32_t v, std::uint32_t t, Arena& arena) {
+    v -= base_;
     if (size_[v] == room_[v]) {
       room_[v] = std::max<std::uint32_t>(2 * room_[v], 4);
       std::uint32_t* to = arena.allocate(room_[v]);
@@ -432,21 +489,16 @@ class Fans {
   }
   // Removes t from v's run, keeping the others' order.
   void erase(std::uint32_t v, std::uint32_t t) {
+    v -= base_;
     std::uint32_t* first = run_[v];
     std::uint32_t* last = first + size_[v];
     size_[v] = static_cast<std::uint32_t>(std::remove(first, last, t) - first);
   }
-  void clear(std::uint32_t v) { size_[v] = 0; }
-  [[nodiscard]] std::uint32_t size(std::uint32_t v) const { return size_[v]; }
-  // Frees the runs, keeping only their sizes (H5): compaction needs no more,
-  // and their arrays are the largest of the merge.
-  void release_runs() {
-    std::vector<std::uint32_t*>().swap(run_);
-    std::vector<std::uint32_t>().swap(room_);
-    std::vector<std::uint32_t>().swap(data_);
-  }
+  void clear(std::uint32_t v) { size_[v - base_] = 0; }
+  [[nodiscard]] std::uint32_t size(std::uint32_t v) const { return size_[v - base_]; }
 
  private:
+  std::uint32_t base_;
   std::vector<std::uint32_t*> run_;
   std::vector<std::uint32_t> size_, room_;
   std::vector<std::uint32_t> data_;
@@ -463,17 +515,15 @@ struct MergeWorker {
   std::uint32_t nu_of = kNone;
 };
 
+// The collapses, on the net's own arrays: a vertex is dead once its count
+// is 0 (counts are at most 24, four crossings in each of a cube's six
+// tetrahedra, so a byte holds them), a triangle once it is kDeadTriangle.
 class Merger {
  public:
-  Merger(FieldMesh& m, UnmergedNet& net, eval::ThreadPool* pool,
-         const eval::CancellationToken* cancel = nullptr)
-      : m_(m),
-        pool_(pool),
-        sum_(std::move(net.sums)),
-        count_(net.counts.begin(), net.counts.end()),
-        tri_alive_(m.triangles.size(), 1),
-        alive_(sum_.size(), 1),
-        fan_(sum_.size(), m.triangles, pool, cancel) {}
+  Merger(std::vector<Triangle>& triangles, std::vector<dvec3>& sums, std::vector<std::uint8_t>& counts)
+      : tri_(triangles), sum_(sums), count_(counts) {}
+
+  void set_fans(Fans* fans) { fan_ = fans; }
 
   // The serial loop's body for one cube's vertices [first, end).
   void merge_cube(std::uint32_t first, std::uint32_t end, MergeWorker& w) {
@@ -481,54 +531,19 @@ class Merger {
       changed = false;
       w.nu_of = kNone;
       for (std::uint32_t u = first; u < end; ++u) {
-        if (alive_[u] == 0) continue;
+        if (count_[u] == 0) continue;
         for (std::uint32_t x = u + 1; x < end; ++x) {
-          if (alive_[x] != 0 && collapse(u, x, w)) changed = true;
+          if (count_[x] != 0 && collapse(u, x, w)) changed = true;
         }
       }
     }
   }
 
-  // Compact, in order: each chunk counts what it keeps, then writes it at
-  // its offset.
-  void finish() {
-    const std::size_t nv = sum_.size();
-    // Only the runs' sizes from here on: free the rest before the
-    // compacted arrays are made, so the two never coexist (H5).
-    fan_.release_runs();
-    const auto keep_v = [&](std::size_t v) { return alive_[v] != 0 && fan_.size(static_cast<std::uint32_t>(v)) != 0; };
-    const std::vector<std::size_t> v_at = offsets(pool_, nv, keep_v);
-    std::vector<std::uint32_t> index(nv, kNone);
-    std::vector<dvec3> positions(v_at.back());
-    in_chunks(pool_, nv, [&](std::size_t b, std::size_t e) {
-      std::size_t at = v_at[b / kChunk];
-      for (std::size_t v = b; v < e; ++v) {
-        if (!keep_v(v)) continue;
-        index[v] = static_cast<std::uint32_t>(at);
-        positions[at++] = sum_[v] * (1.0 / static_cast<double>(count_[v]));
-      }
-    });
-    const std::size_t nt = m_.triangles.size();
-    const auto keep_t = [&](std::size_t t) { return tri_alive_[t] != 0; };
-    const std::vector<std::size_t> t_at = offsets(pool_, nt, keep_t);
-    std::vector<Triangle> triangles(t_at.back());
-    in_chunks(pool_, nt, [&](std::size_t b, std::size_t e) {
-      std::size_t at = t_at[b / kChunk];
-      for (std::size_t t = b; t < e; ++t) {
-        if (!keep_t(t)) continue;
-        const Triangle& tri = m_.triangles[t];
-        triangles[at++] = {index[tri[0]], index[tri[1]], index[tri[2]]};
-      }
-    });
-    m_.positions = std::move(positions);
-    m_.triangles = std::move(triangles);
-  }
-
  private:
   void neighbours(std::uint32_t v, std::vector<std::uint32_t>& out) const {
     out.clear();
-    for (const std::uint32_t t : fan_[v]) {
-      for (const std::uint32_t x : m_.triangles[t]) {
+    for (const std::uint32_t t : (*fan_)[v]) {
+      for (const std::uint32_t x : tri_[t]) {
         if (x != v) out.push_back(x);
       }
     }
@@ -536,18 +551,19 @@ class Merger {
     out.erase(std::unique(out.begin(), out.end()), out.end());
   }
 
-  // Collapses w into u if that keeps the mesh manifold.
+  // Collapses x into u if that keeps the mesh manifold.
   bool collapse(std::uint32_t u, std::uint32_t x, MergeWorker& w) {
+    Fans& fan = *fan_;
     auto& shared = w.shared;
     shared.clear();
-    for (const std::uint32_t t : fan_[x]) {
-      const Triangle& tri = m_.triangles[t];
+    for (const std::uint32_t t : fan[x]) {
+      const Triangle& tri = tri_[t];
       if (tri[0] == u || tri[1] == u || tri[2] == u) shared.push_back(t);
     }
     if (shared.size() != 2) return false;  // no edge (or not a manifold one)
     std::array<std::uint32_t, 2> opposite{};
     for (std::size_t s = 0; s < 2; ++s) {
-      for (const std::uint32_t y : m_.triangles[shared[s]]) {
+      for (const std::uint32_t y : tri_[shared[s]]) {
         if (y != u && y != x) opposite[s] = y;
       }
     }
@@ -564,23 +580,23 @@ class Merger {
     if (w.common.size() != 2 || w.common[0] != opposite[0] || w.common[1] != opposite[1]) return false;
     if (w.nu.size() + w.nw.size() - 2 - 2 < 3) return false;  // would flatten a tetrahedron
     for (const std::uint32_t t : shared) {
-      tri_alive_[t] = 0;
-      for (const std::uint32_t y : m_.triangles[t]) {
-        if (y != x) fan_.erase(y, t);
+      for (const std::uint32_t y : tri_[t]) {
+        if (y != x) fan.erase(y, t);
       }
+      tri_[t] = kDeadTriangle;
     }
-    w.moved.assign(fan_[x].begin(), fan_[x].end());
+    w.moved.assign(fan[x].begin(), fan[x].end());
     for (const std::uint32_t t : w.moved) {
-      if (tri_alive_[t] == 0) continue;
-      for (std::uint32_t& y : m_.triangles[t]) {
+      if (dead(tri_[t])) continue;
+      for (std::uint32_t& y : tri_[t]) {
         if (y == x) y = u;
       }
-      fan_.push_back(u, t, w.arena);
+      fan.push_back(u, t, w.arena);
     }
-    fan_.clear(x);
-    alive_[x] = 0;
+    fan.clear(x);
     sum_[u] = sum_[u] + sum_[x];
-    count_[u] += count_[x];
+    count_[u] = static_cast<std::uint8_t>(count_[u] + count_[x]);
+    count_[x] = 0;
     w.merged.clear();
     std::set_union(w.nu.begin(), w.nu.end(), w.nw.begin(), w.nw.end(), std::back_inserter(w.merged));
     std::erase_if(w.merged, [&](std::uint32_t y) { return y == u || y == x; });
@@ -588,116 +604,239 @@ class Merger {
     return true;
   }
 
-  FieldMesh& m_;
-  eval::ThreadPool* pool_;
-  std::vector<dvec3> sum_;
-  std::vector<std::uint32_t> count_;  // exact sums of small counts, as the doubles were (H5)
-  std::vector<std::uint8_t> tri_alive_;  // bytes, not bits: workers write neighbouring entries
-  std::vector<std::uint8_t> alive_;
-  Fans fan_;
+  std::vector<Triangle>& tri_;
+  std::vector<dvec3>& sum_;
+  std::vector<std::uint8_t>& count_;
+  Fans* fan_ = nullptr;
 };
+
+// Workers' arenas and scratch, handed to each chunk of a wave.
+class WorkerPool {
+ public:
+  MergeWorker* acquire() {
+    const std::lock_guard lock(mutex_);
+    if (idle_.empty()) {
+      workers_.push_back(std::make_unique<MergeWorker>());
+      return workers_.back().get();
+    }
+    MergeWorker* w = idle_.back();
+    idle_.pop_back();
+    return w;
+  }
+  void release(MergeWorker* w) {
+    const std::lock_guard lock(mutex_);
+    idle_.push_back(w);
+  }
+  // Between slabs: the arenas hold runs of fans that are gone.
+  void reset_arenas() {
+    for (const auto& w : workers_) w->arena.reset();
+  }
+
+ private:
+  std::vector<std::unique_ptr<MergeWorker>> workers_;
+  std::vector<MergeWorker*> idle_;
+  std::mutex mutex_;
+};
+
 
 }  // namespace
 
+// The merge in slabs of whole cube layers, bottom up (decision 0028).
+// Collapses in a cube touch only its own vertices and the fans of
+// vertices in the cubes round it, and every cube's neighbours below come
+// first in the serial order, so running the slabs one after another
+// changes nothing; inside a slab, rows of cubes run in waves. A slab
+// needs the fans of its own layers and of one layer each side, so those
+// are all the fans there ever are; once a slab is done, the layers below
+// its last are final, and their vertices and the triangles that use only
+// final layers are compacted in place, to the front of the net's own
+// arrays.
 FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool,
-                    const eval::CancellationToken* cancel) {
+                    const eval::CancellationToken* cancel, std::size_t slab_layers) {
   FieldMesh out;
   if (net.triangles.empty() || net.cubes.empty() || stopped(cancel)) return out;
-  out.triangles = std::move(net.triangles);
-  Merger merger(out, net, pool, cancel);
-  if (stopped(cancel)) return {};
-  std::vector<std::uint8_t>().swap(net.counts);  // the merger has its own (H5)
-  const std::size_t cubes = net.cubes.size();
+  const std::uint64_t nx = std::uint64_t{grid.nx} + 1;  // cubes of the padded grid
+  const std::uint64_t ny = std::uint64_t{grid.ny} + 1;
+
+  // The layers that have crossed cubes, each with its first cube, and the
+  // number of cubes after the last: memory follows the crossings, not the
+  // grid's height (H3).
+  std::vector<std::uint64_t> layer;
+  std::vector<std::size_t> layer_cube;
+  for (std::size_t c = 0; c < net.cubes.size(); ++c) {
+    const std::uint64_t k = net.cubes[c] / (nx * ny);
+    if (layer.empty() || layer.back() != k) {
+      layer.push_back(k);
+      layer_cube.push_back(c);
+    }
+  }
+  layer_cube.push_back(net.cubes.size());
+  // The first crossed cube in layer k or above, and its first vertex.
+  const auto cube_from = [&](std::int64_t k) {
+    if (k < 0) return std::size_t{0};
+    const auto at = std::lower_bound(layer.begin(), layer.end(), static_cast<std::uint64_t>(k));
+    return layer_cube[static_cast<std::size_t>(at - layer.begin())];
+  };
+  const auto vat = [&](std::int64_t k) { return net.group_starts[cube_from(k)]; };
+
+  std::vector<Triangle>& tri = net.triangles;
+  std::vector<dvec3>& sum = net.sums;
+  std::vector<std::uint8_t>& count = net.counts;
+  const std::size_t nt = tri.size();
+  const auto top = [&](std::size_t t) { return std::max({tri[t][0], tri[t][1], tri[t][2]}); };
   const auto first = [&](std::size_t c) { return net.group_starts[c]; };
   const auto end = [&](std::size_t c) { return net.group_starts[c + 1]; };
 
-  if (pool == nullptr) {
-    MergeWorker w;
-    constexpr std::size_t kCheckEvery = 4096;  // cubes between looks at the token
-    for (std::size_t c = 0; c < cubes; ++c) {
-      if (c % kCheckEvery == 0 && stopped(cancel)) return {};
-      merger.merge_cube(first(c), end(c), w);
-    }
-  } else {
-    // Cube (i, j, k) of the padded grid goes in wave i + 3j + 9k; the
-    // cubes of each wave in grid order. `order` lists the crossed cubes
-    // wave by wave and `runs` where each non-empty wave starts in it. A
-    // counting sort over every wave number when they're no more than the
-    // cubes; otherwise (a long, thin grid with few crossings, where the
-    // waves along it far outnumber the cubes, H3) a sort of the cubes'
-    // waves, so memory follows the cubes, not the grid's length.
-    const std::uint64_t nx = std::uint64_t{grid.nx} + 1;  // cubes of the padded grid
-    const std::uint64_t ny = std::uint64_t{grid.ny} + 1;
-    const std::uint64_t nz = std::uint64_t{grid.nz} + 1;
-    const std::uint64_t waves = (nx - 1) + 3 * (ny - 1) + 9 * (nz - 1) + 1;
-    const auto wave_of = [&](std::size_t c) {
-      const std::uint64_t key = net.cubes[c];
-      return key % nx + 3 * ((key / nx) % ny) + 9 * (key / (nx * ny));
-    };
-    std::vector<std::uint32_t> order(cubes);
-    std::vector<std::size_t> runs;
-    if (waves <= cubes) {
-      std::vector<std::uint32_t> wave(cubes);
-      std::vector<std::size_t> wave_at(static_cast<std::size_t>(waves) + 1, 0);
-      for (std::size_t c = 0; c < cubes; ++c) {
-        wave[c] = static_cast<std::uint32_t>(wave_of(c));
-        ++wave_at[wave[c] + 1];
-      }
-      for (std::size_t t = 0; t < waves; ++t) wave_at[t + 1] += wave_at[t];
-      std::vector<std::size_t> fill(wave_at.begin(), wave_at.end() - 1);
-      for (std::size_t c = 0; c < cubes; ++c) order[fill[wave[c]]++] = static_cast<std::uint32_t>(c);
-      for (std::size_t t = 0; t < waves; ++t) {
-        if (wave_at[t + 1] > wave_at[t]) runs.push_back(wave_at[t]);
-      }
-    } else {
-      std::vector<std::pair<std::uint64_t, std::uint32_t>> keyed(cubes);
-      for (std::size_t c = 0; c < cubes; ++c) keyed[c] = {wave_of(c), static_cast<std::uint32_t>(c)};
-      std::sort(keyed.begin(), keyed.end());
-      for (std::size_t s = 0; s < cubes; ++s) {
-        order[s] = keyed[s].second;
-        if (s == 0 || keyed[s].first != keyed[s - 1].first) runs.push_back(s);
-      }
-    }
-    runs.push_back(cubes);
-    if (stopped(cancel)) return {};
-    std::vector<std::uint64_t>().swap(net.cubes);  // only the waves needed them (H5)
+  Merger merger(tri, sum, count);
+  WorkerPool workers;
+  const bool parallel = pool != nullptr && pool->size() > 1;
+  const std::size_t slab = std::max<std::size_t>(slab_layers, 1);
 
-    // Workers' arenas and scratch, handed to each chunk of a wave.
-    std::vector<std::unique_ptr<MergeWorker>> workers;
-    std::vector<MergeWorker*> idle;
-    std::mutex idle_mutex;
-    const auto acquire = [&]() -> MergeWorker* {
-      const std::lock_guard lock(idle_mutex);
-      if (idle.empty()) {
-        workers.push_back(std::make_unique<MergeWorker>());
-        return workers.back().get();
+  // Cursors: triangles before `tb` are compacted (to [0, kept_t)), those
+  // from `te` on haven't been looked at; vertices before `final_v` are
+  // compacted (to [0, kept_v)), and `index` maps [index_base, final_v) to
+  // where they went.
+  std::size_t tb = 0;
+  std::size_t te = 0;
+  std::size_t kept_t = 0;
+  std::uint32_t final_v = 0;
+  std::uint32_t kept_v = 0;
+  std::uint32_t index_base = 0;
+  std::vector<std::uint32_t> index;
+  std::vector<std::pair<std::uint64_t, std::uint32_t>> rows;  // (wave, first cube)
+
+  for (std::size_t li = 0; li < layer.size();) {
+    if (stopped(cancel)) return {};
+    // Layers [k0, k1), starting at the next with crossed cubes; `next` is
+    // the first crossed layer after them (none: this is the last slab).
+    const auto k0 = static_cast<std::int64_t>(layer[li]);
+    const std::int64_t k1 = k0 + static_cast<std::int64_t>(slab);
+    const std::size_t next_li =
+        static_cast<std::size_t>(std::lower_bound(layer.begin(), layer.end(), static_cast<std::uint64_t>(k1)) - layer.begin());
+    const bool last = next_li == layer.size();
+    const std::int64_t next = last ? k1 : static_cast<std::int64_t>(layer[next_li]);
+    // The window: vertex layers [k0 - 1, k1]. Its triangles come from grid
+    // point layers [k0 - 1, k1 + 1], whose vertices lie in the layer of
+    // the point and the one below: every triangle before the first whose
+    // top vertex is in layer k0 - 1 or above, and every triangle from the
+    // first whose top vertex is in layer k1 + 2, misses it.
+    const std::uint32_t w0 = vat(k0 - 1);
+    const std::uint32_t w1 = vat(k1 + 1);
+    const std::uint32_t past = vat(k1 + 2);
+    while (te < nt && top(te) < past) ++te;
+    Fans fans(w0, w1 - w0, tri, tb, te, pool, cancel);
+    if (stopped(cancel)) return {};
+    merger.set_fans(&fans);
+
+    const std::size_t c0 = layer_cube[li];
+    const std::size_t c1 = layer_cube[next_li];
+    if (!parallel) {
+      MergeWorker& w = *workers.acquire();
+      constexpr std::size_t kCheckEvery = 4096;  // cubes between looks at the token
+      for (std::size_t c = c0; c < c1; ++c) {
+        if ((c - c0) % kCheckEvery == 0 && stopped(cancel)) return {};
+        merger.merge_cube(first(c), end(c), w);
       }
-      MergeWorker* w = idle.back();
-      idle.pop_back();
-      return w;
-    };
-    const auto release = [&](MergeWorker* w) {
-      const std::lock_guard lock(idle_mutex);
-      idle.push_back(w);
-    };
-    constexpr std::size_t kWaveChunk = 64;
-    MergeWorker* own = acquire();
-    for (std::size_t t = 0; t + 1 < runs.size(); ++t) {
-      if (stopped(cancel)) return {};
-      const std::size_t b = runs[t];
-      const std::size_t n = runs[t + 1] - b;
-      if (n <= kWaveChunk || pool->size() == 1) {
-        for (std::size_t s = b; s < b + n; ++s) merger.merge_cube(first(order[s]), end(order[s]), *own);
+      workers.release(&w);
+    } else {
+      // Whole rows of cubes (along x) are the tasks, each merged in grid
+      // order: row (j, k) goes in wave j + 3(k - k0). Rows of one wave are
+      // three rows or layers apart, so their cubes touch nothing in
+      // common; every row with a cube that the serial order merges first
+      // and that a cube of this row touches (within two cubes) is in an
+      // earlier wave. (The cube-sized waves i + 3j + 9k of L1b are the
+      // same argument a level down; rows keep each task's memory together.)
+      rows.clear();
+      for (std::size_t c = c0; c < c1; ++c) {
+        if (c == c0 || net.cubes[c] / nx != net.cubes[c - 1] / nx) {
+          const std::uint64_t row = net.cubes[c] / nx;  // k * ny + j
+          rows.push_back({(row % ny) + 3 * (row / ny - static_cast<std::uint64_t>(k0)), static_cast<std::uint32_t>(c)});
+        }
+      }
+      const std::size_t nrows = rows.size();
+      std::vector<std::uint32_t> row_end(nrows);
+      for (std::size_t r = 0; r < nrows; ++r) {
+        row_end[r] = r + 1 < nrows ? rows[r + 1].second : static_cast<std::uint32_t>(c1);
+      }
+      std::vector<std::uint32_t> by_wave(nrows);
+      for (std::size_t r = 0; r < nrows; ++r) by_wave[r] = static_cast<std::uint32_t>(r);
+      std::stable_sort(by_wave.begin(), by_wave.end(),
+                       [&](std::uint32_t a, std::uint32_t b) { return rows[a].first < rows[b].first; });
+      const auto merge_row = [&](std::uint32_t r, MergeWorker& w) {
+        for (std::uint32_t c = rows[r].second; c < row_end[r]; ++c) merger.merge_cube(first(c), end(c), w);
+      };
+      MergeWorker* own = workers.acquire();
+      for (std::size_t b = 0; b < nrows;) {
+        if (stopped(cancel)) return {};
+        std::size_t e = b + 1;
+        while (e < nrows && rows[by_wave[e]].first == rows[by_wave[b]].first) ++e;
+        if (e - b == 1) {
+          merge_row(by_wave[b], *own);
+        } else {
+          eval::parallel_for(*pool, e - b, 1, [&](std::size_t lo_s, std::size_t hi_s) {
+            MergeWorker* w = workers.acquire();
+            for (std::size_t s = b + lo_s; s < b + hi_s; ++s) merge_row(by_wave[s], *w);
+            workers.release(w);
+          });
+        }
+        b = e;
+      }
+      workers.release(own);
+    }
+
+    // Every cube below layer `next` is merged, so vertex layers up to
+    // next - 2 are final (all of them after the last slab), all inside the
+    // window (layers k1 .. next - 1 have none): compact them, in order. A
+    // position goes to a slot at or before its own, whose sum is already
+    // used.
+    const std::uint32_t done_v = last ? static_cast<std::uint32_t>(sum.size()) : vat(next - 1);
+    for (std::uint32_t v = final_v; v < done_v; ++v) {
+      if (count[v] == 0 || fans.size(v) == 0) {
+        index.push_back(kNone);
         continue;
       }
-      eval::parallel_for(*pool, n, kWaveChunk, [&](std::size_t lo, std::size_t hi) {
-        MergeWorker* w = acquire();
-        for (std::size_t s = b + lo; s < b + hi; ++s) merger.merge_cube(first(order[s]), end(order[s]), *w);
-        release(w);
-      });
+      index.push_back(kept_v);
+      sum[kept_v++] = sum[v] * (1.0 / static_cast<double>(count[v]));
     }
+    final_v = done_v;
+    // Then the triangles that use only final vertices, in order, up to the
+    // first live one that doesn't: the next slab's window starts there.
+    while (tb < te && (dead(tri[tb]) || top(tb) < done_v)) {
+      if (!dead(tri[tb])) {
+        const Triangle& t = tri[tb];
+        tri[kept_t++] = {index[t[0] - index_base], index[t[1] - index_base], index[t[2] - index_base]};
+      }
+      ++tb;
+    }
+    if (last) {
+      while (tb < nt) {
+        if (!dead(tri[tb])) {
+          const Triangle& t = tri[tb];
+          tri[kept_t++] = {index[t[0] - index_base], index[t[1] - index_base], index[t[2] - index_base]};
+        }
+        ++tb;
+      }
+    } else {
+      // Triangles still to come have a vertex in layer next - 1 or above,
+      // so all of theirs in layer next - 2 or above.
+      const std::uint32_t keep_from = std::max(index_base, vat(next - 2));
+      index.erase(index.begin(), index.begin() + (keep_from - index_base));
+      index_base = keep_from;
+    }
+    merger.set_fans(nullptr);
+    workers.reset_arenas();
+    li = next_li;
   }
-  merger.finish();
+
+  // Shrink to what was kept, one array at a time.
+  std::vector<std::uint8_t>().swap(net.counts);
+  std::vector<std::uint64_t>().swap(net.cubes);
+  std::vector<std::uint32_t>().swap(net.group_starts);
+  std::vector<std::uint32_t>().swap(index);
+  out.triangles = std::vector<Triangle>(tri.begin(), tri.begin() + static_cast<std::ptrdiff_t>(kept_t));
+  std::vector<Triangle>().swap(tri);
+  out.positions = std::vector<dvec3>(sum.begin(), sum.begin() + kept_v);
+  std::vector<dvec3>().swap(sum);
   return out;
 }
 

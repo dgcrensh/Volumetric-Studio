@@ -586,9 +586,12 @@ so they are registered. A new library must also be added to
   is never cached (H5, decision 0027).
 - **Parallel surface nets** (L1b, decision 0019): `surface_nets(samples,
   pool)` is `unmerged_net()` (vertex and polygon passes in z layers,
-  joined in grid order; a `MeshingBackend` may take it) then
-  `merge_net()` (cubes in waves `i + 3j + 9k`: earlier neighbours always
-  in earlier waves, cubes of a wave three apart). The mesh is
+  each counted, then filled in place in grid order; a `MeshingBackend`
+  may take it) then `merge_net()` (slabs of `kMergeSlabLayers` cube
+  layers one after another, each with only its own fans, compacting in
+  place behind it; inside a slab, rows of cubes in waves `j + 3k`:
+  earlier neighbours always in earlier waves, rows of a wave three apart;
+  decision 0028). The mesh is
   `surface_nets_reference()`'s (M11's serial code, kept in
   `src/surface_nets_reference.cpp`) bit for bit on any thread count;
   `test_parallel_mesher.cpp` compares them element by element. **Change
