@@ -14,8 +14,10 @@
 // touching (spec, "Structural adjacency"). Keep-out volumes take part like
 // any other: a keep-out that sits in a volume without cutting it overlaps it.
 //
-// Undeclared contact. Siblings that share a connection surface are adjacent
-// by definition, with no distance test. For every other pair (keep-out
+// Undeclared contact. Siblings that share a bonded or bolted connection
+// surface are adjacent by definition, with no distance test; a clearance
+// surface keeps its volumes apart, so it excuses no contact. For every other
+// pair (keep-out
 // volumes aside: touching one is what it is for) that comes within the
 // tolerance, each pair of faces lying against each other over an area is a
 // warning naming both faces, by the boundary's face names (model build.hpp:
@@ -26,7 +28,9 @@
 // Connection type rules, per surface, naming the surface and the parameters
 // in conflict:
 //   every type     the patch must lie on each joined volume's boundary (for
-//                  a clearance, within its gap of it)
+//                  a clearance, within its gap of it), and no point of it
+//                  may lie inside the volume farther than that from its
+//                  surface (a patch floating inside or poking through; H2)
 //   clearance      the gap must be at least the minimum feature size
 //   bolted flange  the minimum wall must be at least the minimum feature
 //                  size; every clearance hole (ISO 273, medium fit) must sit

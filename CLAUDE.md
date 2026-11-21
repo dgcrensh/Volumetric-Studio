@@ -190,6 +190,10 @@ so they are registered. A new library must also be added to
   sizes under the minimum feature size and shapes outside the working space.
   `audit_tolerances()` compares OCCT's per-entity tolerances with the
   product tolerance; call it after each feature (M3).
+- **Threads.** Handles are immutable, but OCCT's classifiers and distance
+  tools may fill caches on the shape they read: work on several threads
+  gives each thread its own `deep_copy()` (H2). `SolidClassifier` isn't
+  copyable; one per thread.
 - **Sweeps, lofts, shells, chamfers** (M4) live beside the primitives and
   fillets. Booleans also take several tools at once. `shell()` rejects
   walls thicker than a curved face's radius up front, because OCCT returns
@@ -227,9 +231,15 @@ so they are registered. A new library must also be added to
   untouched; redundancy alone still solves.
 - **Profiles.** `extract_profiles()` finds closed loops of non-construction
   geometry, nests them (even depth: outer, odd: hole) and `make_face()`
-  turns them into `vs_kernel` faces on the sketch plane.
+  turns them into `vs_kernel` faces on the sketch plane. Loops whose sides
+  cross (`sketch.profile.loops_cross`, coincident loops too) or that cross
+  themselves (`sketch.profile.self_crossing`) are refused; arcs become
+  polygons within the minimum feature size, compared by box and an x sweep
+  (H2).
 - **Files.** `to_json()` / `sketch_from_json()` round-trip exactly, ids
-  included. `vstudio-cli sketch-solve <file>` solves one from the command line.
+  included; an object's own id may not be null (H2, also in vs_feature and
+  vs_model files). `vstudio-cli sketch-solve <file>` solves one from the
+  command line.
 
 ## vs_feature essentials
 
@@ -247,7 +257,10 @@ so they are registered. A new library must also be added to
   failed feature leaves the body unchanged and the rest carries on; its
   diagnostics (`feature.*`, or `kernel.*` passed through) name the feature
   first. Pass a previous result and a start feature to reuse what's above
-  it. Every feature boolean is fuzzy at the linear tolerance, and the
+  it; reuse needs every feature above unchanged (`RebuildResult::built_from`)
+  and the same `ProductSettings`, so a wrong start never reuses stale
+  results (H2). An input value never stands in for a tree variable of the
+  same name, even a failed one. Every feature boolean is fuzzy at the linear tolerance, and the
   tolerance audit runs after each body change (decision 0002).
 - **Face references** name a face by feature and name (`start`, `end`,
   `side:<sketch curve id>`, `<k>:<seed id>:<name>` on pattern copies) and
@@ -274,10 +287,15 @@ so they are registered. A new library must also be added to
   (M12); `OutputQuantity::Published` takes a number the graph publishes.
 - **Authoring.** Change a document through `edit(doc, fn)` (`check.hpp`): it
   applies `fn` to a copy and keeps it only if `check()` finds no errors.
-  `check()` covers structure (`model.*`), encapsulation
+  `check()` covers structure (`model.*`; null ids are
+  `model.document.null_id`; `feature::tree_ids()` / `find_tree_id()` is
+  the one walk over a tree's ids, sketch constraints included), encapsulation
   (`model.reference.contents` / `.sibling` / `.not_input` / `.parent`, all
   judged by `resolve()` in `references.hpp`) and dependency loops
-  (`model.dependency.loop`, path with the link first, `dependency.hpp`).
+  (`model.dependency.loop`, path with the link first, `dependency.hpp`;
+  a feature using the body above it, such as a through-all extrude, a cut,
+  shell, fillet, chamfer or pattern, depends on every body feature above
+  it, H2).
 - **Contents see inputs, nothing else.** A parametric tree is rebuilt with
   `feature::ExternalInputs`: the boundary by the volume's id (faces
   `<layout feature id>:<name>`, or `-x`..`+z` for a box), each joining
@@ -347,24 +365,28 @@ so they are registered. A new library must also be added to
   tolerance), undeclared contact (`validate.contact` per pair of faces
   lying against each other, named from `VolumeBuild::boundary_faces`;
   `validate.contact.edge` for an edge or point touch), skipped for pairs
-  sharing a connection surface or involving a keep-out, and between
-  siblings only (L3); `validate.nesting.outside` is a child reaching out
-  of its composite. Connection rules
+  sharing a bonded or bolted surface (a clearance surface doesn't excuse
+  contact) or involving a keep-out, and between siblings only (L3);
+  `validate.nesting.outside` is a child reaching out of its composite
+  (skipped only when the parent is exactly its box). Connection rules
   (`validate.connection.*`): patch on each joined boundary (and each child
-  it is delegated to), clearance gap
+  it is delegated to), never floating inside or poking through one, clearance gap
   and flange wall at least the minimum feature size, ISO 273 holes clear of
   the patch edge and each other by the minimum wall.
 - **Containment** (`containment.hpp`): `check_containment(boundary, solid
   or MeshView, volume subject, settings)`, for M9 to call after generation.
-  Meshes get their FP32 rounding as extra slack. Large meshes (M12): a
+  B-rep reach is measured over tessellated points of the part outside, not
+  only its vertices (H2). Meshes get their FP32 rounding as extra slack;
+  non-finite vertices are `validate.undecided`. Large meshes (M12): a
   convex fast path (one lump, planar faces), otherwise octree cells
   certified by distance and the rest classified in chunks through an
-  optional parallel-for.
+  optional parallel-for, each worker with its own boundary copy and
+  classifier.
 - **Routing** (`registry.hpp`): every `validate.*` code is registered with
   its severity and target; `route()` sends any diagnostic to exactly one of
   layout, connection surface, feature (with the volume, inside contents),
-  node or contents. Tests check every emitted `validate.*` code is
-  registered.
+  node or contents (`validate.undecided` by its first subject). Tests check
+  every emitted `validate.*` code is registered.
 - **Whole documents** (`validate.hpp`): `validate()` runs `check()`, then
   `build()`, the layout checks and containment, and routes everything.
   `vstudio-cli validate <project>` prints it and exits 1 on errors.

@@ -19,6 +19,9 @@ constexpr double kTwoPi = 2.0 * std::numbers::pi;
 // Chords per full turn when an arc is turned into a polygon for containment
 // tests (not for faces, which keep exact arcs).
 constexpr int kSamplesPerTurn = 256;
+// The most chords per turn deflection asks for (an arc of 1,000 mm radius
+// within 1e-3 mm needs about 2,200).
+constexpr double kMaxSamplesPerTurn = 65536;
 
 // A curve that can be part of a loop, resolved to sketch coordinates.
 struct Curve {
@@ -79,8 +82,10 @@ double edge_area(const Curve& c, bool reversed) {
   return reversed ? -a : a;
 }
 
-// Points along an edge in traversal order, excluding its last point.
-void sample_edge(const Curve& c, bool reversed, std::vector<dvec2>& out) {
+// Points along an edge in traversal order, excluding its last point. Arcs
+// get at least kSamplesPerTurn chords a turn, and more on large radii, so
+// that no chord strays more than `deflection` from the arc.
+void sample_edge(const Curve& c, bool reversed, double deflection, std::vector<dvec2>& out) {
   if (c.kind == EntityKind::Line) {
     out.push_back(reversed ? c.line.end : c.line.start);
     return;
@@ -92,17 +97,42 @@ void sample_edge(const Curve& c, bool reversed, std::vector<dvec2>& out) {
     g = {c.circle.center, c.circle.radius, 0.0, kTwoPi};
   }
   const double sweep = g.end_angle - g.start_angle;
-  const int n = std::max(4, static_cast<int>(std::ceil(sweep / kTwoPi * kSamplesPerTurn)));
+  double per_turn = kSamplesPerTurn;
+  if (g.radius > deflection) {
+    // A chord spanning angle a strays r (1 - cos(a / 2)) from its arc.
+    const double a = 2.0 * std::acos(1.0 - deflection / g.radius);
+    if (a > 0.0) per_turn = std::max(per_turn, std::ceil(kTwoPi / a));
+  }
+  per_turn = std::min(per_turn, kMaxSamplesPerTurn);
+  const int n = std::max(4, static_cast<int>(std::ceil(sweep / kTwoPi * per_turn)));
   for (int i = 0; i < n; ++i) {
     const double t = static_cast<double>(reversed ? n - i : i) / n;
     out.push_back(g.at(g.start_angle + t * sweep));
   }
 }
 
+struct Box2 {
+  dvec2 min{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
+  dvec2 max{-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+  void expand(const dvec2& p) {
+    min = {std::min(min.x, p.x), std::min(min.y, p.y)};
+    max = {std::max(max.x, p.x), std::max(max.y, p.y)};
+  }
+  [[nodiscard]] bool intersects(const Box2& o, double slack) const {
+    return min.x <= o.max.x + slack && o.min.x <= max.x + slack && min.y <= o.max.y + slack &&
+           o.min.y <= max.y + slack;
+  }
+  [[nodiscard]] bool contains(const dvec2& p, double slack) const {
+    return p.x >= min.x - slack && p.x <= max.x + slack && p.y >= min.y - slack &&
+           p.y <= max.y + slack;
+  }
+};
+
 struct Loop {
   std::vector<LoopEdge> edges;
   double signed_area = 0;
   std::vector<dvec2> polygon;
+  Box2 box;  // the polygon's
 };
 
 // Even-odd point-in-polygon.
@@ -131,6 +161,90 @@ double distance_to_polygon(const std::vector<dvec2>& poly, const dvec2& p) {
   return best;
 }
 
+// One side of a polygon: its two points and box.
+struct Segment {
+  dvec2 a;
+  dvec2 b;
+  std::size_t index;  // within its polygon
+  double min_x;
+  double max_x;
+};
+
+std::vector<Segment> segments_by_x(const std::vector<dvec2>& poly) {
+  std::vector<Segment> out;
+  out.reserve(poly.size());
+  for (std::size_t i = 0; i < poly.size(); ++i) {
+    const dvec2& a = poly[i];
+    const dvec2& b = poly[(i + 1) % poly.size()];
+    out.push_back({a, b, i, std::min(a.x, b.x), std::max(a.x, b.x)});
+  }
+  std::ranges::sort(out, [](const Segment& s, const Segment& t) {
+    return s.min_x != t.min_x ? s.min_x < t.min_x : s.index < t.index;
+  });
+  return out;
+}
+
+// Signed distance of `p` from the line through `a` and `b` (left positive).
+double side(const dvec2& a, const dvec2& b, const dvec2& p) {
+  const double len = core::length(b - a);
+  if (len <= 0.0) return 0.0;
+  return core::cross(b - a, p - a) / len;
+}
+
+// True when the two segments cross each other transversally, each end lying
+// more than `slack` off the other's line: touching, overlapping and meeting
+// at an end are not crossings.
+bool crosses(const Segment& s, const Segment& t, double slack) {
+  const double d1 = side(s.a, s.b, t.a);
+  const double d2 = side(s.a, s.b, t.b);
+  if (!((d1 > slack && d2 < -slack) || (d1 < -slack && d2 > slack))) return false;
+  const double d3 = side(t.a, t.b, s.a);
+  const double d4 = side(t.a, t.b, s.b);
+  return (d3 > slack && d4 < -slack) || (d3 < -slack && d4 > slack);
+}
+
+// The first crossing between two polygons' sides (`same`: one polygon with
+// itself, neighbouring sides skipped). A sweep in x: sides enter in order of
+// their smallest x and meet only the active sides whose x range reaches
+// theirs, so it costs about the number of sides times the few a vertical
+// line meets.
+bool any_crossing(const std::vector<Segment>& p, const std::vector<Segment>* q, double slack,
+                  std::size_t sides) {
+  const bool same = q == nullptr;
+  // Both lists merged by smallest x: (from q, index in its list).
+  std::vector<std::pair<bool, std::size_t>> order;
+  order.reserve(p.size() + (same ? 0 : q->size()));
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < p.size() || (!same && j < q->size())) {
+    if (same || j >= q->size() || (i < p.size() && p[i].min_x <= (*q)[j].min_x)) {
+      order.emplace_back(false, i++);
+    } else {
+      order.emplace_back(true, j++);
+    }
+  }
+  std::vector<std::pair<bool, const Segment*>> active;
+  for (const auto& [from_q, k] : order) {
+    const Segment& s = from_q ? (*q)[k] : p[k];
+    std::erase_if(active, [&](const auto& a) { return a.second->max_x < s.min_x - slack; });
+    for (const auto& [other_q, t] : active) {
+      if (!same && other_q == from_q) continue;
+      if (same) {
+        const std::size_t lo = std::min(s.index, t->index);
+        const std::size_t hi = std::max(s.index, t->index);
+        if (hi - lo == 1 || hi - lo + 1 == sides) continue;  // neighbours share a point
+      }
+      if (std::min(s.a.y, s.b.y) > std::max(t->a.y, t->b.y) + slack ||
+          std::min(t->a.y, t->b.y) > std::max(s.a.y, s.b.y) + slack) {
+        continue;
+      }
+      if (crosses(s, *t, slack)) return true;
+    }
+    active.emplace_back(from_q, &s);
+  }
+  return false;
+}
+
 }  // namespace
 
 double Profile::area() const {
@@ -145,6 +259,11 @@ Result<std::vector<Profile>> extract_profiles(const Sketch& sketch,
   if (problems.has_errors()) return problems[0];
 
   const double tol = settings.linear_tolerance_mm;
+  // Arcs become polygons for the containment and crossing tests below;
+  // their chords stray up to `deflection` from the arcs, so points that
+  // close count as touching.
+  const double deflection = settings.min_feature_size_mm();
+  const double slack = tol + deflection;
   const auto sketch_ref = sketch.sketch_subject();
 
   std::vector<Curve> open;  // lines and arcs; curve i has ends 2i and 2i + 1
@@ -158,7 +277,7 @@ Result<std::vector<Profile>> extract_profiles(const Sketch& sketch,
     Loop loop;
     loop.edges.push_back({c.id, false});
     loop.signed_area = edge_area(c, false);
-    sample_edge(c, false, loop.polygon);
+    sample_edge(c, false, deflection, loop.polygon);
     loops.push_back(std::move(loop));
   }
   auto end_position = [&](std::size_t e) { return open[e / 2].ends[e % 2]; };
@@ -219,7 +338,7 @@ Result<std::vector<Profile>> extract_profiles(const Sketch& sketch,
       used[curve] = true;
       loop.edges.push_back({open[curve].id, reversed});
       loop.signed_area += edge_area(open[curve], reversed);
-      sample_edge(open[curve], reversed, loop.polygon);
+      sample_edge(open[curve], reversed, deflection, loop.polygon);
       // Leave by the far end and carry on along the curve that meets it.
       const std::size_t next_end = partner(curve * 2 + (reversed ? 0 : 1));
       curve = next_end / 2;
@@ -242,31 +361,60 @@ Result<std::vector<Profile>> extract_profiles(const Sketch& sketch,
     }
   }
 
+  // --- a loop may not cross itself (a bowtie).
+  std::vector<std::vector<Segment>> sides;
+  sides.reserve(loops.size());
+  for (auto& loop : loops) {
+    for (const auto& p : loop.polygon) loop.box.expand(p);
+    sides.push_back(segments_by_x(loop.polygon));
+    if (any_crossing(sides.back(), nullptr, slack, loop.polygon.size())) {
+      return Diagnostic::error(
+          "sketch.profile.self_crossing",
+          fmt::format("The loop through {} crosses itself; a profile's outline must not",
+                      sketch.label(loop.edges.front().entity)),
+          {sketch.subject(loop.edges.front().entity), sketch_ref});
+    }
+  }
+
   // --- nesting. contains[i][j]: loop j lies inside loop i.
   const std::size_t n = loops.size();
+  auto crossing = [&](std::size_t i, std::size_t j, std::string_view how) {
+    return Diagnostic::error(
+        "sketch.profile.loops_cross",
+        fmt::format("The loop through {} {} the loop through {}",
+                    sketch.label(loops[j].edges.front().entity), how,
+                    sketch.label(loops[i].edges.front().entity)),
+        {sketch.subject(loops[j].edges.front().entity),
+         sketch.subject(loops[i].edges.front().entity), sketch_ref});
+  };
   std::vector<std::vector<bool>> contains(n, std::vector<bool>(n, false));
   for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t j = i + 1; j < n; ++j) {
+      if (!loops[i].box.intersects(loops[j].box, slack)) continue;  // apart
+      // Sides crossing each other (two rectangles in a '+'), even where
+      // no corner of either lies inside the other.
+      if (any_crossing(sides[i], &sides[j], slack, 0)) return crossing(i, j, "crosses");
+    }
+  }
+  for (std::size_t i = 0; i < n; ++i) {
     for (std::size_t j = 0; j < n; ++j) {
-      if (i == j) continue;
+      if (i == j || !loops[i].box.intersects(loops[j].box, slack)) continue;
       std::size_t in = 0;
       std::size_t out = 0;
       for (const auto& p : loops[j].polygon) {
-        if (distance_to_polygon(loops[i].polygon, p) <= tol) continue;  // touching
+        if (!loops[i].box.contains(p, slack)) {
+          ++out;
+          continue;
+        }
+        if (distance_to_polygon(loops[i].polygon, p) <= slack) continue;  // touching
         if (inside(loops[i].polygon, p)) {
           ++in;
         } else {
           ++out;
         }
       }
-      if (in > 0 && out > 0) {
-        return Diagnostic::error(
-            "sketch.profile.loops_cross",
-            fmt::format("The loop through {} crosses the loop through {}",
-                        sketch.label(loops[j].edges.front().entity),
-                        sketch.label(loops[i].edges.front().entity)),
-            {sketch.subject(loops[j].edges.front().entity),
-             sketch.subject(loops[i].edges.front().entity), sketch_ref});
-      }
+      if (in > 0 && out > 0) return crossing(i, j, "crosses");
+      if (in == 0 && out == 0) return crossing(i, j, "lies on");  // the same loop twice
       contains[i][j] = in > 0 && loops[i].signed_area > loops[j].signed_area;
     }
   }

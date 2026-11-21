@@ -57,16 +57,23 @@ enum class PointClass {
 PointClass classify(const Solid& solid, const dvec3& point, const ProductSettings& settings);
 
 // The same for many points against one solid: prepares the solid once, which
-// is much faster than classify() per point. Copies share the prepared
-// solid; one classifier must not be used from two threads at once.
+// is much faster than classify() per point. It isn't copyable (a copy would
+// share the prepared solid's mutable state); one classifier must not be
+// used from two threads at once, so give each thread its own, on its own
+// deep_copy() of the solid.
 class SolidClassifier {
  public:
   SolidClassifier(const Solid& solid, const ProductSettings& settings);
+  ~SolidClassifier();
+  SolidClassifier(const SolidClassifier&) = delete;
+  SolidClassifier& operator=(const SolidClassifier&) = delete;
+  SolidClassifier(SolidClassifier&&) noexcept;
+  SolidClassifier& operator=(SolidClassifier&&) noexcept;
   [[nodiscard]] PointClass classify(const dvec3& point) const;
 
  private:
   struct Impl;
-  std::shared_ptr<Impl> impl_;
+  std::unique_ptr<Impl> impl_;
 };
 
 // Distance from a point to a shape: for a solid, 0 inside or on it and

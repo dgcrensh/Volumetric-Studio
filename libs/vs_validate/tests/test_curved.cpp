@@ -59,13 +59,14 @@ TEST_CASE("A band off the shaft is off its boundary", "[validate][curved]") {
   std::get<CylinderPatch>(c.project.document.connections[0].geometry).radius = Param::of(12.0);
   const auto r = layout_of(c.project.document);
   INFO(codes(r.diagnostics));
-  // Inside the sleeve's wall, two millimetres off the shaft.
-  REQUIRE(count(r.diagnostics, "validate.connection.off_boundary") == 1);
-  const auto& d = *std::find_if(r.diagnostics.begin(), r.diagnostics.end(), [](const auto& x) {
-    return x.code == "validate.connection.off_boundary";
-  });
-  CHECK(d.subjects.at(0).id == c.surface);
-  CHECK(d.subjects.at(1).id == c.shaft);
+  // Two millimetres off the shaft, and inside the sleeve's wall (H2: inside
+  // a volume isn't on it).
+  const auto found = r.diagnostics.with_code("validate.connection.off_boundary");
+  REQUIRE(found.size() == 2);
+  CHECK(found[0]->subjects.at(0).id == c.surface);
+  CHECK(found[0]->subjects.at(1).id == c.shaft);
+  CHECK(found[1]->subjects.at(1).id == c.sleeve);
+  CHECK(found[1]->message.find("inside") != std::string::npos);
 }
 
 TEST_CASE("A clearance fit round a pin", "[validate][curved]") {

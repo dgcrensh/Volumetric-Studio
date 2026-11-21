@@ -147,22 +147,19 @@ class GraphBuilder {
     uses_expression(from, p.expression, level);
   }
 
-  // A layout feature, sketch entity or other layout id: its feature node.
+  // A layout feature, a part of a layout sketch (its own id, entities or
+  // constraints), a boundary or a connection surface: its node. Features of
+  // composites' layouts are nodes too (L3), so one lookup covers them.
   void uses_layout(std::size_t from, const Id& id) {
     if (auto f = find(NodeKind::Feature, id)) {
       edge(from, f);
       return;
     }
     const auto in_tree = [&](const feature::FeatureTree& tree) {
-      for (const auto& f : tree.features()) {
-        if (const auto* s = f.as<feature::SketchFeature>()) {
-          if (s->sketch.find_entity(id)) {
-            edge(from, find(NodeKind::Feature, f.id));
-            return true;
-          }
-        }
-      }
-      return false;
+      const auto t = feature::find_tree_id(tree, id);
+      if (!t || t->kind == feature::TreeIdKind::Variable) return false;
+      edge(from, find(NodeKind::Feature, t->feature));
+      return true;
     };
     if (in_tree(doc_.layout)) return;
     for (const auto& v : doc_.volumes) {  // composites' layouts (L3)
@@ -170,6 +167,13 @@ class GraphBuilder {
         return;
       }
     }
+    // A composite's own boundary or a surface joining it, as a feature of
+    // its layout may name them (tree_edges() resolves them the same way).
+    if (auto b = find(NodeKind::VolumeBoundary, id)) {
+      edge(from, b);
+      return;
+    }
+    edge(from, find(NodeKind::ConnectionSurface, id));
   }
   void uses_plane(std::size_t from, const feature::PlaneRef& ref) {
     if (const auto* f = std::get_if<feature::FeatureRef>(&ref)) uses_layout(from, f->feature);
@@ -192,6 +196,30 @@ class GraphBuilder {
     }
   }
 
+  // True when the feature's result depends on the body the features above
+  // it made, not only on what it names: a through-all extrude reaches as
+  // far as the body does, a cut, shell, fillet or chamfer works on the
+  // body, and a pattern combines copies with it.
+  static bool uses_body(const feature::Feature& f) {
+    using feature::Operation;
+    if (const auto* e = f.as<feature::ExtrudeFeature>()) {
+      return e->extent == feature::Extent::ThroughAll || e->operation == Operation::Cut;
+    }
+    if (const auto* r = f.as<feature::RevolveFeature>()) return r->operation == Operation::Cut;
+    if (const auto* w = f.as<feature::SweepFeature>()) return w->operation == Operation::Cut;
+    if (const auto* l = f.as<feature::LoftFeature>()) return l->operation == Operation::Cut;
+    switch (f.kind()) {
+      case feature::FeatureKind::Shell:
+      case feature::FeatureKind::Fillet:
+      case feature::FeatureKind::Chamfer:
+      case feature::FeatureKind::LinearPattern:
+      case feature::FeatureKind::CircularPattern:
+        return true;
+      default:
+        return false;
+    }
+  }
+
   // A layout's own edges: its variables' expressions, and its features'
   // references. `level` is the root (null) or the composite owning it,
   // whose boundary, joining surfaces and parameters its features may use.
@@ -199,7 +227,10 @@ class GraphBuilder {
     for (const auto& v : tree.variables().variables()) {
       uses_expression(*find(NodeKind::Variable, v.id), v.expression, level);
     }
-    std::optional<std::size_t> last_body;
+    // Every unsuppressed feature above that changed the body: a feature
+    // using the body depends on each of them, not only on the last (a
+    // blind extrude between them doesn't carry the earlier ones along).
+    std::vector<std::size_t> body_features;
     for (const auto& f : tree.features()) {
       const std::size_t n = *find(NodeKind::Feature, f.id);
       const auto refs = feature::references_of(f);
@@ -213,11 +244,10 @@ class GraphBuilder {
         }
       }
       for (const auto& name : refs.variables) uses_variable(n, name, level);
-      if (const auto* ex = f.as<feature::ExtrudeFeature>();
-          ex && ex->extent == feature::Extent::ThroughAll) {
-        edge(n, last_body);
+      if (uses_body(f)) {
+        for (const std::size_t b : body_features) edge(n, b);
       }
-      if (changes_body(f) && !f.suppressed) last_body = n;
+      if (changes_body(f) && !f.suppressed) body_features.push_back(n);
     }
   }
 

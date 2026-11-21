@@ -1543,8 +1543,10 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
   out.variables = tree.variables().evaluate();
   out.diagnostics.append(out.variables.diagnostics);
   if (options.inputs) {
-    // Variables of the tree win over input values of the same name.
+    // Variables of the tree win over input values of the same name, failed
+    // ones too: an input never stands in for a variable that has no value.
     for (const auto& [name, value] : options.inputs->values) {
+      if (tree.variables().find(name) != nullptr) continue;
       out.variables.values.try_emplace(name, value);
     }
   }
@@ -1557,9 +1559,11 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
     const RebuildResult& prev = *options.previous;
     const auto k = tree.index_of(options.start);
     bool reusable = k.has_value() && prev.variables == out.variables &&
-                    prev.features.size() >= *k;
+                    prev.settings == settings && prev.features.size() >= *k &&
+                    prev.built_from.size() >= *k;
     for (std::size_t i = 0; reusable && i < *k; ++i) {
       reusable = prev.features[i].feature == features[i].id &&
+                 prev.built_from[i] == features[i] &&
                  (prev.features[i].status == FeatureStatus::Suppressed) == features[i].suppressed;
     }
     if (reusable) {
@@ -1577,6 +1581,8 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
   }
   for (const auto& r : out.features) out.diagnostics.append(r.diagnostics);
   if (!out.features.empty()) out.body = out.features.back().body;
+  out.built_from = features;
+  out.settings = settings;
   return out;
 }
 

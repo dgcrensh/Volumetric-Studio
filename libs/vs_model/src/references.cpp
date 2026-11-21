@@ -24,17 +24,11 @@ std::string_view to_string(TargetKind kind) {
 
 namespace {
 
+// Features and the parts of layout sketches count as the layout's (its
+// variables are classified on their own).
 bool layout_holds(const feature::FeatureTree& tree, const Id& id) {
-  if (tree.find(id)) return true;
-  // Sketch entities of layout sketches count as the layout's.
-  for (const auto& f : tree.features()) {
-    if (const auto* s = f.as<feature::SketchFeature>()) {
-      if (s->sketch.id() == id || s->sketch.find_entity(id) || s->sketch.find_constraint(id)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  const auto t = feature::find_tree_id(tree, id);
+  return t && t->kind != feature::TreeIdKind::Variable;
 }
 
 std::string volume_label(const Document& doc, const Id& volume) {

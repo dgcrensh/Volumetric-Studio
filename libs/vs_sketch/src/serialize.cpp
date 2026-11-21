@@ -47,6 +47,14 @@ Id read_id(const json& j, std::string_view what) {
   return *id;
 }
 
+// The id of an authored object (the sketch, an entity, a constraint): never
+// null, which would match every unset reference.
+Id read_own_id(const json& j, std::string_view what) {
+  const Id id = read_id(j, what);
+  if (id.is_null()) fail(fmt::format("{} is the null id; every object needs its own", what));
+  return id;
+}
+
 template <std::size_t N>
 std::array<double, N> read_numbers(const json& j, std::string_view what) {
   if (!j.is_array() || j.size() != N) fail(fmt::format("{} must be {} numbers", what, N));
@@ -73,7 +81,7 @@ std::string optional_string(const json& j, std::string_view key, std::string_vie
 Entity read_entity(const json& j, std::size_t index) {
   const std::string where = fmt::format("entities[{}]", index);
   Entity e;
-  e.id = read_id(member(j, "id", where), where + ".id");
+  e.id = read_own_id(member(j, "id", where), where + ".id");
   const std::string type = read_string(member(j, "type", where), where + ".type");
   if (type == "point") {
     e.geometry = Point{read_vec2(member(j, "position", where), where + ".position")};
@@ -101,7 +109,7 @@ Entity read_entity(const json& j, std::size_t index) {
 Constraint read_constraint(const json& j, std::size_t index) {
   const std::string where = fmt::format("constraints[{}]", index);
   Constraint c;
-  c.id = read_id(member(j, "id", where), where + ".id");
+  c.id = read_own_id(member(j, "id", where), where + ".id");
   const std::string type = read_string(member(j, "type", where), where + ".type");
   const auto kind = parse_constraint_kind(type);
   if (!kind) fail(fmt::format("{}.type \"{}\" is not a known constraint type", where, type));
@@ -205,7 +213,7 @@ Result<Sketch> sketch_from_json(std::string_view text) {
     plane.x_axis = read_vec3(member(p, "x_axis", "plane"), "plane.x_axis");
     plane.y_axis = read_vec3(member(p, "y_axis", "plane"), "plane.y_axis");
 
-    Sketch sketch(read_id(member(root, "id", "the sketch"), "id"),
+    Sketch sketch(read_own_id(member(root, "id", "the sketch"), "id"),
                   optional_string(root, "name", "name"), plane);
 
     const json& entities = member(root, "entities", "the sketch");

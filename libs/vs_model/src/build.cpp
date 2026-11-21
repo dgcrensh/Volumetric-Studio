@@ -446,9 +446,23 @@ class DocumentBuilder {
       if (std::find(k.volumes.begin(), k.volumes.end(), v.id) == k.volumes.end()) continue;
       const SubjectRef ks = doc_.keep_out_subject(k.id);
       for (const auto& id : k.cutters) {
-        if (doc_.find_volume(id)) {
+        if (const Volume* cutter = doc_.find_volume(id)) {
+          // A keep-out volume whose boundary failed cuts nothing it should:
+          // the target fails rather than keep the space it reserves.
+          bool found = false;
           for (std::size_t j = 0; j < doc_.volumes.size(); ++j) {
-            if (doc_.volumes[j].id == id && !raw_[j].is_empty()) cutters.push_back(raw_[j]);
+            if (doc_.volumes[j].id == id && !raw_[j].is_empty()) {
+              cutters.push_back(raw_[j]);
+              found = true;
+            }
+          }
+          if (!found) {
+            vb.diagnostics.add(error(ks, "model.boundary.feature_failed",
+                                     fmt::format("its cutter '{}' has no boundary",
+                                                 doc_.volume_subject(cutter->id).label),
+                                     {doc_.boundary_subject(cutter->id), by}));
+            vb.boundary = Solid{};
+            return;
           }
           continue;
         }
@@ -692,6 +706,9 @@ class DocumentBuilder {
     const VolumeBuild& vb = in_.volumes[i];
     const SubjectRef self = doc_.volume_subject(v.id);
     ContentsBuild cb;
+    // A composite's layout was rebuilt with the layout half; keep it even
+    // when the composite fails, since its children were built from it.
+    if (v.composite()) cb.contents_rebuild = vb.contents_rebuild;
 
     if (vb.boundary.is_empty()) {
       cb.status = VolumeStatus::Failed;
@@ -960,7 +977,9 @@ DocumentBuild build(const Document& document, const ProductSettings& settings,
     const Volume& v = document.volumes[i];
     VolumeBuild& vb = out.volumes[i];
     if (!v.composite()) {
-      measures[i] = measure_solid(vb.contents);
+      // A failed volume's contents (a parametric tree's body as far as it
+      // got) aren't what it should hold: leave them out of the sums.
+      if (vb.status != VolumeStatus::Failed) measures[i] = measure_solid(vb.contents);
       continue;
     }
     for (const std::size_t c : children(document, v.id)) {

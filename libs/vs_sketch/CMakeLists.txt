@@ -24,6 +24,7 @@ vs_add_library(vs_sketch
 vs_add_library_tests(vs_sketch
   SOURCES
     tests/canonical.cpp
+    tests/test_design_rules.cpp
     tests/test_module.cpp
     tests/test_profile.cpp
     tests/test_serialize.cpp

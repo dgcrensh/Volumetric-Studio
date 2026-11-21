@@ -9,6 +9,7 @@
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
@@ -236,6 +237,15 @@ Result<Solid> transformed(const Solid& solid, const core::dtransform& transform)
   auto shape = transformed(static_cast<const Shape&>(solid), transform);
   if (!shape) return shape.error();
   return detail::finish_solid(topo(*shape), "kernel.transform.invalid_result", "transform");
+}
+
+Result<Solid> deep_copy(const Solid& solid) {
+  if (solid.is_empty()) return solid;
+  return detail::guarded<Result<Solid>>("kernel.copy.failed", "Copying a solid",
+                                        [&]() -> Result<Solid> {
+                                          BRepBuilderAPI_Copy copy(topo(solid), true, false);
+                                          return detail::wrap<Solid>(copy.Shape());
+                                        });
 }
 
 Result<Solid> fillet(const Solid& solid, std::span<const Edge> edges, double radius) {

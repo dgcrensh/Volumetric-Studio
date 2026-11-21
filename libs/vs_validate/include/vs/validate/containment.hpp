@@ -10,9 +10,15 @@
 // reported when it reaches farther than the tolerance from the boundary;
 // slivers along the boundary within the tolerance are touching, not
 // crossing. The report gives the region's box, volume and how far it
-// reaches (the largest distance of its vertices from the boundary).
+// reaches: the largest distance from the boundary of its vertices and of
+// points spread over its edges and faces (a tessellation, about a
+// hundredth of its size apart), since a bulging curved face reaches
+// farthest inside the face (H2). A part outside that the kernel can't
+// measure is validate.undecided.
 //
-// Mesh contents (FP32, M8 and M11). Every vertex, and every triangle's
+// Mesh contents (FP32, M8 and M11). A vertex or centroid slack that isn't
+// finite, or triangles with no positions, is validate.undecided (a NaN
+// compares false and would pass every test). Every vertex, and every triangle's
 // centroid, is classified against the boundary. A point counts as outside
 // when it is farther from the boundary than the linear tolerance plus its
 // FP32 rounding (2⁻²² of its largest coordinate, two units in the last
@@ -27,8 +33,9 @@
 // to the boundary's faces, and a node whose samples all lie within that
 // distance of an inside centre needs nothing more. The rest (near the
 // boundary) are classified one by one, in fixed chunks that `parallel`
-// may run on several threads (each chunk with its own classifier); the
-// results are folded in chunk order, so they never depend on the threads.
+// may run on several threads (each worker with its own deep copy of the
+// boundary and classifier, reused across its chunks); the results are
+// folded in chunk order, so they never depend on the threads.
 //
 // Codes (registry.hpp):
 //   validate.containment   error  the volume (act on its contents)

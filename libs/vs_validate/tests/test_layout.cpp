@@ -120,16 +120,22 @@ TEST_CASE("Connection type rules", "[validate][layout][connection]") {
   SECTION("a patch away from a volume it joins") {
     add_patch(doc, "Flange", {a, b}, 15, 20, 10, 40, 20, BondedParams{});
     const auto r = check_layout(doc);
-    // z = 15 is inside B (touching it), 5 mm above A.
-    CHECK(fixtures::codes(r.diagnostics) == "validate.connection.off_boundary");
+    // z = 15 is 5 mm above A, and 5 mm inside B (H2: inside isn't on).
+    CHECK(fixtures::codes(r.diagnostics) ==
+          "validate.connection.off_boundary validate.connection.off_boundary");
+    REQUIRE(r.diagnostics.size() == 2);
     REQUIRE(r.diagnostics[0].subjects.size() == 2);
     CHECK(r.diagnostics[0].subjects[1].id == a);
+    CHECK(r.diagnostics[1].subjects[1].id == b);
+    CHECK(r.diagnostics[1].message.find("inside") != std::string::npos);
   }
   SECTION("a clearance gap below the minimum feature size") {
     ClearanceParams gap;
     gap.gap = Param::of(0);
     add_patch(doc, "Gap", {a, b}, 10, 20, 10, 40, 20, gap);
-    CHECK(fixtures::codes(check_layout(doc).diagnostics) == "validate.connection.gap");
+    // A and B touch: a clearance surface doesn't excuse contact (H2).
+    CHECK(fixtures::codes(check_layout(doc).diagnostics) ==
+          "validate.contact validate.connection.gap");
   }
   SECTION("a clearance patch may sit within its gap of the volumes") {
     Document apart = make_document("t");

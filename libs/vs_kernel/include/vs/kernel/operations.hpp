@@ -62,6 +62,12 @@ Result<Solid> cut(const Solid& a, std::span<const Solid> tools,
 Result<Shape> transformed(const Shape& shape, const core::dtransform& transform);
 Result<Solid> transformed(const Solid& solid, const core::dtransform& transform);
 
+// A deep copy: new topology and geometry sharing nothing with `solid`. Handles
+// are immutable, but OCCT's classifiers and distance tools may fill caches
+// on the shape they read, so work on several threads gives each thread its
+// own copy. Empty for an empty solid; kernel.copy.failed if OCCT throws.
+Result<Solid> deep_copy(const Solid& solid);
+
 // Rounds `edges` of `solid` with a constant radius. Codes:
 // kernel.fillet.invalid_radius, .foreign_edge, .failed.
 Result<Solid> fillet(const Solid& solid, std::span<const Edge> edges, double radius);

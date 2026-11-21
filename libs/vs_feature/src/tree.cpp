@@ -343,4 +343,46 @@ FeatureReferences references_of(const Feature& feature) {
   return c.finish();
 }
 
+std::vector<TreeId> tree_ids(const FeatureTree& tree) {
+  std::vector<TreeId> out;
+  for (const auto& v : tree.variables().variables()) {
+    out.push_back({v.id, TreeIdKind::Variable, {}, tree.variables().subject(v.id)});
+  }
+  for (const auto& f : tree.features()) {
+    out.push_back({f.id, TreeIdKind::Feature, f.id, tree.subject(f.id)});
+    const auto* s = f.as<SketchFeature>();
+    if (s == nullptr) continue;
+    if (!(s->sketch.id() == f.id)) {
+      out.push_back({s->sketch.id(), TreeIdKind::Sketch, f.id, tree.subject(f.id)});
+    }
+    for (const auto& e : s->sketch.entities()) {
+      out.push_back({e.id, TreeIdKind::SketchEntity, f.id, s->sketch.subject(e.id)});
+    }
+    for (const auto& c : s->sketch.constraints()) {
+      out.push_back({c.id, TreeIdKind::Constraint, f.id, s->sketch.subject(c.id)});
+    }
+  }
+  return out;
+}
+
+std::optional<TreeId> find_tree_id(const FeatureTree& tree, const Id& id) {
+  if (id.is_null()) return std::nullopt;
+  if (tree.variables().find(id)) {
+    return TreeId{id, TreeIdKind::Variable, {}, tree.variables().subject(id)};
+  }
+  for (const auto& f : tree.features()) {
+    if (f.id == id) return TreeId{id, TreeIdKind::Feature, f.id, tree.subject(f.id)};
+    const auto* s = f.as<SketchFeature>();
+    if (s == nullptr) continue;
+    if (s->sketch.id() == id) return TreeId{id, TreeIdKind::Sketch, f.id, tree.subject(f.id)};
+    if (s->sketch.find_entity(id)) {
+      return TreeId{id, TreeIdKind::SketchEntity, f.id, s->sketch.subject(id)};
+    }
+    if (s->sketch.find_constraint(id)) {
+      return TreeId{id, TreeIdKind::Constraint, f.id, s->sketch.subject(id)};
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace vs::feature
