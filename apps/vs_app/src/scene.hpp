@@ -121,7 +121,8 @@ struct SceneOptions {
   bool hide_stale_contents = false;
 };
 
-// The colour volume `index` (in document order) is tinted with.
+// The colour of the volume at `index` in the volume tree's order
+// (outline.hpp volume_tree_order(); for a flat document, document order).
 Rgb volume_color(std::size_t index);
 // The colour of a connection surface type.
 Rgb connection_color(model::ConnectionType type);

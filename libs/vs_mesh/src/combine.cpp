@@ -52,7 +52,7 @@ CombinedMesh combine(const model::Document& document, const model::DocumentBuild
       const model::Blob* blob = nullptr;
       if (blobs != nullptr) {
         const auto it = blobs->find(stat->blob);
-        if (it != blobs->end()) blob = &it->second;
+        if (it != blobs->end()) blob = it->second.get();
       }
       if (blob == nullptr) {
         out.diagnostics.add(Diagnostic::error(
@@ -103,10 +103,10 @@ CombinedMesh combine(const model::Document& document, const model::DocumentBuild
         Diagnostic::error("mesh.combine.empty", "No volume has geometry to put in the mesh"));
     return out;
   }
-  std::vector<Mesh> meshes;
+  std::vector<const Mesh*> meshes;
   meshes.reserve(out.volumes.size());
-  for (const VolumeTessellation& vt : out.volumes) meshes.push_back(vt.mesh);
-  out.weld = weld(meshes, out.seams);
+  for (const VolumeTessellation& vt : out.volumes) meshes.push_back(&vt.mesh);
+  out.weld = weld(std::span<const Mesh* const>(meshes), out.seams);
   out.diagnostics.append(out.weld.diagnostics);
   return out;
 }

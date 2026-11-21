@@ -767,8 +767,8 @@ class DocumentBuilder {
                                  sc.format == "step" ? "step" : "iges");
     {
       std::ofstream f(tmp, std::ios::binary);
-      f.write(reinterpret_cast<const char*>(it->second.data()),
-              static_cast<std::streamsize>(it->second.size()));
+      f.write(reinterpret_cast<const char*>(it->second->data()),
+              static_cast<std::streamsize>(it->second->size()));
     }
     auto shape = sc.format == "step" ? kernel::read_step(tmp) : kernel::read_iges(tmp);
     std::error_code ignored;

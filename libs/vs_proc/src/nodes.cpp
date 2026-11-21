@@ -61,7 +61,8 @@ std::vector<const NodeType*> NodeRegistry::types() const {
 
 NodeContext::NodeContext(const Node& node, const NodeType& type, const Graph& graph,
                          const GraphInputs& inputs, std::vector<Value> input_values,
-                         std::uint64_t seed, eval::ThreadPool* pool)
+                         std::uint64_t seed, eval::ThreadPool* pool,
+                         const eval::CancellationToken* cancel)
     : node_(node),
       type_(type),
       graph_(graph),
@@ -69,6 +70,7 @@ NodeContext::NodeContext(const Node& node, const NodeType& type, const Graph& gr
       input_values_(std::move(input_values)),
       seed_(seed),
       pool_(pool),
+      cancel_(cancel),
       outputs_(type.outputs.size()) {}
 
 const Value& NodeContext::input(std::string_view port) const {
@@ -577,8 +579,11 @@ void add_conversions(NodeRegistry& r) {
           }
           return;
         }
-        const SampledField samples = sample(*ctx.field("field"), *grid, ctx.pool());
-        auto m = std::make_shared<mesh::Mesh>(to_mesh(surface_nets(samples, ctx.pool()), ctx.inputs().volume));
+        const SampledField samples = sample(*ctx.field("field"), *grid, ctx.pool(), ctx.cancel());
+        if (ctx.cancelled()) return;
+        const FieldMesh net = surface_nets(samples, ctx.pool(), ctx.cancel());
+        if (ctx.cancelled()) return;
+        auto m = std::make_shared<mesh::Mesh>(to_mesh(net, ctx.inputs().volume));
         const auto triangles = static_cast<double>(m->triangle_count());
         ctx.set("mesh", MeshValue(std::move(m)));
         ctx.set("samples", static_cast<double>(grid->size()));

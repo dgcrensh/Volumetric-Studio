@@ -5,6 +5,7 @@
 // and where a diagnostic sends the user. The widgets in main_window.cpp
 // only lay these out, so the rules live here and are tested headless.
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,19 @@ Id viewport_subject(const Selection& selection);
 Selection selection_for(const core::Diagnostic& diagnostic, const model::Document& document);
 
 // --- volume tree ----------------------------------------------------------------------
+
+// The volume tree's order (L3): depth first, children right after their
+// composite, a flat document in document order; volumes no walk from the
+// root reaches (a broken parent) last, at depth 0 and not `reached`.
+// volume_rows() lists rows in this order, and a volume's display colour
+// (scene.hpp volume_color()) is its position in it, so the tree's swatches
+// and the viewport agree (H5).
+struct TreeEntry {
+  std::size_t index = 0;  // in document.volumes
+  std::size_t depth = 0;
+  bool reached = true;
+};
+std::vector<TreeEntry> volume_tree_order(const model::Document& document);
 
 struct VolumeRow {
   Id id;

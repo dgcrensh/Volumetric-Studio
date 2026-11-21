@@ -15,6 +15,11 @@ using core::Diagnostic;
 using core::Diagnostics;
 using model::VolumeStatus;
 
+std::size_t FieldContents::memory_bytes() const {
+  return sizeof(FieldContents) + value_bytes(Value(field)) +
+         samples.values.capacity() * sizeof(float) + stitched.capacity() * sizeof(core::Id);
+}
+
 Hash256 FieldContents::hash() const {
   Hasher h;
   h.add(std::string_view("vstudio.proc.field_contents"));
@@ -159,8 +164,8 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
       return;
     }
     ContentsMesh cm =
-        mesh_contents(fc->samples, *inputs->boundary, *seams, inputs->volume_subject, &pool);
-    if (cancel.cancelled()) {
+        mesh_contents(fc->samples, *inputs->boundary, *seams, inputs->volume_subject, &pool, &cancel);
+    if (cm.cancelled || cancel.cancelled()) {
       out.cancelled = true;
       return;
     }

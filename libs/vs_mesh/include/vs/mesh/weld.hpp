@@ -64,5 +64,8 @@ struct WeldResult {
 };
 
 WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& seams);
+// The same, without copying the meshes (H5: combine() hands its volumes'
+// meshes over this way). No pointer may be null.
+WeldResult weld(std::span<const Mesh* const> meshes, const SeamLibrary& seams);
 
 }  // namespace vs::mesh

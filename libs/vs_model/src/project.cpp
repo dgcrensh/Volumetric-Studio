@@ -130,7 +130,7 @@ Result<Project> finish(std::pair<Project, std::vector<detail::BlobEntry>> read,
                                            display(p), entry.path),
                                {file_subject(p)});
     }
-    project.blobs.emplace(entry.path, std::move(*bytes));
+    project.blobs.emplace(entry.path, std::make_shared<const Blob>(std::move(*bytes)));
   }
   for (const auto& v : project.document.volumes) {
     const auto* s = std::get_if<StaticContents>(&v.contents);
@@ -156,8 +156,23 @@ std::string Project::add_blob(Blob bytes, std::string_view extension) {
   const std::string hex = core::blake3_of_bytes(bytes).to_hex().substr(0, 32);
   std::string path = extension.empty() ? fmt::format("blobs/{}", hex)
                                        : fmt::format("blobs/{}.{}", hex, extension);
-  blobs.insert_or_assign(path, std::move(bytes));
+  // The same path holds the same bytes, so an existing blob stays shared.
+  if (!blobs.contains(path)) blobs.emplace(path, std::make_shared<const Blob>(std::move(bytes)));
   return path;
+}
+
+const Blob* Project::blob(std::string_view path) const {
+  const auto it = blobs.find(path);
+  return it == blobs.end() ? nullptr : it->second.get();
+}
+
+bool operator==(const Project& a, const Project& b) {
+  if (!(a.document == b.document) || a.blobs.size() != b.blobs.size()) return false;
+  for (auto i = a.blobs.begin(), j = b.blobs.begin(); i != a.blobs.end(); ++i, ++j) {
+    if (i->first != j->first) return false;
+    if (i->second != j->second && *i->second != *j->second) return false;
+  }
+  return true;
 }
 
 Diagnostics save_project(const Project& project, const fs::path& path, ProjectLayout layout,
@@ -167,7 +182,7 @@ Diagnostics save_project(const Project& project, const fs::path& path, ProjectLa
   if (layout == ProjectLayout::Zip) {
     detail::ZipEntries entries;
     entries.emplace_back(std::string(kManifest), bytes_of(manifest));
-    for (const auto& [name, bytes] : project.blobs) entries.emplace_back(name, bytes);
+    for (const auto& [name, bytes] : project.blobs) entries.emplace_back(name, *bytes);
     if (cache != nullptr) {
       for (const auto& [name, bytes] : *cache) {
         if (plain_name(name)) entries.emplace_back(fmt::format("{}/{}", kCache, name), bytes);
@@ -201,7 +216,7 @@ Diagnostics save_project(const Project& project, const fs::path& path, ProjectLa
     return out;
   }
   for (const auto& [name, bytes] : project.blobs) {
-    out.append(write_file(path / fs::path(name), bytes));
+    out.append(write_file(path / fs::path(name), *bytes));
     if (out.has_errors()) return out;
   }
   // Blobs the project no longer holds.

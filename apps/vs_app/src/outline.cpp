@@ -124,31 +124,34 @@ Selection selection_for(const core::Diagnostic& diagnostic, const model::Documen
   return Selection::none();
 }
 
-std::vector<VolumeRow> volume_rows(const eval::Evaluation& evaluation,
-                                   const std::map<Id, model::VolumeStatus>& states) {
-  std::vector<VolumeRow> rows;
-  const model::Document& doc = evaluation.document;
-  // Depth first, children after their composite (L3); a flat document stays
-  // in document order. Volumes no walk reaches (a broken parent) come last.
-  std::vector<std::pair<std::size_t, std::size_t>> order;  // index, depth
+std::vector<TreeEntry> volume_tree_order(const model::Document& doc) {
+  std::vector<TreeEntry> order;
   std::vector<bool> listed(doc.volumes.size(), false);
   const std::function<void(const Id&, std::size_t)> walk = [&](const Id& level, std::size_t depth) {
     for (const std::size_t i : model::children(doc, level)) {
       if (listed[i]) continue;
       listed[i] = true;
-      order.emplace_back(i, depth);
+      order.push_back({i, depth, true});
       if (doc.volumes[i].composite()) walk(doc.volumes[i].id, depth + 1);
     }
   };
   walk({}, 0);
   for (std::size_t i = 0; i < doc.volumes.size(); ++i) {
-    if (!listed[i]) order.emplace_back(i, 0);
+    if (!listed[i]) order.push_back({i, 0, false});
   }
-  for (const auto& [i, depth] : order) {
+  return order;
+}
+
+std::vector<VolumeRow> volume_rows(const eval::Evaluation& evaluation,
+                                   const std::map<Id, model::VolumeStatus>& states) {
+  std::vector<VolumeRow> rows;
+  const model::Document& doc = evaluation.document;
+  for (const TreeEntry& e : volume_tree_order(doc)) {
+    const std::size_t i = e.index;
     const model::Volume& v = doc.volumes[i];
     VolumeRow row;
-    row.parent = listed[i] ? v.parent : Id{};
-    row.depth = depth;
+    row.parent = e.reached ? v.parent : Id{};
+    row.depth = e.depth;
     row.id = v.id;
     row.name = v.name.empty() ? fmt::format("Volume {}", i + 1) : v.name;
     row.kind = v.kind();

@@ -79,8 +79,13 @@ GraphChange add_node(const proc::Graph& graph, std::string_view type, const Grap
                      const Id& id = Id::random());
 
 // Joins an output to an input; an edge already into the input is replaced.
-// The ports may be given either way round.
-GraphChange connect_ports(const proc::Graph& graph, const proc::PortRef& a, const proc::PortRef& b);
+// The ports may be given either way round. `a_is_output`, when known (the
+// end a wire was dragged from), says which end is the output: a port name
+// may be both an input and an output of its node (a shell's "field"), and
+// between two such nodes only the gesture tells the direction (H5).
+// Without it, `a` is taken as the output whenever that fits.
+GraphChange connect_ports(const proc::Graph& graph, const proc::PortRef& a, const proc::PortRef& b,
+                          std::optional<bool> a_is_output = std::nullopt);
 GraphChange disconnect(const proc::Graph& graph, const proc::Edge& edge);
 // Removes nodes and every edge touching them.
 GraphChange remove_nodes(const proc::Graph& graph, const std::vector<Id>& nodes);

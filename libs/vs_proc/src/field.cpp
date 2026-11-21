@@ -1,11 +1,14 @@
 #include "vs/proc/field.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <atomic>
 #include <cmath>
 #include <limits>
 #include <mutex>
 #include <numbers>
+#include <span>
 #include <utility>
 
 #include <fmt/format.h>
@@ -572,7 +575,19 @@ Hash256 SampledField::hash() const {
   h.add(std::string_view("vstudio.proc.samples"));
   h.add(grid);
   h.add(static_cast<std::uint64_t>(values.size()));
-  for (const float v : values) h.add(v);
+  // The bytes add(float) writes, value by value, handed over in blocks (H5:
+  // one BLAKE3 update per float was most of the time on large grids).
+  std::array<std::byte, 16384> block;
+  std::size_t used = 0;
+  for (const float v : values) {
+    const std::uint32_t bits = core::canonical_bits(v);
+    for (int b = 0; b < 4; ++b) block[used++] = static_cast<std::byte>((bits >> (8 * b)) & 0xffu);
+    if (used == block.size()) {
+      h.add_bytes(std::span<const std::byte>(block.data(), used));
+      used = 0;
+    }
+  }
+  if (used > 0) h.add_bytes(std::span<const std::byte>(block.data(), used));
   return h.finalize();
 }
 

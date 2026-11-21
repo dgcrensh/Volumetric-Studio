@@ -74,6 +74,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -86,8 +87,12 @@ namespace vs::model {
 inline constexpr int kProjectFormatVersion = 1;
 
 using Blob = std::vector<std::byte>;
+// A blob's bytes, immutable and shared (H5): copying a project (an undo
+// step, a preview, a drag frame) shares its blobs instead of copying them.
+// Never null in a BlobStore.
+using BlobPtr = std::shared_ptr<const Blob>;
 // Blobs by path within the project ("blobs/<hash>.<ext>").
-using BlobStore = std::map<std::string, Blob, std::less<>>;
+using BlobStore = std::map<std::string, BlobPtr, std::less<>>;
 // A project's cache files by file name within cache/ (M17).
 using CacheFiles = std::map<std::string, Blob, std::less<>>;
 
@@ -99,7 +104,11 @@ struct Project {
   // same bytes always get the same path, so storing twice keeps one copy.
   std::string add_blob(Blob bytes, std::string_view extension);
 
-  friend bool operator==(const Project&, const Project&) = default;
+  // The blob at `path`, or null.
+  [[nodiscard]] const Blob* blob(std::string_view path) const;
+
+  // Equal documents and equal blob bytes (shared or not).
+  friend bool operator==(const Project& a, const Project& b);
 };
 
 // The document as JSON (the manifest's "document"), and back. Reading checks

@@ -7,9 +7,11 @@
 #include <variant>
 
 #include "authoring.hpp"
+#include "graph_edit.hpp"
 #include "history.hpp"
 #include "reference_choices.hpp"
 #include "samples.hpp"
+#include "vs/model/hierarchy.hpp"
 #include "vs/model/references.hpp"
 
 using namespace vs;
@@ -207,7 +209,7 @@ TEST_CASE("Import contents fills a placeholder from a file", "[app][authoring]")
   const Id upright = h.project().document.find_volume("Upright")->id;
   REQUIRE_FALSE(h.apply(app::make_placeholder(upright)).has_errors());
   // The STEP file the sample holds.
-  const auto& blob = h.project().blobs.begin()->second;
+  const auto& blob = *h.project().blobs.begin()->second;
   const auto d = h.apply(app::import_contents(upright, blob, "step", core::ProductSettings::defaults()));
   INFO(samples::codes(d));
   REQUIRE_FALSE(d.has_errors());
@@ -215,4 +217,67 @@ TEST_CASE("Import contents fills a placeholder from a file", "[app][authoring]")
   REQUIRE(sc != nullptr);
   CHECK(sc->format == "step");
   CHECK(h.project().blobs.count(sc->blob) == 1);
+}
+
+TEST_CASE("Clearing a composite's contents is refused while it has children (H5)", "[app][authoring]") {
+  History h(samples::load("nested.vsproj"));
+  const auto& doc = h.project().document;
+  const model::Volume* composite = nullptr;
+  for (const auto& v : doc.volumes) {
+    if (v.composite() && !model::children(doc, v.id).empty()) composite = &v;
+  }
+  REQUIRE(composite != nullptr);
+  const Id id = composite->id;
+  const auto before = model::content_hash(h.project());
+  const auto d = h.apply(app::make_placeholder(id));
+  CHECK(d.with_code("app.swap.has_children").size() == 1);
+  CHECK(model::content_hash(h.project()) == before);
+  CHECK_FALSE(h.can_undo());
+
+  // A leaf clears as before.
+  const model::Volume* leaf = nullptr;
+  for (const auto& v : h.project().document.volumes) {
+    if (!v.composite() && !v.keep_out) leaf = &v;
+  }
+  REQUIRE(leaf != nullptr);
+  const auto cleared = h.apply(app::make_placeholder(leaf->id));
+  INFO(samples::codes(cleared));
+  CHECK_FALSE(cleared.has_errors());
+  CHECK(h.can_undo());
+}
+
+TEST_CASE("A wire between two same-named ports runs the way it was dragged (H5)", "[app][graph]") {
+  const app::GraphContext none;
+  proc::Graph g = app::starter_graph();
+  auto c = app::add_node(g, "field.shell", none);
+  REQUIRE(c.ok());
+  g = c.graph;
+  const Id first = c.node;
+  c = app::add_node(g, "field.shell", none);
+  REQUIRE(c.ok());
+  g = c.graph;
+  const Id second = c.node;
+
+  // Dragged from the second shell's "field" input to the first's output:
+  // the first feeds the second.
+  c = app::connect_ports(g, {second, "field"}, {first, "field"}, false);
+  REQUIRE(c.ok());
+  const proc::Edge* e = c.graph.edge_into(second, "field");
+  REQUIRE(e != nullptr);
+  CHECK(e->from.node == first);
+  CHECK(c.graph.edge_into(first, "field") == nullptr);
+
+  // Dragged from the second's output: the second feeds the first.
+  c = app::connect_ports(g, {second, "field"}, {first, "field"}, true);
+  REQUIRE(c.ok());
+  e = c.graph.edge_into(first, "field");
+  REQUIRE(e != nullptr);
+  CHECK(e->from.node == second);
+  CHECK(c.graph.edge_into(second, "field") == nullptr);
+
+  // Without the gesture, the first end is the output.
+  c = app::connect_ports(g, {second, "field"}, {first, "field"});
+  REQUIRE(c.ok());
+  REQUIRE(c.graph.edge_into(first, "field") != nullptr);
+  CHECK(c.graph.edge_into(first, "field")->from.node == second);
 }

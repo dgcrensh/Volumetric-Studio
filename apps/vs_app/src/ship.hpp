@@ -21,16 +21,27 @@
 // The same diagnostic reported by two of these (validate() and the engine
 // both see the layout) is listed once. Errors stop an export; warnings are
 // shown and the export may go ahead.
+//
+// H5: the weld's errors stop only STL and 3MF export (ShipTarget::Mesh);
+// STEP writes each volume's own solid or mesh and needs no weld, so for it
+// they are reported but don't stop it. And the weld is kept on the check
+// (`combined`), so the export that follows reuses it instead of welding
+// again (export_mesh() in exporter.hpp).
 
 #include <cstddef>
+#include <memory>
 #include <string>
 
 #include "vs/core/diagnostic.hpp"
 #include "vs/core/settings.hpp"
 #include "vs/eval/engine.hpp"
+#include "vs/mesh/combine.hpp"
 #include "vs/model/project.hpp"
 
 namespace vs::app {
+
+// What the export writes: a welded mesh (STL, 3MF) or STEP.
+enum class ShipTarget { Mesh, Step };
 
 struct ShipCheck {
   core::Diagnostics diagnostics;  // in the order above
@@ -38,15 +49,25 @@ struct ShipCheck {
   std::size_t warnings = 0;
   std::size_t volumes = 0;  // volumes checked (keep-outs included)
   std::size_t current = 0;  // ... of which current
+  std::size_t weld_errors = 0;  // ... of the errors, the weld's only (step 4)
+  // The weld of step 4, for the export to reuse (null when the evaluation
+  // wasn't checked). Made from the evaluation the check was given.
+  std::shared_ptr<const mesh::CombinedMesh> combined;
 
+  // Nothing stops any export.
   [[nodiscard]] bool ok() const { return errors == 0; }
+  // Nothing stops this export: STEP ignores the weld's errors.
+  [[nodiscard]] bool ok_for(ShipTarget target) const {
+    return target == ShipTarget::Mesh ? errors == 0 : errors == weld_errors;
+  }
 };
 
 ShipCheck check_for_export(const model::Project& project, const eval::Evaluation& evaluation,
                            const core::ProductSettings& settings);
 
 // One short paragraph for the summary dialog and the status bar: whether
-// the design is ready to export, the counts, and the first error.
-std::string summary(const ShipCheck& check);
+// the design is ready to export, the counts, and the first error. For
+// STEP, an unweldable mesh is mentioned but doesn't make it "not ready".
+std::string summary(const ShipCheck& check, ShipTarget target = ShipTarget::Mesh);
 
 }  // namespace vs::app

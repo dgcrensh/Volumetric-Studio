@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <queue>
 
 #include <fmt/format.h>
 
@@ -270,11 +271,13 @@ Diagnostics VariableTable::check() const {
   return out;
 }
 
-std::vector<Id> VariableTable::dependency_order() const {
-  const Graph g = build_graph(variables_);
-  const std::size_t n = variables_.size();
-  // Kahn's algorithm on "i uses j", always taking the earliest ready variable
-  // in table order, so the order is deterministic.
+namespace {
+
+// Kahn's algorithm on "i uses j", always taking the earliest ready variable
+// in table order, so the order is deterministic. Indices into the table;
+// variables in a loop are left out. A heap of the ready ones (H5: the scan
+// from the start after each pick was quadratic).
+std::vector<std::size_t> order_of(const Graph& g, std::size_t n) {
   std::vector<std::size_t> pending(n, 0);
   std::vector<std::vector<std::size_t>> users(n);
   for (std::size_t i = 0; i < n; ++i) {
@@ -283,32 +286,38 @@ std::vector<Id> VariableTable::dependency_order() const {
       users[j].push_back(i);
     }
   }
-  std::vector<bool> done(n, false);
-  std::vector<Id> order;
-  bool progress = true;
-  while (progress) {
-    progress = false;
-    for (std::size_t i = 0; i < n; ++i) {
-      if (done[i] || pending[i] != 0) continue;
-      done[i] = true;
-      order.push_back(variables_[i].id);
-      for (const std::size_t u : users[i]) --pending[u];
-      progress = true;
-      break;
+  std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>> ready;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (pending[i] == 0) ready.push(i);
+  }
+  std::vector<std::size_t> order;
+  order.reserve(n);
+  while (!ready.empty()) {
+    const std::size_t i = ready.top();
+    ready.pop();
+    order.push_back(i);
+    for (const std::size_t u : users[i]) {
+      if (--pending[u] == 0) ready.push(u);
     }
   }
   return order;
 }
 
+}  // namespace
+
+std::vector<Id> VariableTable::dependency_order() const {
+  const Graph g = build_graph(variables_);
+  std::vector<Id> out;
+  for (const std::size_t i : order_of(g, variables_.size())) out.push_back(variables_[i].id);
+  return out;
+}
+
 VariableValues VariableTable::evaluate() const {
   VariableValues out;
+  // One graph for the order and the values (H5).
   const Graph g = build_graph(variables_);
-  const auto order = dependency_order();
   std::vector<bool> ordered(variables_.size(), false);
-  for (const Id& id : order) {
-    const auto it = std::find_if(variables_.begin(), variables_.end(),
-                                 [&](const Variable& v) { return v.id == id; });
-    const std::size_t i = static_cast<std::size_t>(it - variables_.begin());
+  for (const std::size_t i : order_of(g, variables_.size())) {
     ordered[i] = true;
     const Variable& v = variables_[i];
     if (!g.parse_errors[i].code.empty() || !g.unknown[i].empty()) {

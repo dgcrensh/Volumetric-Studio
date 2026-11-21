@@ -8,7 +8,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "scenes.hpp"
 #include "vs/eval/cache.hpp"
+#include "vs/eval/engine.hpp"
 #include "vs/eval/measure.hpp"
 #include "vs/eval/thread_pool.hpp"
 
@@ -85,4 +87,80 @@ TEST_CASE("A cache entry with enumerations out of range is a miss", "[eval][cach
   CHECK(eval::decode_entry(with("\"severity\": " + severity, "\"severity\": -1"), contents->key) == nullptr);
   CHECK(eval::decode_entry(with("\"kind\": " + kind, "\"kind\": 99"), contents->key) == nullptr);
   CHECK(eval::decode_entry(with("\"severity\": " + severity, "\"severity\": " + severity), contents->key) != nullptr);
+}
+
+// --- H5: the memory cache is bounded ------------------------------------------------------
+
+namespace {
+
+const core::ProductSettings kSettings = core::ProductSettings::defaults();
+
+eval::ContentsPtr mesh_entry(int i, std::size_t triangles) {
+  auto c = std::make_shared<eval::GeneratedContents>();
+  c->key = core::hash_of(std::string_view("h5 contents"), static_cast<std::uint64_t>(i));
+  mesh::Mesh m;
+  for (std::size_t t = 0; t < triangles; ++t) {
+    const auto f = static_cast<float>(t);
+    const auto a = m.add_vertex({f, 0, 0});
+    const auto b = m.add_vertex({f, 1, 0});
+    const auto d = m.add_vertex({f, 0, 1});
+    m.add_triangle(a, b, d, core::Id::null());
+  }
+  c->mesh = std::move(m);
+  return c;
+}
+
+}  // namespace
+
+TEST_CASE("The memory cache forgets the least recently used contents past its budget (H5)",
+          "[eval][cache][hardening]") {
+  const std::size_t one = eval::contents_bytes(*mesh_entry(0, 1000));
+  REQUIRE(one > 1000 * 3 * sizeof(core::fvec3));
+  eval::ContentsCache cache(3 * one + one / 2);  // room for three
+  for (int i = 0; i < 3; ++i) cache.insert(mesh_entry(i, 1000));
+  CHECK(cache.memory_size() == 3);
+  CHECK(cache.memory_bytes() == 3 * one);
+  REQUIRE(cache.find(mesh_entry(0, 0)->key));  // 0 is now the most recently used
+  cache.insert(mesh_entry(3, 1000));
+  CHECK(cache.memory_size() == 3);
+  CHECK(cache.memory_bytes() <= cache.memory_budget());
+  CHECK(cache.find(mesh_entry(0, 0)->key));
+  CHECK_FALSE(cache.find(mesh_entry(1, 0)->key));
+  CHECK(cache.find(mesh_entry(2, 0)->key));
+  CHECK(cache.find(mesh_entry(3, 0)->key));
+
+  // Contents bigger than the whole budget still stay, alone: the engine
+  // just made them, and evaluations share them anyway.
+  cache.insert(mesh_entry(4, 10000));
+  CHECK(cache.memory_size() == 1);
+  CHECK(cache.find(mesh_entry(4, 0)->key));
+
+  // Replacing an entry counts it once; clearing counts nothing.
+  cache.insert(mesh_entry(4, 10000));
+  CHECK(cache.memory_bytes() == eval::contents_bytes(*mesh_entry(4, 10000)));
+  cache.clear_memory();
+  CHECK(cache.memory_bytes() == 0);
+}
+
+TEST_CASE("An engine evaluates within a small memory cache, regenerating what it forgot (H5)",
+          "[eval][cache][hardening]") {
+  auto b = scenes::row(3);
+  eval::EngineOptions eo;
+  eo.threads = 2;
+  eo.memory_cache_bytes = 1;  // keeps only the newest entry
+  eval::Engine engine(kSettings, eo);
+  const auto first = engine.evaluate(b.project);
+  REQUIRE(first.ok());
+  CHECK(engine.cache().memory_size() == 1);
+  // Unchanged volumes are still current (the engine keeps what it shows);
+  // the result is the same as with an unbounded cache.
+  eval::Engine roomy(kSettings, {2});
+  const auto reference = roomy.evaluate(b.project);
+  const auto second = engine.evaluate(b.project);
+  REQUIRE(second.ok());
+  REQUIRE(second.volumes.size() == reference.volumes.size());
+  for (std::size_t i = 0; i < second.volumes.size(); ++i) {
+    CHECK(second.volumes[i].status == reference.volumes[i].status);
+    CHECK(second.volumes[i].contents->output_hash == reference.volumes[i].contents->output_hash);
+  }
 }

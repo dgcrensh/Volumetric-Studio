@@ -122,6 +122,8 @@ struct EngineOptions {
   bool check_determinism = false;
   // Where to keep the on-disk cache; empty: memory only.
   std::filesystem::path disk_cache{};
+  // The memory cache's budget in bytes (ContentsCache, H5).
+  std::size_t memory_cache_bytes = ContentsCache::kDefaultMemoryBudget;
 };
 
 struct EvaluateOptions {

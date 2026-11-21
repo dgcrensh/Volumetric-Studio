@@ -75,6 +75,7 @@
 #include <vector>
 
 #include "vs/core/diagnostic.hpp"
+#include "vs/eval/cancel.hpp"
 #include "vs/eval/thread_pool.hpp"
 #include "vs/proc/graph.hpp"
 #include "vs/proc/inputs.hpp"
@@ -144,13 +145,18 @@ class NodeContext {
  public:
   NodeContext(const Node& node, const NodeType& type, const Graph& graph,
               const GraphInputs& inputs, std::vector<Value> input_values, std::uint64_t seed,
-              eval::ThreadPool* pool);
+              eval::ThreadPool* pool, const eval::CancellationToken* cancel = nullptr);
 
   [[nodiscard]] const Node& node() const { return node_; }
   [[nodiscard]] const Graph& graph() const { return graph_; }
   [[nodiscard]] const GraphInputs& inputs() const { return inputs_; }
   [[nodiscard]] std::uint64_t seed() const { return seed_; }
   [[nodiscard]] eval::ThreadPool* pool() const { return pool_; }
+  // The evaluation's token (H5), or null. A long node checks cancelled()
+  // between its steps and returns early, setting nothing: what it made is
+  // dropped, neither cached nor reported.
+  [[nodiscard]] const eval::CancellationToken* cancel() const { return cancel_; }
+  [[nodiscard]] bool cancelled() const { return cancel_ != nullptr && cancel_->cancelled(); }
   [[nodiscard]] const core::ProductSettings& settings() const { return inputs_.settings; }
 
   // Inputs by port name (the type must match the port's; checked graphs
@@ -190,6 +196,7 @@ class NodeContext {
   std::vector<Value> input_values_;  // in the type's input order
   std::uint64_t seed_;
   eval::ThreadPool* pool_;
+  const eval::CancellationToken* cancel_;
   std::vector<std::optional<Value>> outputs_;
   core::Diagnostics diagnostics_;
 };

@@ -88,6 +88,11 @@ std::vector<Face> faces(const Shape& shape);
 // does (out of the material, for a face of a solid). nullopt for a face on
 // any other kind of surface. `origin` is the face's centre of area.
 std::optional<Plane> face_plane(const Face& face);
+// The same plane and normal, with `origin` the surface's own origin (some
+// point of the infinite plane, not of the face) and no area integration:
+// for comparing planes, where face_plane()'s centre costs most of the time
+// (H5).
+std::optional<Plane> face_surface_plane(const Face& face);
 
 // A cylindrical face's surface: its axis (unit direction, origin on the
 // axis), radius, and which way the face faces.

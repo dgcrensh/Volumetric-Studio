@@ -438,14 +438,54 @@ ContentsPtr decode_entry(const model::CacheFiles& files, const Hash256& key) {
       key);
 }
 
-ContentsCache::ContentsCache(std::filesystem::path directory) : directory_(std::move(directory)) {}
+std::size_t contents_bytes(const GeneratedContents& contents) {
+  std::size_t bytes = sizeof(GeneratedContents);
+  if (contents.mesh) bytes += contents.mesh->memory_bytes();
+  if (!contents.solid.is_empty()) bytes += kSolidEstimateBytes;
+  if (contents.rebuild) bytes += kSolidEstimateBytes;
+  if (contents.extra) bytes += contents.extra->memory_bytes();
+  return bytes;
+}
+
+ContentsCache::ContentsCache(std::filesystem::path directory, std::size_t memory_budget)
+    : memory_budget_(memory_budget), directory_(std::move(directory)) {}
+
+void ContentsCache::touch(Entry& entry) { uses_.splice(uses_.begin(), uses_, entry.use); }
+
+ContentsPtr ContentsCache::keep(const Hash256& key, ContentsPtr contents, bool replace) {
+  auto it = memory_.find(key);
+  if (it != memory_.end()) {
+    touch(it->second);
+    if (!replace) return it->second.contents;
+    bytes_ -= it->second.bytes;
+    it->second.bytes = contents_bytes(*contents);
+    it->second.contents = std::move(contents);
+    bytes_ += it->second.bytes;
+  } else {
+    uses_.push_front(key);
+    const std::size_t bytes = contents_bytes(*contents);
+    it = memory_.emplace(key, Entry{std::move(contents), bytes, uses_.begin()}).first;
+    bytes_ += bytes;
+  }
+  // Forget the least recently used, never the entry just kept.
+  while (bytes_ > memory_budget_ && uses_.size() > 1) {
+    const auto old = memory_.find(uses_.back());
+    bytes_ -= old->second.bytes;
+    memory_.erase(old);
+    uses_.pop_back();
+  }
+  return it->second.contents;
+}
 
 ContentsPtr ContentsCache::find(const Hash256& key, bool* from_disk) {
   if (from_disk != nullptr) *from_disk = false;
   {
     const std::lock_guard lock(mutex_);
     const auto it = memory_.find(key);
-    if (it != memory_.end()) return it->second;
+    if (it != memory_.end()) {
+      touch(it->second);
+      return it->second.contents;
+    }
   }
   if (directory_.empty()) return nullptr;
   ContentsPtr entry = read_entry([&](const std::string& name) { return read_file(directory_ / name); },
@@ -453,14 +493,14 @@ ContentsPtr ContentsCache::find(const Hash256& key, bool* from_disk) {
   if (!entry) return nullptr;
   if (from_disk != nullptr) *from_disk = true;
   const std::lock_guard lock(mutex_);
-  return memory_.emplace(key, entry).first->second;
+  return keep(key, std::move(entry), false);
 }
 
 void ContentsCache::insert(const ContentsPtr& contents) {
   if (!contents) return;
   {
     const std::lock_guard lock(mutex_);
-    memory_[contents->key] = contents;
+    keep(contents->key, contents, true);
   }
   if (directory_.empty()) return;
   model::CacheFiles files;
@@ -494,7 +534,9 @@ std::size_t ContentsCache::insert_files(const model::CacheFiles& files) {
     ContentsPtr entry = decode_entry(files, *key);
     if (!entry) continue;
     const std::lock_guard lock(mutex_);
-    if (memory_.emplace(*key, std::move(entry)).second) ++added;
+    if (memory_.contains(*key)) continue;
+    keep(*key, std::move(entry), false);
+    ++added;
   }
   return added;
 }
@@ -502,11 +544,18 @@ std::size_t ContentsCache::insert_files(const model::CacheFiles& files) {
 void ContentsCache::clear_memory() {
   const std::lock_guard lock(mutex_);
   memory_.clear();
+  uses_.clear();
+  bytes_ = 0;
 }
 
 std::size_t ContentsCache::memory_size() const {
   const std::lock_guard lock(mutex_);
   return memory_.size();
+}
+
+std::size_t ContentsCache::memory_bytes() const {
+  const std::lock_guard lock(mutex_);
+  return bytes_;
 }
 
 }  // namespace vs::eval

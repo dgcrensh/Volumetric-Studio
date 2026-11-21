@@ -42,6 +42,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -75,6 +76,8 @@ struct ExtraContents {
   virtual ~ExtraContents() = default;
   // A digest of the contents, for output hashes and the determinism check.
   [[nodiscard]] virtual Hash256 hash() const = 0;
+  // About how many bytes it holds, for the memory cache's budget (H5).
+  [[nodiscard]] virtual std::size_t memory_bytes() const { return 0; }
 };
 
 // What one generation of a volume produced. Immutable once made, and
@@ -105,12 +108,29 @@ struct GeneratedContents {
 
 using ContentsPtr = std::shared_ptr<const GeneratedContents>;
 
+// About how many bytes `contents` holds: its mesh's arrays, the extra
+// contents' memory_bytes(), and a fixed estimate for a solid and for a
+// parametric rebuild (OCCT doesn't say how big a shape is).
+inline constexpr std::size_t kSolidEstimateBytes = 256 * 1024;
+std::size_t contents_bytes(const GeneratedContents& contents);
+
+// Generated contents by key, in memory and optionally on disk.
 // Thread-safe.
+//
+// Memory is bounded (H5): entries are counted by contents_bytes(), and once
+// they add up to more than the budget the least recently found or inserted
+// ones are forgotten (the newest entry always stays, however big). A
+// forgotten entry is still on disk when there is a directory; otherwise
+// it regenerates when next needed. The evaluations holding it keep it.
 class ContentsCache {
  public:
-  ContentsCache() = default;
+  inline static constexpr std::size_t kDefaultMemoryBudget = std::size_t{2} << 30;  // 2 GiB
+
+  explicit ContentsCache(std::size_t memory_budget = kDefaultMemoryBudget)
+      : memory_budget_(memory_budget) {}
   // Also reads and writes `directory` (created when needed).
-  explicit ContentsCache(std::filesystem::path directory);
+  explicit ContentsCache(std::filesystem::path directory,
+                         std::size_t memory_budget = kDefaultMemoryBudget);
 
   // From memory, else from disk (then kept in memory). `from_disk`, when
   // given, says which.
@@ -122,12 +142,28 @@ class ContentsCache {
   // added.
   std::size_t insert_files(const model::CacheFiles& files);
   void clear_memory();
+  // Entries in memory, and the bytes they count for.
   [[nodiscard]] std::size_t memory_size() const;
+  [[nodiscard]] std::size_t memory_bytes() const;
+  [[nodiscard]] std::size_t memory_budget() const { return memory_budget_; }
   [[nodiscard]] const std::filesystem::path& directory() const { return directory_; }
 
  private:
+  struct Entry {
+    ContentsPtr contents;
+    std::size_t bytes = 0;
+    std::list<Hash256>::iterator use;  // in uses_
+  };
+
+  // Callers hold mutex_.
+  ContentsPtr keep(const Hash256& key, ContentsPtr contents, bool replace);
+  void touch(Entry& entry);
+
   mutable std::mutex mutex_;
-  std::map<Hash256, ContentsPtr> memory_;
+  std::map<Hash256, Entry> memory_;
+  std::list<Hash256> uses_;  // most recently used first
+  std::size_t bytes_ = 0;
+  std::size_t memory_budget_ = kDefaultMemoryBudget;
   std::filesystem::path directory_;
 };
 

@@ -191,6 +191,10 @@ std::vector<Id> SketchEditor::click(dvec2 p, const Id& snap) {
 }
 
 std::vector<Id> SketchEditor::finish_shape() {
+  // A degenerate shape (zero size) leaves no step and changes nothing,
+  // the redo stack included (H5).
+  auto saved_redo = std::move(redo_);
+  const bool was_changed = changed_;
   record();
   std::vector<Id> added;
   const auto& pts = pending_;
@@ -203,6 +207,8 @@ std::vector<Id> SketchEditor::finish_shape() {
     case SketchTool::Select: break;
     case SketchTool::Point: keep(point_at(pts[0], snaps[0])); break;
     case SketchTool::Line: {
+      if (snaps[0] == snaps[1] && !snaps[0].is_null()) break;
+      if (distance(pts[0], pts[1]) <= 0) break;  // a zero-length line
       const Id a = point_at(pts[0], snaps[0]);
       const Id b = point_at(pts[1], snaps[1]);
       if (a == b) break;
@@ -247,6 +253,9 @@ std::vector<Id> SketchEditor::finish_shape() {
       const double r = distance(c, pts[1]);
       if (r <= 0 || distance(c, pts[2]) <= 0) break;
       const dvec2 e = c + normalize(pts[2] - c) * r;
+      // Start and end in one place: no arc, and no stray points (H5).
+      if (!snaps[1].is_null() && snaps[1] == snaps[2]) break;
+      if (distance(pts[1], e) <= 0) break;
       const Id center = keep(point_at(c, snaps[0]));
       const Id start = keep(point_at(pts[1], snaps[1]));
       const Id end = keep(point_at(e, snaps[2]));
@@ -288,6 +297,8 @@ std::vector<Id> SketchEditor::finish_shape() {
     // Nothing was made (a zero-size shape): drop the empty step.
     sketch_ = std::move(undo_.back());
     undo_.pop_back();
+    redo_ = std::move(saved_redo);
+    changed_ = was_changed;
     return {};
   }
   solve();
@@ -560,6 +571,11 @@ bool SketchEditor::rename(const Id& id, std::string name) {
   return true;
 }
 
+bool signed_dimension(sketch::ConstraintKind kind) {
+  using K = sketch::ConstraintKind;
+  return kind == K::HorizontalDistance || kind == K::VerticalDistance || kind == K::Angle;
+}
+
 core::Diagnostics SketchEditor::drag_dimension(const Id& constraint, double value, bool record_step) {
   core::Diagnostics d;
   auto* c = sketch_.find_constraint(constraint);
@@ -574,6 +590,7 @@ core::Diagnostics SketchEditor::drag_dimension(const Id& constraint, double valu
             "'; change that instead (or type a number to drive it by hand)."));
     return d;
   }
+  if (!signed_dimension(c->kind)) value = std::max(value, kMinDraggedDimension);
   if (record_step || undo_.empty()) record();
   c = sketch_.find_constraint(constraint);
   c->dimension->value = value;

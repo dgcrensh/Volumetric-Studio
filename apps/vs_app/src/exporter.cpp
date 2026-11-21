@@ -9,10 +9,10 @@ std::string_view extension(ExportFormat format) {
   return format == ExportFormat::Stl ? "stl" : "3mf";
 }
 
-ExportResult export_mesh(const eval::Evaluation& evaluation, const model::BlobStore& blobs,
-                         const core::ProductSettings& settings, ExportFormat format) {
-  ExportResult out;
+mesh::CombinedMesh combine_for_export(const eval::Evaluation& evaluation, const model::BlobStore& blobs,
+                                      const core::ProductSettings& settings) {
   if (!evaluation.checked) {
+    mesh::CombinedMesh out;
     out.diagnostics.add(core::Diagnostic::error(
         "app.export.unchecked", "The project has errors that stop it from building; fix them first."));
     return out;
@@ -25,8 +25,17 @@ ExportResult export_mesh(const eval::Evaluation& evaluation, const model::BlobSt
       generated.emplace(r.volume, &*r.contents->mesh);
     }
   }
-  const mesh::CombinedMesh combined =
-      mesh::combine(evaluation.document, evaluation.build, &blobs, settings, {}, generated);
+  return mesh::combine(evaluation.document, evaluation.build, &blobs, settings, {}, generated);
+}
+
+ExportResult export_mesh(const eval::Evaluation& evaluation, const model::BlobStore& blobs,
+                         const core::ProductSettings& settings, ExportFormat format) {
+  return export_mesh(evaluation, combine_for_export(evaluation, blobs, settings), format);
+}
+
+ExportResult export_mesh(const eval::Evaluation& evaluation, const mesh::CombinedMesh& combined,
+                         ExportFormat format) {
+  ExportResult out;
   out.diagnostics.append(combined.diagnostics);
   if (!combined.ok()) return out;
 

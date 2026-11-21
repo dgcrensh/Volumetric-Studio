@@ -20,23 +20,48 @@ std::optional<std::vector<Value>> NodeCache::find(const Hash256& key) const {
   const std::lock_guard lock(mutex_);
   const auto it = entries_.find(key);
   if (it == entries_.end()) return std::nullopt;
-  return it->second;
+  uses_.splice(uses_.begin(), uses_, it->second.use);
+  return it->second.outputs;
 }
 
 void NodeCache::insert(const Hash256& key, std::vector<Value> outputs) {
+  std::size_t bytes = 0;
+  for (const auto& v : outputs) bytes += value_bytes(v);
   const std::lock_guard lock(mutex_);
-  if (entries_.size() >= capacity_) entries_.clear();
-  entries_.insert_or_assign(key, std::move(outputs));
+  auto it = entries_.find(key);
+  if (it != entries_.end()) {
+    bytes_ -= it->second.bytes;
+    it->second.outputs = std::move(outputs);
+    it->second.bytes = bytes;
+    uses_.splice(uses_.begin(), uses_, it->second.use);
+  } else {
+    uses_.push_front(key);
+    entries_.emplace(key, Entry{std::move(outputs), bytes, uses_.begin()});
+  }
+  bytes_ += bytes;
+  while (bytes_ > budget_ && uses_.size() > 1) {
+    const auto old = entries_.find(uses_.back());
+    bytes_ -= old->second.bytes;
+    entries_.erase(old);
+    uses_.pop_back();
+  }
 }
 
 void NodeCache::clear() {
   const std::lock_guard lock(mutex_);
   entries_.clear();
+  uses_.clear();
+  bytes_ = 0;
 }
 
 std::size_t NodeCache::size() const {
   const std::lock_guard lock(mutex_);
   return entries_.size();
+}
+
+std::size_t NodeCache::bytes() const {
+  const std::lock_guard lock(mutex_);
+  return bytes_;
 }
 
 const NodeRun* GraphEvaluation::find(const Id& node) const {
@@ -221,7 +246,7 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       run.from_cache = true;
       ++ev.cache_hits;
     } else {
-      NodeContext ctx(node, type, graph, inputs, in, seed, options.pool);
+      NodeContext ctx(node, type, graph, inputs, in, seed, options.pool, options.cancel);
       try {
         type.evaluate(ctx);
       } catch (const std::exception& e) {
@@ -229,6 +254,12 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       }
       run.ran = true;
       ++ev.evaluated;
+      // A node stopped by the token made nothing worth keeping (H5).
+      if (ctx.cancelled()) {
+        ev.cancelled = true;
+        ev.nodes.push_back(std::move(run));
+        return ev;
+      }
       if (!ctx.failed()) {
         for (std::size_t k = 0; k < type.outputs.size(); ++k) {
           if (!ctx.outputs()[k]) {

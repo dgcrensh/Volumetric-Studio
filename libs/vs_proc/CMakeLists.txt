@@ -65,7 +65,8 @@ vs_add_library_tests(vs_proc
     tests/test_frames.cpp
     tests/test_mesh_nodes.cpp
     tests/test_bake.cpp
-    tests/test_mvp_workflows.cpp)
+    tests/test_mvp_workflows.cpp
+    tests/test_memory_and_cancel.cpp)
 
 if(VS_BUILD_TESTS)
   target_link_libraries(vs_proc_tests PRIVATE vs_model_test_fixtures)

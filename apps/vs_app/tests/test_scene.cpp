@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "outline.hpp"
 #include "samples.hpp"
 #include "scene.hpp"
 #include "vs/kernel/primitives.hpp"
@@ -187,4 +188,34 @@ TEST_CASE("An imported STL draws as static mesh contents", "[app][scene][accepta
   REQUIRE(contents != nullptr);
   CHECK(contents->mesh.triangle_count() == 20);
   CHECK(scene.find(v.id, ItemRole::Boundary) != nullptr);
+}
+
+TEST_CASE("Volumes are coloured by their place in the volume tree, as the tree's rows (H5)",
+          "[app][scene]") {
+  const auto project = samples::load("nested.vsproj");
+  const eval::Evaluation ev = samples::evaluate(project);
+  REQUIRE(ev.checked);
+  const auto order = app::volume_tree_order(ev.document);
+  const auto rows = app::volume_rows(ev);
+  REQUIRE(order.size() == ev.document.volumes.size());
+  REQUIRE(rows.size() == order.size());
+  // The nested sample's tree order isn't its document order, or this
+  // would test nothing.
+  bool differs = false;
+  for (std::size_t k = 0; k < order.size(); ++k) differs = differs || order[k].index != k;
+  CHECK(differs);
+
+  const app::Scene scene = app::build_scene(ev, kSettings);
+  std::size_t drawn = 0;
+  for (std::size_t k = 0; k < order.size(); ++k) {
+    const auto& volume = ev.document.volumes[order[k].index];
+    INFO(volume.name);
+    CHECK(rows[k].id == volume.id);
+    if (volume.keep_out) continue;
+    const auto* boundary = scene.find(volume.id, ItemRole::Boundary);
+    if (boundary == nullptr) continue;
+    ++drawn;
+    CHECK(boundary->color == app::volume_color(k));
+  }
+  CHECK(drawn >= 4);
 }

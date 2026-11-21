@@ -369,7 +369,8 @@ void SketchView::mouseMoveEvent(QMouseEvent* event) {
       // The handle's direction as it was at the press: a drag measures
       // from where it started.
       const dvec2 moved = to_sketch(event->position()) - to_sketch(dimension_from_);
-      const double value = std::max(0.01, dimension_start_ + h->rate * (moved.x * h->direction.x + moved.y * h->direction.y));
+      // SketchEditor::drag_dimension() keeps unsigned dimensions positive (H5).
+      const double value = dimension_start_ + h->rate * (moved.x * h->direction.x + moved.y * h->direction.y);
       editor_.drag_dimension(dragging_dimension_, value, !drag_started_);
       drag_started_ = true;
     }

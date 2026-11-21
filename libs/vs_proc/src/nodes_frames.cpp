@@ -203,6 +203,7 @@ void add_frame_nodes(NodeRegistry& r) {
         SpacingGrid grid(spacing);
         std::vector<core::ftransform> frames;
         for (std::uint64_t i = 0; i < attempts && frames.size() < wanted; ++i) {
+          if (i % 4096 == 0 && ctx.cancelled()) return;
           const dvec3 p{lo.x + size.x * uniform(ctx.seed(), 3 * i),
                         lo.y + size.y * uniform(ctx.seed(), 3 * i + 1),
                         lo.z + size.z * uniform(ctx.seed(), 3 * i + 2)};
@@ -253,6 +254,7 @@ void add_frame_nodes(NodeRegistry& r) {
         SpacingGrid grid(spacing);
         std::vector<core::ftransform> frames;
         for (std::uint64_t i = 0; i < attempts && frames.size() < wanted; ++i) {
+          if (i % 4096 == 0 && ctx.cancelled()) return;
           const double pick = uniform(ctx.seed(), 3 * i) * total;
           const auto it = std::upper_bound(cumulative.begin(), cumulative.end(), pick);
           const auto t = static_cast<std::size_t>(

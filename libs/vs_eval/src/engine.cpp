@@ -157,7 +157,7 @@ Engine::Engine(ProductSettings settings, EngineOptions options)
     : settings_(settings),
       options_(std::move(options)),
       pool_(options_.threads),
-      cache_(options_.disk_cache) {}
+      cache_(options_.disk_cache, options_.memory_cache_bytes) {}
 
 Engine::~Engine() = default;
 
@@ -577,7 +577,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
               "model.contents.missing_blob",
               fmt::format("'{}': its file '{}' isn't in the project", self.label, sc->blob),
               {self}));
-        } else if (auto m = mesh::read_mesh(it->second, sc->format); !m) {
+        } else if (auto m = mesh::read_mesh(*it->second, sc->format); !m) {
           g->status = VolumeStatus::Failed;
           Diagnostic d = m.error();
           d.subjects.insert(d.subjects.begin(), self);

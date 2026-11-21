@@ -445,7 +445,7 @@ TEST_CASE("The bracket can be rebuilt from scratch entirely in the app", "[app][
 
   // --- the upright's contents: the sample's STEP file, imported
   {
-    const auto& blob = sample.blobs.begin()->second;
+    const auto& blob = *sample.blobs.begin()->second;
     const auto r = w.apply(app::import_contents(upright, blob, "step", core::ProductSettings::defaults()));
     INFO(samples::codes(r));
     REQUIRE_FALSE(r.has_errors());

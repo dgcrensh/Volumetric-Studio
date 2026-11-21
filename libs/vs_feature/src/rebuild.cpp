@@ -53,7 +53,10 @@ bool on_named(const NamedFace& named, const Face& face, double tol) {
     const dvec3 off = c->axis.origin - named.cylinder->axis.origin;
     return length(off - d * dot(off, d)) <= tol;
   }
-  const auto fp = kernel::face_plane(face);
+  // The surface's plane, not face_plane()'s centre of area: only the plane
+  // matters here, and integrating every face of the body was most of a
+  // rebuild's reference lookups (H5).
+  const auto fp = kernel::face_surface_plane(face);
   if (!fp) return false;
   if (dot(fp->normal, named.plane.normal) < 1.0 - kParallel) return false;
   return std::abs(dot(fp->origin - named.plane.origin, named.plane.normal)) <= tol;
@@ -917,7 +920,7 @@ class Builder {
     }
 
     // One solid per profile, united into the tool.
-    Solid tool;
+    std::vector<Solid> pieces;
     for (const Face& face : profiles->faces) {
       Result<Solid> piece = Solid{};
       if (ex.extent == Extent::Symmetric && *draft != 0.0) {
@@ -939,13 +942,14 @@ class Builder {
         piece = kernel::make_drafted_prism(f, dir * depth, *draft, settings_);
       }
       if (!piece) return one(wrap(piece.error()));
-      if (tool.is_empty()) {
-        tool = *piece;
-      } else {
-        auto merged = kernel::unite(tool, *piece, fuzzy());
-        if (!merged) return one(wrap(merged.error()));
-        tool = *merged;
-      }
+      pieces.push_back(*piece);
+    }
+    // One boolean with every other piece as a tool (H5), not one per piece.
+    Solid tool = pieces.front();
+    if (pieces.size() > 1) {
+      auto merged = kernel::unite(pieces.front(), std::span(pieces).subspan(1), fuzzy());
+      if (!merged) return one(wrap(merged.error()));
+      tool = *merged;
     }
 
     auto body = combine(tool, ex.operation);
@@ -993,17 +997,17 @@ class Builder {
     if (!profiles) return one(profiles.error());
 
     Axis ax{axis->origin, rv.reverse ? -axis->direction : axis->direction};
-    Solid tool;
+    std::vector<Solid> pieces;
     for (const Face& face : profiles->faces) {
       auto piece = kernel::make_revolution(face, ax, turn, settings_);
       if (!piece) return one(wrap(piece.error()));
-      if (tool.is_empty()) {
-        tool = *piece;
-      } else {
-        auto merged = kernel::unite(tool, *piece, fuzzy());
-        if (!merged) return one(wrap(merged.error()));
-        tool = *merged;
-      }
+      pieces.push_back(*piece);
+    }
+    Solid tool = pieces.front();
+    if (pieces.size() > 1) {
+      auto merged = kernel::unite(pieces.front(), std::span(pieces).subspan(1), fuzzy());
+      if (!merged) return one(wrap(merged.error()));
+      tool = *merged;
     }
     auto body = combine(tool, rv.operation);
     if (!body) return one(body.error());

@@ -55,11 +55,19 @@ class Reporter {
 }  // namespace
 
 WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
+  std::vector<const Mesh*> pointers;
+  pointers.reserve(meshes.size());
+  for (const Mesh& m : meshes) pointers.push_back(&m);
+  return weld(std::span<const Mesh* const>(pointers), lib);
+}
+
+WeldResult weld(std::span<const Mesh* const> meshes, const SeamLibrary& lib) {
   WeldResult r;
   Reporter report;
 
   // 1. Each mesh on its own.
-  for (const Mesh& m : meshes) {
+  for (const Mesh* mp : meshes) {
+    const Mesh& m = *mp;
     const std::vector<Id> vols = m.volumes();
     const SubjectRef subject = vols.empty() ? SubjectRef{} : lib.volume_subject(vols.front());
     r.diagnostics.append(m.check(subject));
@@ -71,7 +79,8 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
   std::unordered_map<Id, std::uint32_t> merged;
   std::vector<std::uint32_t> seam_of;  // per output vertex: the seam it is on, or kNoSeam
   std::vector<std::uint32_t> seam_index;  // per output vertex: its index in that seam
-  for (const Mesh& m : meshes) {
+  for (const Mesh* mp : meshes) {
+    const Mesh& m = *mp;
     // The first volume using each vertex, to name it.
     std::vector<Id> owner(m.vertex_count());
     for (std::size_t t = 0; t < m.triangle_count(); ++t) {
@@ -283,14 +292,24 @@ WeldResult weld(std::span<const Mesh> meshes, const SeamLibrary& lib) {
   std::vector<std::vector<std::uint32_t>> vertex_tris;
   const bool any_problem = !r.topology.watertight() || !r.topology.manifold();
   if (any_problem) {
+    // Only the defects' edges and vertices are indexed (H5): a few bad
+    // edges on a mesh of millions of triangles needn't map every edge.
+    const auto key = [](std::uint32_t a, std::uint32_t b) {
+      return (static_cast<std::uint64_t>(std::min(a, b)) << 32) | std::max(a, b);
+    };
+    for (const auto* list : {&r.topology.boundary_edges, &r.topology.non_manifold_edges,
+                             &r.topology.inconsistent_edges}) {
+      for (const Edge& e : *list) edge_tris.try_emplace(key(e.a, e.b));
+    }
     vertex_tris.resize(m.vertex_count());
+    std::vector<std::uint8_t> bad_vertex(m.vertex_count(), 0);
+    for (const std::uint32_t v : r.topology.non_manifold_vertices) bad_vertex[v] = 1;
     for (std::uint32_t t = 0; t < m.triangle_count(); ++t) {
       const Triangle tri = m.triangle(t);
       for (std::uint32_t k = 0; k < 3; ++k) {
-        const std::uint32_t a = std::min(tri[k], tri[(k + 1) % 3]);
-        const std::uint32_t b = std::max(tri[k], tri[(k + 1) % 3]);
-        edge_tris[(static_cast<std::uint64_t>(a) << 32) | b].push_back(t);
-        vertex_tris[tri[k]].push_back(t);
+        const auto it = edge_tris.find(key(tri[k], tri[(k + 1) % 3]));
+        if (it != edge_tris.end()) it->second.push_back(t);
+        if (bad_vertex[tri[k]] != 0) vertex_tris[tri[k]].push_back(t);
       }
     }
   }

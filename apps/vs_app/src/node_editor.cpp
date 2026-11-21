@@ -463,8 +463,12 @@ class GraphScene : public QGraphicsScene {
         const proc::PortRef other{n->id(), port.name};
         NodeEditor* editor = editor_;
         const proc::PortRef from = w.port;
-        // After this event: the change rebuilds the scene.
-        QMetaObject::invokeMethod(editor, [editor, from, other] { editor->connect_ports(from, other); },
+        const bool from_output = w.from_output;
+        // After this event: the change rebuilds the scene. The drag says
+        // which end is the output, for same-named ports (H5).
+        QMetaObject::invokeMethod(editor, [editor, from, other, from_output] {
+          editor->connect_ports(from, other, from_output);
+        },
                                   Qt::QueuedConnection);
       }
       return;
@@ -1007,8 +1011,9 @@ core::Diagnostics NodeEditor::add_node(const std::string& type, std::optional<QP
   return d;
 }
 
-core::Diagnostics NodeEditor::connect_ports(const proc::PortRef& a, const proc::PortRef& b) {
-  return commit(app::connect_ports(graph_, a, b));
+core::Diagnostics NodeEditor::connect_ports(const proc::PortRef& a, const proc::PortRef& b,
+                                            std::optional<bool> a_is_output) {
+  return commit(app::connect_ports(graph_, a, b, a_is_output));
 }
 
 core::Diagnostics NodeEditor::disconnect(const proc::Edge& edge) { return commit(app::disconnect(graph_, edge)); }

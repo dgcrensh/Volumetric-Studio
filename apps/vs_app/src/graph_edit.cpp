@@ -205,7 +205,8 @@ bool ports_compatible(const Graph& graph, const proc::PortRef& from, const proc:
   return out != nullptr && in != nullptr && out->type == in->type;
 }
 
-GraphChange connect_ports(const Graph& graph, const proc::PortRef& a, const proc::PortRef& b) {
+GraphChange connect_ports(const Graph& graph, const proc::PortRef& a, const proc::PortRef& b,
+                          std::optional<bool> a_is_output) {
   // Which end is the output?
   // (A port name may be both an input and an output of its node, as a
   // shell's "field" is: the other end decides.)
@@ -216,7 +217,9 @@ GraphChange connect_ports(const Graph& graph, const proc::PortRef& a, const proc
   };
   const NodeType* ta = type_of(a);
   const NodeType* tb = type_of(b);
-  if (ta != nullptr && tb != nullptr) {
+  if (a_is_output) {
+    if (!*a_is_output) std::swap(from, to);
+  } else if (ta != nullptr && tb != nullptr) {
     const bool forward = ta->find_output(a.port) != nullptr && tb->find_input(b.port) != nullptr;
     const bool backward = tb->find_output(b.port) != nullptr && ta->find_input(a.port) != nullptr;
     if (!forward && backward) std::swap(from, to);

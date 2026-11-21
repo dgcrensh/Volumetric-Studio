@@ -59,6 +59,7 @@ struct FieldContents final : eval::ExtraContents {
   std::vector<core::Id> stitched;      // surfaces whose seams the mesh conforms to
   std::size_t moved_vertices = 0;      // moved inward for containment (mesher.hpp)
   [[nodiscard]] Hash256 hash() const override;
+  [[nodiscard]] std::size_t memory_bytes() const override;
 };
 
 // Also the layout generator (L4): a composite's generator graph runs here,

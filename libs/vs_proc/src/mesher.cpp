@@ -139,12 +139,22 @@ void cube_layer(const Padded& g, std::int64_t k, CubeLayer& out) {
   }
 }
 
+// The vertices' positions, sum / count, worked out when asked: the same
+// expression the serial code stores per vertex, so the same bits, without
+// an array of them as large as the sums (H5: 24 bytes a vertex, about half
+// a gigabyte on the 100 mm gyroid).
+struct Centres {
+  const std::vector<dvec3>& sums;
+  const std::vector<std::uint8_t>& counts;
+  dvec3 operator[](std::uint32_t v) const { return sums[v] * (1.0 / static_cast<double>(counts[v])); }
+};
+
 // The fan of one crossed edge's polygon, appended to `out` (the serial
 // loop's body for one grid point and direction).
 void edge_polygon(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t k, bool in0, Index di,
                   const std::vector<std::uint32_t>& cell_of,
                   const std::vector<std::array<std::uint32_t, 6>>& cells,
-                  const std::vector<dvec3>& P, std::vector<std::uint32_t>& polygon,
+                  const Centres& P, std::vector<std::uint32_t>& polygon,
                   std::vector<Triangle>& out) {
   const Vec3i p{i, j, k};
   polygon.clear();
@@ -180,7 +190,7 @@ void edge_polygon(const Padded& g, std::int64_t i, std::int64_t j, std::int64_t 
 }
 
 void point_layer(const Padded& g, std::int64_t k, const std::vector<std::uint32_t>& cell_of,
-                 const std::vector<std::array<std::uint32_t, 6>>& cells, const std::vector<dvec3>& P,
+                 const std::vector<std::array<std::uint32_t, 6>>& cells, const Centres& P,
                  std::vector<Triangle>& out) {
   std::vector<std::uint32_t> polygon;
   for (std::int64_t j = 0; j < g.n[1]; ++j) {
@@ -197,18 +207,27 @@ void point_layer(const Padded& g, std::int64_t k, const std::vector<std::uint32_
   }
 }
 
+bool stopped(const eval::CancellationToken* cancel) { return cancel != nullptr && cancel->cancelled(); }
+
+// Runs task(i) for i in [0, n), skipping what's left once `cancel` is
+// cancelled.
 template <typename Task>
-void each(eval::ThreadPool* pool, std::size_t n, const Task& task) {
+void each(eval::ThreadPool* pool, std::size_t n, const Task& task,
+          const eval::CancellationToken* cancel = nullptr) {
+  const auto guarded = [&](std::size_t i) {
+    if (!stopped(cancel)) task(i);
+  };
   if (pool != nullptr && pool->size() > 1) {
-    pool->run(n, task);
+    pool->run(n, guarded);
   } else {
-    for (std::size_t i = 0; i < n; ++i) task(i);
+    for (std::size_t i = 0; i < n; ++i) guarded(i);
   }
 }
 
 }  // namespace
 
-UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool) {
+UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool,
+                             const eval::CancellationToken* cancel) {
   UnmergedNet out;
   if (samples.grid.size() == 0 || samples.values.size() != samples.grid.size()) return out;
   const Padded g(samples);
@@ -217,7 +236,9 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
 
   // Vertices, layer by layer, then joined.
   std::vector<CubeLayer> layers(cube_layers);
-  each(pool, cube_layers, [&](std::size_t k) { cube_layer(g, static_cast<std::int64_t>(k), layers[k]); });
+  each(pool, cube_layers, [&](std::size_t k) { cube_layer(g, static_cast<std::int64_t>(k), layers[k]); },
+       cancel);
+  if (stopped(cancel)) return {};
   std::vector<std::size_t> vertex_at(cube_layers + 1, 0);
   std::vector<std::size_t> cube_at(cube_layers + 1, 0);
   for (std::size_t k = 0; k < cube_layers; ++k) {
@@ -231,7 +252,6 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
   out.group_starts.resize(nc + 1);
   out.cubes.resize(nc);
   std::vector<std::array<std::uint32_t, 6>> cells(nc);
-  std::vector<dvec3> positions(nv);
   std::vector<std::uint32_t> cell_of(
       static_cast<std::size_t>((g.n[0] - 1) * (g.n[1] - 1) * (g.n[2] - 1)), kNone);
   each(pool, cube_layers, [&](std::size_t k) {
@@ -241,7 +261,6 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
     for (std::size_t v = 0; v < l.sums.size(); ++v) {
       out.sums[v0 + v] = l.sums[v];
       out.counts[v0 + v] = l.counts[v];
-      positions[v0 + v] = l.sums[v] * (1.0 / static_cast<double>(l.counts[v]));
     }
     for (std::size_t c = 0; c < l.cubes.size(); ++c) {
       out.group_starts[c0 + c] = v0 + l.firsts[c];
@@ -252,14 +271,17 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
       }
     }
     l = CubeLayer{};
-  });
+  }, cancel);
+  if (stopped(cancel)) return {};
   out.group_starts[nc] = static_cast<std::uint32_t>(nv);
 
   // Polygons, layer by layer, then joined.
   std::vector<std::vector<Triangle>> tris(point_layers);
+  const Centres positions{out.sums, out.counts};
   each(pool, point_layers, [&](std::size_t k) {
     point_layer(g, static_cast<std::int64_t>(k), cell_of, cells, positions, tris[k]);
-  });
+  }, cancel);
+  if (stopped(cancel)) return {};
   std::vector<std::size_t> tri_at(point_layers + 1, 0);
   for (std::size_t k = 0; k < point_layers; ++k) tri_at[k + 1] = tri_at[k] + tris[k].size();
   out.triangles.resize(tri_at.back());
@@ -270,14 +292,16 @@ UnmergedNet unmerged_net_cpu(const SampledField& samples, eval::ThreadPool* pool
   return out;
 }
 
-UnmergedNet unmerged_net(const SampledField& samples, eval::ThreadPool* pool) {
+UnmergedNet unmerged_net(const SampledField& samples, eval::ThreadPool* pool,
+                         const eval::CancellationToken* cancel) {
+  if (stopped(cancel)) return {};
   if (samples.grid.size() != 0 && samples.values.size() == samples.grid.size()) {
     if (const auto backend = meshing_backend()) {
       UnmergedNet net;
-      if (backend->unmerged_net(samples, net)) return net;
+      if (backend->unmerged_net(samples, net)) return stopped(cancel) ? UnmergedNet{} : net;
     }
   }
-  return unmerged_net_cpu(samples, pool);
+  return unmerged_net_cpu(samples, pool, cancel);
 }
 
 // --- the merge -------------------------------------------------------------------------
@@ -357,15 +381,19 @@ class Arena {
 class Fans {
  public:
   // Each run in increasing triangle order, however many threads fill it.
-  Fans(std::size_t vertices, const std::vector<Triangle>& triangles, eval::ThreadPool* pool)
+  // A cancelled `cancel` leaves the fans unfinished: the caller drops them.
+  Fans(std::size_t vertices, const std::vector<Triangle>& triangles, eval::ThreadPool* pool,
+       const eval::CancellationToken* cancel = nullptr)
       : run_(vertices, nullptr), size_(vertices, 0), room_(vertices, 0) {
     in_chunks(pool, triangles.size(), [&](std::size_t b, std::size_t e) {
+      if (stopped(cancel)) return;
       for (std::size_t t = b; t < e; ++t) {
         for (const std::uint32_t v : triangles[t]) {
           std::atomic_ref<std::uint32_t>(room_[v]).fetch_add(1, std::memory_order_relaxed);
         }
       }
     });
+    if (stopped(cancel)) return;
     std::size_t total = 0;
     for (const std::uint32_t r : room_) total += r;
     data_.resize(total);
@@ -375,6 +403,7 @@ class Fans {
       at += room_[v];
     }
     in_chunks(pool, triangles.size(), [&](std::size_t b, std::size_t e) {
+      if (stopped(cancel)) return;
       for (std::size_t t = b; t < e; ++t) {
         for (const std::uint32_t v : triangles[t]) {
           const std::uint32_t s = std::atomic_ref<std::uint32_t>(size_[v]).fetch_add(1, std::memory_order_relaxed);
@@ -382,8 +411,9 @@ class Fans {
         }
       }
     });
-    if (pool != nullptr && pool->size() > 1) {
+    if (pool != nullptr && pool->size() > 1 && !stopped(cancel)) {
       in_chunks(pool, vertices, [&](std::size_t b, std::size_t e) {
+        if (stopped(cancel)) return;
         for (std::size_t v = b; v < e; ++v) std::sort(run_[v], run_[v] + size_[v]);
       });
     }
@@ -407,6 +437,14 @@ class Fans {
     size_[v] = static_cast<std::uint32_t>(std::remove(first, last, t) - first);
   }
   void clear(std::uint32_t v) { size_[v] = 0; }
+  [[nodiscard]] std::uint32_t size(std::uint32_t v) const { return size_[v]; }
+  // Frees the runs, keeping only their sizes (H5): compaction needs no more,
+  // and their arrays are the largest of the merge.
+  void release_runs() {
+    std::vector<std::uint32_t*>().swap(run_);
+    std::vector<std::uint32_t>().swap(room_);
+    std::vector<std::uint32_t>().swap(data_);
+  }
 
  private:
   std::vector<std::uint32_t*> run_;
@@ -427,14 +465,15 @@ struct MergeWorker {
 
 class Merger {
  public:
-  Merger(FieldMesh& m, UnmergedNet& net, eval::ThreadPool* pool)
+  Merger(FieldMesh& m, UnmergedNet& net, eval::ThreadPool* pool,
+         const eval::CancellationToken* cancel = nullptr)
       : m_(m),
         pool_(pool),
         sum_(std::move(net.sums)),
         count_(net.counts.begin(), net.counts.end()),
         tri_alive_(m.triangles.size(), 1),
         alive_(sum_.size(), 1),
-        fan_(sum_.size(), m.triangles, pool) {}
+        fan_(sum_.size(), m.triangles, pool, cancel) {}
 
   // The serial loop's body for one cube's vertices [first, end).
   void merge_cube(std::uint32_t first, std::uint32_t end, MergeWorker& w) {
@@ -454,7 +493,10 @@ class Merger {
   // its offset.
   void finish() {
     const std::size_t nv = sum_.size();
-    const auto keep_v = [&](std::size_t v) { return alive_[v] != 0 && !fan_[static_cast<std::uint32_t>(v)].empty(); };
+    // Only the runs' sizes from here on: free the rest before the
+    // compacted arrays are made, so the two never coexist (H5).
+    fan_.release_runs();
+    const auto keep_v = [&](std::size_t v) { return alive_[v] != 0 && fan_.size(static_cast<std::uint32_t>(v)) != 0; };
     const std::vector<std::size_t> v_at = offsets(pool_, nv, keep_v);
     std::vector<std::uint32_t> index(nv, kNone);
     std::vector<dvec3> positions(v_at.back());
@@ -463,7 +505,7 @@ class Merger {
       for (std::size_t v = b; v < e; ++v) {
         if (!keep_v(v)) continue;
         index[v] = static_cast<std::uint32_t>(at);
-        positions[at++] = sum_[v] * (1.0 / count_[v]);
+        positions[at++] = sum_[v] * (1.0 / static_cast<double>(count_[v]));
       }
     });
     const std::size_t nt = m_.triangles.size();
@@ -549,7 +591,7 @@ class Merger {
   FieldMesh& m_;
   eval::ThreadPool* pool_;
   std::vector<dvec3> sum_;
-  std::vector<double> count_;
+  std::vector<std::uint32_t> count_;  // exact sums of small counts, as the doubles were (H5)
   std::vector<std::uint8_t> tri_alive_;  // bytes, not bits: workers write neighbouring entries
   std::vector<std::uint8_t> alive_;
   Fans fan_;
@@ -557,18 +599,25 @@ class Merger {
 
 }  // namespace
 
-FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool) {
+FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* pool,
+                    const eval::CancellationToken* cancel) {
   FieldMesh out;
-  if (net.triangles.empty() || net.cubes.empty()) return out;
+  if (net.triangles.empty() || net.cubes.empty() || stopped(cancel)) return out;
   out.triangles = std::move(net.triangles);
-  Merger merger(out, net, pool);
+  Merger merger(out, net, pool, cancel);
+  if (stopped(cancel)) return {};
+  std::vector<std::uint8_t>().swap(net.counts);  // the merger has its own (H5)
   const std::size_t cubes = net.cubes.size();
   const auto first = [&](std::size_t c) { return net.group_starts[c]; };
   const auto end = [&](std::size_t c) { return net.group_starts[c + 1]; };
 
   if (pool == nullptr) {
     MergeWorker w;
-    for (std::size_t c = 0; c < cubes; ++c) merger.merge_cube(first(c), end(c), w);
+    constexpr std::size_t kCheckEvery = 4096;  // cubes between looks at the token
+    for (std::size_t c = 0; c < cubes; ++c) {
+      if (c % kCheckEvery == 0 && stopped(cancel)) return {};
+      merger.merge_cube(first(c), end(c), w);
+    }
   } else {
     // Cube (i, j, k) of the padded grid goes in wave i + 3j + 9k; the
     // cubes of each wave in grid order. `order` lists the crossed cubes
@@ -610,6 +659,8 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
       }
     }
     runs.push_back(cubes);
+    if (stopped(cancel)) return {};
+    std::vector<std::uint64_t>().swap(net.cubes);  // only the waves needed them (H5)
 
     // Workers' arenas and scratch, handed to each chunk of a wave.
     std::vector<std::unique_ptr<MergeWorker>> workers;
@@ -632,6 +683,7 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
     constexpr std::size_t kWaveChunk = 64;
     MergeWorker* own = acquire();
     for (std::size_t t = 0; t + 1 < runs.size(); ++t) {
+      if (stopped(cancel)) return {};
       const std::size_t b = runs[t];
       const std::size_t n = runs[t + 1] - b;
       if (n <= kWaveChunk || pool->size() == 1) {
@@ -649,8 +701,9 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
   return out;
 }
 
-FieldMesh surface_nets(const SampledField& samples, eval::ThreadPool* pool) {
-  return merge_net(unmerged_net(samples, pool), samples.grid, pool);
+FieldMesh surface_nets(const SampledField& samples, eval::ThreadPool* pool,
+                       const eval::CancellationToken* cancel) {
+  return merge_net(unmerged_net(samples, pool, cancel), samples.grid, pool, cancel);
 }
 
 mesh::Mesh to_mesh(const FieldMesh& field_mesh, const Id& volume) {
@@ -662,10 +715,13 @@ mesh::Mesh to_mesh(const FieldMesh& field_mesh, const Id& volume) {
 }
 
 SampledField clip_to_boundary_cpu(const SampledField& samples, const TriangleDistance& boundary,
-                                  double inset, eval::ThreadPool* pool) {
+                                  double inset, eval::ThreadPool* pool,
+                                  const eval::CancellationToken* cancel) {
+  if (stopped(cancel)) return {};
   SampledField out = samples;
   const GridSpec& grid = samples.grid;
   const auto slice = [&](std::size_t k) {
+    if (stopped(cancel)) return;
     const auto kk = static_cast<std::uint32_t>(k);
     for (std::uint32_t j = 0; j < grid.ny; ++j) {
       for (std::uint32_t i = 0; i < grid.nx; ++i) {
@@ -679,19 +735,22 @@ SampledField clip_to_boundary_cpu(const SampledField& samples, const TriangleDis
   } else {
     for (std::size_t k = 0; k < grid.nz; ++k) slice(k);
   }
+  if (stopped(cancel)) return {};
   return out;
 }
 
 SampledField clip_to_boundary(const SampledField& samples, const TriangleDistance& boundary,
-                              double inset, eval::ThreadPool* pool) {
+                              double inset, eval::ThreadPool* pool,
+                              const eval::CancellationToken* cancel) {
+  if (stopped(cancel)) return {};
   if (const auto backend = meshing_backend()) {
     SampledField out;
     out.grid = samples.grid;
     if (backend->clip(samples, boundary, inset, out.values) && out.values.size() == samples.grid.size()) {
-      return out;
+      return stopped(cancel) ? SampledField{} : out;
     }
   }
-  return clip_to_boundary_cpu(samples, boundary, inset, pool);
+  return clip_to_boundary_cpu(samples, boundary, inset, pool, cancel);
 }
 
 // --- volume contents -------------------------------------------------------------------
@@ -754,8 +813,9 @@ class Builder {
  public:
   enum class State : std::uint8_t { Field, Seam, Deleted };
 
-  Builder(FieldMesh fm, const TriangleDistance& boundary, double cell)
-      : boundary_(boundary), cell_(cell) {
+  Builder(FieldMesh fm, const TriangleDistance& boundary, double cell,
+          const eval::CancellationToken* cancel = nullptr)
+      : boundary_(boundary), cell_(cell), cancel_(cancel) {
     positions_ = std::move(fm.positions);
     seam_ids_.assign(positions_.size(), Id::null());
     triangles_ = std::move(fm.triangles);
@@ -841,7 +901,9 @@ class Builder {
     const double above = 0.25 * cell_;
     const double margin = cell_;
     std::vector<bool> candidate(triangles_.size(), false);
+    std::size_t candidates = 0;
     for (std::size_t t = 0; t < triangles_.size(); ++t) {
+      if (t % 65536 == 0 && stopped(cancel_)) return std::string("cancelled");
       if (state_[t] != State::Field) continue;
       const Triangle& tri = triangles_[t];
       bool within = false;  // a corner inside the outline
@@ -865,15 +927,21 @@ class Builder {
       const double facing = dot(n, outward_at(centre)) / len;
       if (facing <= (near ? -0.2 : 0.3)) continue;
       candidate[t] = true;
+      ++candidates;
     }
 
-    // Half-edges of the live triangles.
+    // Half-edges of the candidates, and later of the triangles that join
+    // the chosen piece: the only ones the steps below look across to (H5:
+    // every live triangle's took about 1.5 GB on a 10M-triangle gyroid).
+    // The mesh is manifold, so each half-edge has one owner either way.
     std::unordered_map<std::uint64_t, std::uint32_t> owner;
-    owner.reserve(triangles_.size() * 3);
-    for (std::uint32_t t = 0; t < triangles_.size(); ++t) {
-      if (state_[t] == State::Deleted) continue;
+    owner.reserve(candidates * 3);
+    const auto own = [&](std::uint32_t t) {
       const Triangle& tri = triangles_[t];
       for (std::size_t k = 0; k < 3; ++k) owner.emplace(edge_key(tri[k], tri[(k + 1) % 3]), t);
+    };
+    for (std::uint32_t t = 0; t < triangles_.size(); ++t) {
+      if (candidate[t]) own(t);
     }
     const auto across = [&](std::uint32_t a, std::uint32_t b) -> std::optional<std::uint32_t> {
       const auto it = owner.find(edge_key(b, a));
@@ -926,11 +994,6 @@ class Builder {
     //    the triangles round that vertex join it. Then the rims must be
     //    simple loops, one per loop of the seam's face (a band has two), or
     //    the contents leave gaps in the patch.
-    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> fans;
-    for (std::uint32_t t = 0; t < triangles_.size(); ++t) {
-      if (state_[t] != State::Field) continue;
-      for (const std::uint32_t v : triangles_[t]) fans[v].push_back(t);
-    }
     std::unordered_map<std::uint32_t, std::uint32_t> next;
     std::vector<std::uint32_t> starts;  // each rim edge's start, in order
     for (int attempt = 0;; ++attempt) {
@@ -952,11 +1015,23 @@ class Builder {
       if (attempt == 8) return std::string("the contents pinch the patch");
       std::sort(pinched.begin(), pinched.end());
       pinched.erase(std::unique(pinched.begin(), pinched.end()), pinched.end());
+      // The field triangles round the pinched vertices, in triangle order
+      // (found by one pass, not kept for every vertex: H5).
+      std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> fans;
+      for (const std::uint32_t v : pinched) fans[v];
+      for (std::uint32_t t = 0; t < triangles_.size(); ++t) {
+        if (state_[t] != State::Field) continue;
+        for (const std::uint32_t v : triangles_[t]) {
+          const auto it = fans.find(v);
+          if (it != fans.end()) it->second.push_back(t);
+        }
+      }
       for (const std::uint32_t v : pinched) {
         for (const std::uint32_t t : fans[v]) {
           if (component[t] == chosen) continue;
           component[t] = chosen;
           pieces[best].push_back(t);
+          own(t);
         }
       }
     }
@@ -1226,21 +1301,27 @@ class Builder {
     std::vector<std::uint8_t> moved(nv, 0);
     constexpr int kRounds = 16;
     for (int round = 0; round < kRounds && !(vertices.empty() && tris.empty()); ++round) {
+      if (stopped(cancel_)) return 0;  // the caller drops the mesh
       std::vector<double> ve(vertices.size());
       std::vector<double> te(tris.size());
+      // A whole round measures every vertex and triangle: chunks check the
+      // token, so a cancellation lands within one chunk (H5).
       const auto measure_v = [&](std::size_t b, std::size_t e) {
+        if (stopped(cancel_)) return;
         for (std::size_t i = b; i < e; ++i) ve[i] = vertex_excess(vertices[i]);
       };
       const auto measure_t = [&](std::size_t b, std::size_t e) {
+        if (stopped(cancel_)) return;
         for (std::size_t i = b; i < e; ++i) te[i] = triangle_excess(tris[i]);
       };
       if (pool != nullptr) {
         eval::parallel_for(*pool, vertices.size(), 2048, measure_v);
         eval::parallel_for(*pool, tris.size(), 2048, measure_t);
       } else {
-        measure_v(0, vertices.size());
-        measure_t(0, tris.size());
+        for (std::size_t b = 0; b < vertices.size(); b += 2048) measure_v(b, std::min(b + 2048, vertices.size()));
+        for (std::size_t b = 0; b < tris.size(); b += 2048) measure_t(b, std::min(b + 2048, tris.size()));
       }
+      if (stopped(cancel_)) return 0;
       std::vector<std::uint32_t> pushed;
       const auto want = [&](std::uint32_t v, double e) {
         if (!movable(v)) return;
@@ -1343,6 +1424,7 @@ class Builder {
 
   const TriangleDistance& boundary_;
   double cell_;
+  const eval::CancellationToken* cancel_ = nullptr;
   std::vector<dvec3> positions_;
   std::vector<Id> seam_ids_;
   std::vector<Triangle> triangles_;
@@ -1427,9 +1509,16 @@ bool closed_manifold(const mesh::Mesh& m, eval::ThreadPool* pool) {
 
 ContentsMesh mesh_contents(const SampledField& samples, const TriangleDistance& boundary,
                            std::span<const mesh::Seam> seams, const core::SubjectRef& volume,
-                           eval::ThreadPool* pool) {
+                           eval::ThreadPool* pool, const eval::CancellationToken* cancel) {
   ContentsMesh out;
-  FieldMesh fm = surface_nets(clip_to_boundary(samples, boundary, kContentsInset, pool), pool);
+  const auto give_up = [&] {
+    ContentsMesh c;
+    c.cancelled = true;
+    return c;
+  };
+  FieldMesh fm = surface_nets(clip_to_boundary(samples, boundary, kContentsInset, pool, cancel), pool,
+                              cancel);
+  if (stopped(cancel)) return give_up();
   if (fm.empty()) {
     out.diagnostics.add(Diagnostic::warning(
         "proc.mesh.empty",
@@ -1439,9 +1528,11 @@ ContentsMesh mesh_contents(const SampledField& samples, const TriangleDistance& 
     return out;
   }
 
-  Builder builder(std::move(fm), boundary, samples.grid.cell);
+  Builder builder(std::move(fm), boundary, samples.grid.cell, cancel);
   for (const mesh::Seam& seam : seams) {
+    if (stopped(cancel)) return give_up();
     if (const auto why = builder.stitch(seam)) {
+      if (stopped(cancel)) return give_up();
       out.diagnostics.add(Diagnostic::warning(
           "proc.mesh.seam_uncovered",
           fmt::format("'{}': its contents can't take the seam of '{}' ({}), so the volume won't "
@@ -1452,8 +1543,11 @@ ContentsMesh mesh_contents(const SampledField& samples, const TriangleDistance& 
       out.stitched.push_back(seam.surface);
     }
   }
+  if (stopped(cancel)) return give_up();
   out.moved_vertices = builder.contain(kContentsInset, pool);
+  if (stopped(cancel)) return give_up();
   out.mesh = builder.finish(volume.id, pool);
+  if (stopped(cancel)) return give_up();
 
   const bool clean = closed_manifold(out.mesh, pool);
   if (clean) return out;

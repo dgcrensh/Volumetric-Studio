@@ -6,6 +6,7 @@
 #include <utility>
 #include <variant>
 
+#include "outline.hpp"
 #include "vs/kernel/tessellate.hpp"
 
 namespace vs::app {
@@ -226,11 +227,18 @@ Scene build_scene(const eval::Evaluation& evaluation, const core::ProductSetting
     return std::move(m).value();
   };
 
+  // Colours by position in the volume tree, as its rows show them (H5:
+  // by document index they disagreed once composites nest children).
+  std::vector<std::size_t> slot(doc.volumes.size(), 0);
+  {
+    const auto order = volume_tree_order(doc);
+    for (std::size_t k = 0; k < order.size(); ++k) slot[order[k].index] = k;
+  }
   for (std::size_t i = 0; i < doc.volumes.size(); ++i) {
     const model::Volume& volume = doc.volumes[i];
     const model::VolumeBuild* vb = evaluation.build.find_volume(volume.id);
     const eval::VolumeResult* result = evaluation.find(volume.id);
-    const Rgb color = volume.keep_out ? Rgb{0.85f, 0.25f, 0.25f} : volume_color(i);
+    const Rgb color = volume.keep_out ? Rgb{0.85f, 0.25f, 0.25f} : volume_color(slot[i]);
     const bool has_contents = result != nullptr && result->contents &&
                               (result->contents->mesh || !result->contents->solid.is_empty()) &&
                               !(options.hide_stale_contents && result->stale_contents);

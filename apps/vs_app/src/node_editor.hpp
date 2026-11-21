@@ -87,7 +87,9 @@ class NodeEditor : public QWidget {
   // Adds a node of `type` at `at` (scene coordinates; nullopt: below the
   // others); `added` gets its id.
   core::Diagnostics add_node(const std::string& type, std::optional<QPointF> at = std::nullopt, Id* added = nullptr);
-  core::Diagnostics connect_ports(const proc::PortRef& a, const proc::PortRef& b);
+  // `a_is_output`: which end the wire was dragged from, when known (H5).
+  core::Diagnostics connect_ports(const proc::PortRef& a, const proc::PortRef& b,
+                                  std::optional<bool> a_is_output = std::nullopt);
   core::Diagnostics disconnect(const proc::Edge& edge);
   core::Diagnostics remove_nodes(const std::vector<Id>& nodes);
   core::Diagnostics rename_node(const Id& node, const std::string& name);

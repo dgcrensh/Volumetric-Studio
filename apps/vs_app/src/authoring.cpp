@@ -353,6 +353,11 @@ Command make_placeholder(Id volume) {
   return {"Clear contents", [volume](model::Project& p) -> Diagnostics {
             model::Volume* v = p.document.find_volume(volume);
             if (v == nullptr) return error("app.edit.no_volume", "That volume is no longer there.");
+            // As swap_contents(): a composite's children would be orphaned (H5).
+            if (v->composite() && !model::children(p.document, volume).empty()) {
+              return error("app.swap.has_children",
+                           fmt::format("'{}' has child volumes; delete them before clearing its contents.", v->name));
+            }
             v->contents = model::StaticContents{};
             return {};
           }};
