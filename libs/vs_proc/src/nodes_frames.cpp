@@ -38,6 +38,16 @@ core::ftransform frame_at(const dvec3& origin, const dvec3& z_dir) {
   return t;
 }
 
+// The surface's normal at `p` on its patch: the plane's, or for a curved
+// surface the direction from its axis to `p` (H3; it was the axis).
+dvec3 surface_normal(const ConnectionInput& c, const dvec3& p) {
+  if (!c.radius) return c.normal;
+  const dvec3 axis = normalize(c.normal);
+  const dvec3 d = p - c.origin;
+  const dvec3 radial = d - axis * dot(d, axis);
+  return length(radial) > 0.0 ? radial : c.x_axis;
+}
+
 // The input frames, or one frame at the origin.
 std::vector<core::ftransform> input_frames(NodeContext& ctx) {
   if (ctx.has("frames")) return ctx.frames("frames")->frames;
@@ -214,8 +224,8 @@ void add_frame_nodes(NodeRegistry& r) {
   r.add(make(
       "scatter.surface", "scatter",
       "`count` seeded random points on a connection surface's patch, `spacing` apart (0: no "
-      "minimum), each frame's z along the surface's normal (out of the volume's side it "
-      "faces)",
+      "minimum), each frame's z along the surface's normal there (a curved surface's points "
+      "away from its axis)",
       {in("count", P::Scalar, num(20)), in("spacing", P::Scalar, num(0))},
       {out("frames", P::Frames), out("count", P::Scalar)},
       [](NodeContext& ctx) {
@@ -258,7 +268,7 @@ void add_frame_nodes(NodeRegistry& r) {
           const dvec3 p = pos[v[0]] + (pos[v[1]] - pos[v[0]]) * a + (pos[v[2]] - pos[v[0]]) * b;
           if (!grid.accepts(p)) continue;
           grid.add(p);
-          frames.push_back(frame_at(p, c->normal));
+          frames.push_back(frame_at(p, surface_normal(*c, p)));
         }
         if (frames.size() < wanted) {
           too_few(ctx, frames.size(), count, {"count", "spacing"});

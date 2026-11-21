@@ -117,10 +117,12 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
     std::optional<std::set<Id>> wanted;
     if (options.only_for) wanted = ancestors(graph, *options.only_for);
     for (const auto& found : check_graph(graph, registry)) {
-      // Inspecting a node needs only its own inputs finished.
-      if (wanted && is_unfinished(found.code) &&
-          (found.code == "proc.graph.output" || found.subjects.empty() ||
-           !wanted->contains(found.subjects.front().id))) {
+      // Inspecting a node needs only its own inputs finished, and no
+      // output (a graph read from a file may still have two).
+      if (wanted && (found.code == "proc.graph.no_output" ||
+                     found.code == "proc.graph.multiple_outputs" ||
+                     (is_unfinished(found.code) &&
+                      (found.subjects.empty() || !wanted->contains(found.subjects.front().id))))) {
         continue;
       }
       d.add(found);
@@ -191,6 +193,8 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
     Hasher h;
     h.add(std::string_view("vstudio.proc.node"));
     h.add(core::kEngineVersion);
+    // The settings decide what nodes accept and how finely they work (H3).
+    h.add(inputs.settings);
     h.add(node.type);
     h.add(static_cast<std::uint64_t>(node.settings.size()));
     for (const auto& [k, v] : node.settings) {

@@ -1,12 +1,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <string>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "bracket.hpp"
 #include "scenes.hpp"
+#include "vs/core/version.hpp"
 #include "vs/eval/cache.hpp"
 #include "vs/eval/engine.hpp"
 #include "vs/kernel/exchange.hpp"
@@ -40,9 +42,9 @@ TEST_CASE("BRep text round-trips a solid and hashes stably", "[eval][cache]") {
 
 TEST_CASE("Cache keys follow exactly the volume's inputs", "[eval][cache]") {
   scenes::Row r = scenes::row(2);
-  const auto keys = [&](const model::Project& p) {
-    const auto layout = model::build_layout(p.document, kSettings);
-    return std::pair{cache_key(p.document, layout, 0), cache_key(p.document, layout, 1)};
+  const auto keys = [&](const model::Project& p, const core::ProductSettings& s = kSettings) {
+    const auto layout = model::build_layout(p.document, s);
+    return std::pair{cache_key(p.document, layout, 0, s), cache_key(p.document, layout, 1, s)};
   };
   const auto [a0, b0] = keys(r.project);
   REQUIRE(a0);
@@ -66,6 +68,19 @@ TEST_CASE("Cache keys follow exactly the volume's inputs", "[eval][cache]") {
     CHECK(*a1 == *a0);
     CHECK(*b1 != *b0);
   }
+  SECTION("other product settings change every key (H3)") {
+    core::ProductSettings tighter = kSettings;
+    tighter.linear_tolerance_mm = 1e-7;
+    const auto [a1, b1] = keys(r.project, tighter);
+    CHECK(*a1 != *a0);
+    CHECK(*b1 != *b0);
+    core::ProductSettings larger = kSettings;
+    larger.working_half_extent_mm = 2000.0;
+    const auto [a2, b2] = keys(r.project, larger);
+    CHECK(*a2 != *a0);
+    CHECK(*b2 != *b0);
+    CHECK(*a2 != *a1);
+  }
   SECTION("a renamed volume keeps its key: names aren't inputs") {
     r.project.document.volumes[0].name = "Renamed";
     CHECK(*keys(r.project).first == *a0);
@@ -84,7 +99,7 @@ TEST_CASE("A static volume's key ignores its parameters", "[eval][cache]") {
   auto b = bracket::make_bracket();
   const auto key = [&] {
     const auto layout = model::build_layout(b.project.document, kSettings);
-    return *cache_key(b.project.document, layout, 1);  // Upright, static
+    return *cache_key(b.project.document, layout, 1, kSettings);  // Upright, static
   };
   const auto before = key();
   scenes::set_parameter(b.project, b.upright, b.upright_load, 123);
@@ -130,6 +145,36 @@ TEST_CASE("The disk cache serves a second engine", "[eval][cache]") {
     CHECK(c.ok());
     CHECK(c.stats.regenerated == 3);
     CHECK(c.output_hash() == a.output_hash());
+  }
+  SECTION("entries an older engine wrote are a miss (H3: engine 1 to 2)") {
+    for (const auto& e : std::filesystem::directory_iterator(eo.disk_cache)) {
+      if (e.path().extension() != ".json") continue;
+      std::string text;
+      {
+        std::ifstream in(e.path());
+        text.assign(std::istreambuf_iterator<char>(in), {});
+      }
+      const std::string now = "\"engine\": " + std::to_string(core::kEngineVersion) + ",";
+      const auto at = text.find(now);
+      REQUIRE(at != std::string::npos);
+      text.replace(at, now.size(), "\"engine\": 1,");
+      std::ofstream(e.path(), std::ios::trunc) << text;
+    }
+    eval::Engine third(kSettings, eo);
+    const auto c = third.evaluate(r.project);
+    REQUIRE(c.ok());
+    CHECK(c.stats.disk_hits == 0);
+    CHECK(c.stats.regenerated == 3);
+    CHECK(c.output_hash() == a.output_hash());
+  }
+  SECTION("an engine with other product settings misses it (H3)") {
+    core::ProductSettings other = kSettings;
+    other.linear_tolerance_mm = 1e-7;
+    eval::Engine third(other, eo);
+    const auto c = third.evaluate(r.project);
+    REQUIRE(c.ok());
+    CHECK(c.stats.disk_hits == 0);
+    CHECK(c.stats.regenerated == 3);
   }
 }
 

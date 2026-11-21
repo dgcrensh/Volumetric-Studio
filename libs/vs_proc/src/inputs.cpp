@@ -97,6 +97,7 @@ core::Result<GraphInputs> gather_inputs(const model::Document& document,
     c.origin = cb->frame.origin;
     c.x_axis = cb->frame.x_axis;
     c.normal = cb->frame.normal();
+    if (cb->cylinder) c.radius = cb->cylinder->radius;
     c.area = cb->area;
     c.gap = cb->gap;
     c.min_wall = cb->min_wall;
@@ -115,6 +116,7 @@ core::Result<GraphInputs> gather_inputs(const model::Document& document,
     h.add(static_cast<std::uint64_t>(c.hole_centres.size()));
     for (const auto& p : c.hole_centres) h.add(p);
     h.add(c.patch->hash());
+    if (c.radius) h.add(std::string_view("curved")).add(*c.radius);  // planar hashes unchanged
     c.hash = h.finalize();
     in.connections.push_back(std::move(c));
   }

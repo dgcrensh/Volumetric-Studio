@@ -255,3 +255,35 @@ TEST_CASE("The parallel closed-manifold check never passes what analyse rejects"
     CHECK_FALSE(agrees(m));
   }
 }
+
+TEST_CASE("A long thin grid merges in memory that follows its crossings (H3)",
+          "[proc][mesher][parallel]") {
+  // 2 x 2 x 4M samples with a few blobs: the padded grid has 36M waves but
+  // a few hundred crossed cubes. Before H3 the merge counted cubes into
+  // every wave (288 MB of counters, and a pass over each); now it sorts
+  // the crossed cubes' waves. The mesh is still the reference's.
+  SampledField s;
+  s.grid.origin = {0.0, 0.0, -500.0};
+  s.grid.cell = 0.00025;
+  s.grid.nx = 2;
+  s.grid.ny = 2;
+  s.grid.nz = 4'000'000;
+  s.values.assign(s.grid.size(), 1.0f);
+  for (std::uint32_t k = 1'000; k < s.grid.nz; k += 397'000) {
+    for (std::uint32_t dk = 0; dk < 3 + k % 5; ++dk) {
+      for (std::uint32_t j = 0; j < 2; ++j) {
+        for (std::uint32_t i = 0; i < 2; ++i) {
+          if ((i + j + dk) % 3 != 2) s.values[s.grid.index(i, j, k + dk)] = -1.0f;
+        }
+      }
+    }
+  }
+  const FieldMesh ref = surface_nets_reference(s);
+  REQUIRE_FALSE(ref.triangles.empty());
+  for (const std::size_t threads : {1u, 4u, 16u}) {
+    eval::ThreadPool pool(threads);
+    const UnmergedNet net = unmerged_net_cpu(s, &pool);
+    REQUIRE(net.cubes.size() < 2'000);
+    require_same(merge_net(net, s.grid, &pool), ref);
+  }
+}

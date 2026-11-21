@@ -159,3 +159,25 @@ TEST_CASE("Every library node declares well-formed ports", "[proc][nodes]") {
   CHECK(library().find("field.sphere") != nullptr);
   CHECK(library().find("field.teapot") == nullptr);
 }
+
+TEST_CASE("Other product settings miss the per-node cache (H3)", "[proc][nodes]") {
+  Graph g;
+  const Id ball = g.add("field.sphere");
+  const Id out = g.add("output");
+  g.link(ball, "field", out, "contents");
+  NodeCache cache;
+  EvaluateGraphOptions o;
+  o.cache = &cache;
+  GraphInputs in = scenes::bare_inputs();
+  const auto first = evaluate_graph(g, in, o);
+  REQUIRE(first.ok());
+  const auto again = evaluate_graph(g, in, o);
+  REQUIRE(again.ok());
+  CHECK(again.find(ball)->from_cache);
+
+  in.settings.linear_tolerance_mm = 1e-7;
+  const auto other = evaluate_graph(g, in, o);
+  REQUIRE(other.ok());
+  CHECK_FALSE(other.find(ball)->from_cache);
+  CHECK(other.find(ball)->key != first.find(ball)->key);
+}

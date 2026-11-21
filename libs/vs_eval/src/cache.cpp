@@ -48,7 +48,8 @@ void add_optional(Hasher& h, const std::optional<double>& v) {
 }  // namespace
 
 std::optional<Hash256> cache_key(const model::Document& document,
-                                 const model::DocumentBuild& layout, std::size_t index) {
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings) {
   const model::Volume& v = document.volumes[index];
   const model::VolumeBuild& vb = layout.volumes[index];
   if (vb.boundary.is_empty() || vb.status == VolumeStatus::Failed) return std::nullopt;
@@ -56,6 +57,7 @@ std::optional<Hash256> cache_key(const model::Document& document,
   Hasher h;
   h.add(std::string_view("vstudio.eval.contents"));
   h.add(static_cast<std::uint64_t>(core::kEngineVersion));
+  h.add(settings);
   h.add(v.kind());
   h.add(v.keep_out);
 

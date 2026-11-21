@@ -2,7 +2,7 @@
 
 Nov 20, 2026 · follows L4 · precedes L5 (configurations and design tables)
 
-**Status: in progress.** H1 done (PR 31, decision 0023); H2 in review (decision 0024).
+**Status: in progress.** H1 done (PR 31, decision 0023); H2 done (PR 32, decision 0024); H3 in review (decision 0025).
 
 **Revised.** The first draft (`1e2a378`) also moved procedural fields and the unmerged surface net to FP32 for the GPU. Review cut that (see "What was cut" below) and reordered the phases so that everything a Linux cloud session can build and test runs first, and the work that needs the Windows desktop (a GPU, the Qt app, `[gui]` suites) is grouped at the end. Dallas accepted the revision on Nov 20, 2026.
 

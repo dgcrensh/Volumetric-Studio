@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 
 #include "vs/core/transform.hpp"
+#include "vs/proc/field_layout.hpp"
 
 namespace vs::proc {
 
@@ -19,6 +20,11 @@ using core::Diagnostic;
 namespace {
 
 dvec3 vec_at(const std::vector<double>& n, std::size_t i) { return {n[i], n[i + 1], n[i + 2]}; }
+void put_vec(std::vector<double>& n, std::size_t i, const dvec3& v) {
+  n[i] = v.x;
+  n[i + 1] = v.y;
+  n[i + 2] = v.z;
+}
 
 Field make(FieldOp op, std::vector<double> numbers, std::vector<Field> children = {},
            std::shared_ptr<const TriangleDistance> mesh = nullptr) {
@@ -215,6 +221,64 @@ double cos_det(double x) {
   }
 }
 
+namespace {
+
+// fdlibm's s_atan.c: atan(x) for x >= 0, finite.
+double atan_nonnegative(double x) {
+  static constexpr double kAtanHi[] = {4.63647609000806093515e-01, 7.85398163397448278999e-01,
+                                       9.82793723247329054082e-01, 1.57079632679489655800e+00};
+  static constexpr double kAtanLo[] = {2.26987774529616870924e-17, 3.06161699786838301793e-17,
+                                       1.39033110312309984516e-17, 6.12323399573676603587e-17};
+  static constexpr double kAT[] = {
+      3.33333333333329318027e-01,  -1.99999999998764832476e-01, 1.42857142725034663711e-01,
+      -1.11111104054623557880e-01, 9.09088713343650656196e-02,  -7.69187620504482999495e-02,
+      6.66107313738753120669e-02,  -5.83357013379057348645e-02, 4.97687799461593236017e-02,
+      -3.65315727442169155270e-02, 1.62858201153657823623e-02};
+  if (x >= 7.37869762948382064640e+19) return kAtanHi[3] + kAtanLo[3];  // 2^66
+  int id = -1;
+  if (x < 0.4375) {
+    if (x < 7.45058059692382812500e-09) return x;  // 2^-27
+  } else if (x < 1.1875) {
+    if (x < 0.6875) {
+      id = 0;
+      x = (2.0 * x - 1.0) / (2.0 + x);
+    } else {
+      id = 1;
+      x = (x - 1.0) / (x + 1.0);
+    }
+  } else if (x < 2.4375) {
+    id = 2;
+    x = (x - 1.5) / (1.0 + 1.5 * x);
+  } else {
+    id = 3;
+    x = -1.0 / x;
+  }
+  const double z = x * x;
+  const double w = z * z;
+  const double s1 = z * (kAT[0] + w * (kAT[2] + w * (kAT[4] + w * (kAT[6] + w * (kAT[8] + w * kAT[10])))));
+  const double s2 = w * (kAT[1] + w * (kAT[3] + w * (kAT[5] + w * (kAT[7] + w * kAT[9]))));
+  if (id < 0) return x - x * (s1 + s2);
+  return kAtanHi[id] - ((x * (s1 + s2) - kAtanLo[id]) - x);
+}
+
+constexpr double kPiHi = 3.1415926535897931160e+00;
+constexpr double kPiLo = 1.2246467991473531772e-16;
+constexpr double kPio2Hi = 1.5707963267948965580e+00;
+constexpr double kPio2Lo = 6.1232339957367658860e-17;
+
+}  // namespace
+
+double atan2_det(double y, double x) {
+  if (!std::isfinite(x) || !std::isfinite(y)) return std::numeric_limits<double>::quiet_NaN();
+  const double ay = std::abs(y);
+  const double ax = std::abs(x);
+  if (ay == 0.0 && ax == 0.0) return 0.0;
+  // The first octant's angle, then reflected into the right quadrant.
+  double r = ay <= ax ? atan_nonnegative(ay / ax) : (kPio2Hi - atan_nonnegative(ax / ay)) + kPio2Lo;
+  if (x < 0.0) r = (kPiHi - r) + kPiLo;
+  return y < 0.0 ? -r : r;
+}
+
 FieldExpr::FieldExpr(FieldOp op, std::vector<double> numbers, std::vector<Field> children,
                      std::shared_ptr<const TriangleDistance> mesh)
     : op_(op), numbers_(std::move(numbers)), children_(std::move(children)), mesh_(std::move(mesh)) {
@@ -248,12 +312,13 @@ double FieldExpr::eval(const dvec3& p) const {
     case FieldOp::Box:
       return box_sdf(p, vec_at(n, 0), vec_at(n, 3));
     case FieldOp::Cylinder: {
-      const dvec3 axis = vec_at(n, 3);
-      const dvec3 d = p - vec_at(n, 0);
+      namespace L = field_layout;
+      const dvec3 axis = vec_at(n, L::kCylinderAxis);
+      const dvec3 d = p - vec_at(n, L::kCylinderCentre);
       const double along = dot(d, axis);
       const double radial = length(d - axis * along);
-      const double qx = radial - n[6];
-      const double qy = std::abs(along) - n[7];
+      const double qx = radial - n[L::kCylinderRadius];
+      const double qy = std::abs(along) - n[L::kCylinderHalfHeight];
       const double ox = std::max(qx, 0.0);
       const double oy = std::max(qy, 0.0);
       return std::sqrt(ox * ox + oy * oy) + std::min(std::max(qx, qy), 0.0);
@@ -298,23 +363,30 @@ double FieldExpr::eval(const dvec3& p) const {
       return std::clamp(children_[0]->eval(p), n[0], n[1]);
     case FieldOp::Lattice:
     case FieldOp::Tpms: {
-      const dvec3 origin = vec_at(n, 2);
+      namespace L = field_layout;
+      const dvec3 origin = vec_at(n, L::kInfillOrigin);
       const double thickness =
-          children_.empty() ? n[5] : std::max(children_[0]->eval(p), 0.0);
+          children_.empty() ? n[L::kInfillThickness] : std::max(children_[0]->eval(p), 0.0);
+      const auto kind = static_cast<int>(n[L::kInfillKind]);
+      const double cell = n[L::kInfillCell];
       const double d = op_ == FieldOp::Lattice
-                           ? lattice_distance(static_cast<LatticeCell>(static_cast<int>(n[0])), p, origin, n[1])
-                           : tpms_distance(static_cast<TpmsSurface>(static_cast<int>(n[0])), p, origin, n[1]);
+                           ? lattice_distance(static_cast<LatticeCell>(kind), p, origin, cell)
+                           : tpms_distance(static_cast<TpmsSurface>(kind), p, origin, cell);
       return d - 0.5 * thickness;
     }
     case FieldOp::Instances: {
       // numbers: radius, then per copy the inverse's 3x3 (row major), the
       // frame's origin and the copy's reach (radius times its largest scale).
+      namespace L = field_layout;
+      static_assert(L::kInstanceInverse == 0);
       double best = std::numeric_limits<double>::infinity();
-      const std::size_t copies = (n.size() - 1) / 13;
+      const std::size_t copies = (n.size() - L::kInstancesFirst) / L::kInstanceStride;
       for (std::size_t c = 0; c < copies; ++c) {
-        const double* m = n.data() + 1 + 13 * c;
-        const dvec3 d{p.x - m[9], p.y - m[10], p.z - m[11]};
-        if (m[12] > 0.0 && length(d) - m[12] >= best) continue;
+        const double* m = n.data() + L::kInstancesFirst + L::kInstanceStride * c;
+        const double* o = m + L::kInstanceOrigin;
+        const dvec3 d{p.x - o[0], p.y - o[1], p.z - o[2]};
+        const double reach = m[L::kInstanceReach];
+        if (reach > 0.0 && length(d) - reach >= best) continue;
         const dvec3 local{m[0] * d.x + m[1] * d.y + m[2] * d.z,
                           m[3] * d.x + m[4] * d.y + m[5] * d.z,
                           m[6] * d.x + m[7] * d.y + m[8] * d.z};
@@ -337,8 +409,14 @@ Field box_field(const dvec3& c, const dvec3& size) {
 }
 
 Field cylinder_field(const dvec3& c, const dvec3& axis, double radius, double height) {
+  namespace L = field_layout;
   const dvec3 a = normalize(axis);
-  return make(FieldOp::Cylinder, {c.x, c.y, c.z, a.x, a.y, a.z, radius, height * 0.5});
+  std::vector<double> n(L::kCylinderNumbers);
+  put_vec(n, L::kCylinderCentre, c);
+  put_vec(n, L::kCylinderAxis, a);
+  n[L::kCylinderRadius] = radius;
+  n[L::kCylinderHalfHeight] = height * 0.5;
+  return make(FieldOp::Cylinder, std::move(n));
 }
 
 Field plane_field(const dvec3& p, const dvec3& normal) {
@@ -392,11 +470,25 @@ Field clamp_field(Field a, double lo, double hi) {
   return make(FieldOp::Clamp, {lo, hi}, {std::move(a)});
 }
 
+namespace {
+
+std::vector<double> infill_numbers(int kind, double cell, const dvec3& o, double thickness) {
+  namespace L = field_layout;
+  std::vector<double> n(L::kInfillNumbers);
+  n[L::kInfillKind] = static_cast<double>(kind);
+  n[L::kInfillCell] = cell;
+  put_vec(n, L::kInfillOrigin, o);
+  n[L::kInfillThickness] = thickness;
+  return n;
+}
+
+}  // namespace
+
 Field lattice_field(LatticeCell kind, double cell, const dvec3& o, double thickness, Field grade) {
   std::vector<Field> children;
   if (grade) children.push_back(std::move(grade));
   return make(FieldOp::Lattice,
-              {static_cast<double>(kind), cell, o.x, o.y, o.z, grade ? 0.0 : thickness},
+              infill_numbers(static_cast<int>(kind), cell, o, grade ? 0.0 : thickness),
               std::move(children));
 }
 
@@ -404,13 +496,17 @@ Field tpms_field(TpmsSurface kind, double cell, const dvec3& o, double thickness
   std::vector<Field> children;
   if (grade) children.push_back(std::move(grade));
   return make(FieldOp::Tpms,
-              {static_cast<double>(kind), cell, o.x, o.y, o.z, grade ? 0.0 : thickness},
+              infill_numbers(static_cast<int>(kind), cell, o, grade ? 0.0 : thickness),
               std::move(children));
 }
 
 Field instances_field(Field templ, const FrameSet& frames, double radius) {
+  namespace L = field_layout;
+  static_assert(L::kInstancesRadius == 0 && L::kInstancesFirst == 1 && L::kInstanceOrigin == 9 &&
+                    L::kInstanceReach == 12 && L::kInstanceStride == 13,
+                "instances_field() appends in this order");
   std::vector<double> n{radius};
-  n.reserve(1 + 13 * frames.frames.size());
+  n.reserve(L::kInstancesFirst + L::kInstanceStride * frames.frames.size());
   for (const auto& f : frames.frames) {
     const core::dtransform t = core::to_fp64(f);
     const auto inv = core::inverse(t);

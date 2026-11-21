@@ -1,6 +1,9 @@
 #include "vs/eval/thread_pool.hpp"
 
 #include <atomic>
+#include <charconv>
+#include <cstdlib>
+#include <string>
 
 namespace vs::eval {
 
@@ -15,7 +18,32 @@ struct PoolScope {
   PoolScope(const PoolScope&) = delete;
   PoolScope& operator=(const PoolScope&) = delete;
 };
+std::string environment(const char* name) {
+#ifdef _MSC_VER
+  char* value = nullptr;
+  std::size_t length = 0;
+  if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) return {};
+  std::string out(value);
+  std::free(value);
+  return out;
+#else
+  const char* value = std::getenv(name);
+  return value != nullptr ? std::string(value) : std::string();
+#endif
+}
+
 }  // namespace
+
+std::size_t default_thread_count() {
+  const std::string text = environment("VS_THREADS");
+  std::size_t n = 0;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), n);
+  if (!text.empty() && error == std::errc{} && end == text.data() + text.size() && n >= 1 &&
+      n <= kMaxThreads) {
+    return n;
+  }
+  return std::max<std::size_t>(1, std::thread::hardware_concurrency());
+}
 
 struct ThreadPool::Batch {
   std::size_t n = 0;
@@ -31,7 +59,7 @@ struct ThreadPool::Batch {
 };
 
 ThreadPool::ThreadPool(std::size_t threads) {
-  if (threads == 0) threads = std::max<std::size_t>(1, std::thread::hardware_concurrency());
+  if (threads == 0) threads = default_thread_count();
   workers_.reserve(threads - 1);
   for (std::size_t i = 1; i < threads; ++i) workers_.emplace_back([this] { worker_loop(); });
 }

@@ -156,7 +156,7 @@ bool is_output_node(std::string_view type) {
 }
 
 bool is_unfinished(std::string_view code) {
-  return code == "proc.graph.missing_input" || code == "proc.graph.output";
+  return code == "proc.graph.missing_input" || code == "proc.graph.no_output";
 }
 
 std::vector<std::size_t> topological_order(const Graph& graph) {
@@ -332,11 +332,20 @@ Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry) {
                               fmt::format("The graph has a loop: {}", path), std::move(subjects)));
   }
 
-  if (outputs != 1) {
+  // H3: no output is unfinished; a second one is wrong, and edit() refuses it.
+  if (outputs == 0) {
+    out.add(Diagnostic::error("proc.graph.no_output", "The graph has no output node yet"));
+  } else if (outputs > 1) {
+    std::vector<SubjectRef> subjects;
+    for (const auto& node : graph.nodes) {
+      if (is_output_node(node.type)) subjects.push_back(node_subject(node));
+    }
+    // The second output first: that's the one to remove.
+    std::rotate(subjects.begin(), subjects.begin() + 1, subjects.end());
     out.add(Diagnostic::error(
-        "proc.graph.output",
-        outputs == 0 ? std::string("The graph has no output node")
-                     : fmt::format("The graph has {} output nodes; it needs exactly one", outputs)));
+        "proc.graph.multiple_outputs",
+        fmt::format("The graph has {} output nodes; it needs exactly one", outputs),
+        std::move(subjects)));
   }
   return out;
 }

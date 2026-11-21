@@ -44,9 +44,12 @@ struct ConnectionInput {
   Id id;
   std::string name;
   model::ConnectionType type = model::ConnectionType::Bonded;
-  dvec3 origin{};       // the patch plane's frame
-  dvec3 x_axis{1, 0, 0};
+  dvec3 origin{};       // the patch plane's frame; a curved one's axis (origin
+  dvec3 x_axis{1, 0, 0};  // and normal) and its angle 0 (x_axis)
   dvec3 normal{0, 0, 1};
+  // A curved (cylindrical, L2) surface's radius: its normal at a point is
+  // radial, away from the axis, not `normal` (H3).
+  std::optional<double> radius;
   double area = 0.0;    // mm²
   std::optional<double> gap;       // clearance
   std::optional<double> min_wall;  // bolted flange
