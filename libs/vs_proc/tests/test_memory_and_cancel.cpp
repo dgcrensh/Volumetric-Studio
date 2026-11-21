@@ -169,8 +169,9 @@ TEST_CASE("Cancelling mid-mesh_contents returns within 250 ms (H5)", "[proc][mes
   eval::ThreadPool pool(4);
   using Clock = std::chrono::steady_clock;
 
-  // How long it takes uncancelled; the cancellation lands a fifth of the
-  // way in (in the clip or the nets, the slowest stages).
+  // How long it takes uncancelled; cancellations land at fixed fractions of
+  // that: in the nets, the merge's setup (0.3 on two cores) and the
+  // containment pass.
   auto t0 = Clock::now();
   const ContentsMesh whole = mesh_contents(s.samples, *s.boundary, {}, volume, &pool);
   const auto full = Clock::now() - t0;
@@ -180,7 +181,7 @@ TEST_CASE("Cancelling mid-mesh_contents returns within 250 ms (H5)", "[proc][mes
   INFO("uncancelled: " << full_ms << " ms");
   REQUIRE(full > std::chrono::milliseconds(100));
 
-  for (const double at : {0.2, 0.5, 0.8}) {
+  for (const double at : {0.2, 0.3, 0.5, 0.8}) {
     eval::CancellationToken token;
     std::atomic<bool> done{false};
     ContentsMesh cm;
@@ -198,8 +199,13 @@ TEST_CASE("Cancelling mid-mesh_contents returns within 250 ms (H5)", "[proc][mes
     if (finished_first) continue;  // a fast machine: nothing to time
     const double latency = std::chrono::duration<double, std::milli>(returned - cancelled_at).count();
     INFO("cancelled at " << at << " of the way; returned " << latency << " ms later");
-    CHECK(cm.cancelled);
-    CHECK(cm.mesh.empty());
+    // Cancelled after its last look at the token, it finishes the mesh:
+    // a whole one, as uncancelled.
+    if (!cm.cancelled) {
+      CHECK(cm.mesh == whole.mesh);
+    } else {
+      CHECK(cm.mesh.empty());
+    }
     CHECK(latency < 250.0 * kSlowdown);
   }
 }

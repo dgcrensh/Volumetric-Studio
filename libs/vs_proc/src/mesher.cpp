@@ -381,15 +381,19 @@ class Arena {
 class Fans {
  public:
   // Each run in increasing triangle order, however many threads fill it.
-  Fans(std::size_t vertices, const std::vector<Triangle>& triangles, eval::ThreadPool* pool)
+  // A cancelled `cancel` leaves the fans unfinished: the caller drops them.
+  Fans(std::size_t vertices, const std::vector<Triangle>& triangles, eval::ThreadPool* pool,
+       const eval::CancellationToken* cancel = nullptr)
       : run_(vertices, nullptr), size_(vertices, 0), room_(vertices, 0) {
     in_chunks(pool, triangles.size(), [&](std::size_t b, std::size_t e) {
+      if (stopped(cancel)) return;
       for (std::size_t t = b; t < e; ++t) {
         for (const std::uint32_t v : triangles[t]) {
           std::atomic_ref<std::uint32_t>(room_[v]).fetch_add(1, std::memory_order_relaxed);
         }
       }
     });
+    if (stopped(cancel)) return;
     std::size_t total = 0;
     for (const std::uint32_t r : room_) total += r;
     data_.resize(total);
@@ -399,6 +403,7 @@ class Fans {
       at += room_[v];
     }
     in_chunks(pool, triangles.size(), [&](std::size_t b, std::size_t e) {
+      if (stopped(cancel)) return;
       for (std::size_t t = b; t < e; ++t) {
         for (const std::uint32_t v : triangles[t]) {
           const std::uint32_t s = std::atomic_ref<std::uint32_t>(size_[v]).fetch_add(1, std::memory_order_relaxed);
@@ -406,8 +411,9 @@ class Fans {
         }
       }
     });
-    if (pool != nullptr && pool->size() > 1) {
+    if (pool != nullptr && pool->size() > 1 && !stopped(cancel)) {
       in_chunks(pool, vertices, [&](std::size_t b, std::size_t e) {
+        if (stopped(cancel)) return;
         for (std::size_t v = b; v < e; ++v) std::sort(run_[v], run_[v] + size_[v]);
       });
     }
@@ -459,14 +465,15 @@ struct MergeWorker {
 
 class Merger {
  public:
-  Merger(FieldMesh& m, UnmergedNet& net, eval::ThreadPool* pool)
+  Merger(FieldMesh& m, UnmergedNet& net, eval::ThreadPool* pool,
+         const eval::CancellationToken* cancel = nullptr)
       : m_(m),
         pool_(pool),
         sum_(std::move(net.sums)),
         count_(net.counts.begin(), net.counts.end()),
         tri_alive_(m.triangles.size(), 1),
         alive_(sum_.size(), 1),
-        fan_(sum_.size(), m.triangles, pool) {}
+        fan_(sum_.size(), m.triangles, pool, cancel) {}
 
   // The serial loop's body for one cube's vertices [first, end).
   void merge_cube(std::uint32_t first, std::uint32_t end, MergeWorker& w) {
@@ -597,7 +604,8 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
   FieldMesh out;
   if (net.triangles.empty() || net.cubes.empty() || stopped(cancel)) return out;
   out.triangles = std::move(net.triangles);
-  Merger merger(out, net, pool);
+  Merger merger(out, net, pool, cancel);
+  if (stopped(cancel)) return {};
   std::vector<std::uint8_t>().swap(net.counts);  // the merger has its own (H5)
   const std::size_t cubes = net.cubes.size();
   const auto first = [&](std::size_t c) { return net.group_starts[c]; };
@@ -651,6 +659,7 @@ FieldMesh merge_net(UnmergedNet net, const GridSpec& grid, eval::ThreadPool* poo
       }
     }
     runs.push_back(cubes);
+    if (stopped(cancel)) return {};
     std::vector<std::uint64_t>().swap(net.cubes);  // only the waves needed them (H5)
 
     // Workers' arenas and scratch, handed to each chunk of a wave.
@@ -1295,19 +1304,24 @@ class Builder {
       if (stopped(cancel_)) return 0;  // the caller drops the mesh
       std::vector<double> ve(vertices.size());
       std::vector<double> te(tris.size());
+      // A whole round measures every vertex and triangle: chunks check the
+      // token, so a cancellation lands within one chunk (H5).
       const auto measure_v = [&](std::size_t b, std::size_t e) {
+        if (stopped(cancel_)) return;
         for (std::size_t i = b; i < e; ++i) ve[i] = vertex_excess(vertices[i]);
       };
       const auto measure_t = [&](std::size_t b, std::size_t e) {
+        if (stopped(cancel_)) return;
         for (std::size_t i = b; i < e; ++i) te[i] = triangle_excess(tris[i]);
       };
       if (pool != nullptr) {
         eval::parallel_for(*pool, vertices.size(), 2048, measure_v);
         eval::parallel_for(*pool, tris.size(), 2048, measure_t);
       } else {
-        measure_v(0, vertices.size());
-        measure_t(0, tris.size());
+        for (std::size_t b = 0; b < vertices.size(); b += 2048) measure_v(b, std::min(b + 2048, vertices.size()));
+        for (std::size_t b = 0; b < tris.size(); b += 2048) measure_t(b, std::min(b + 2048, tris.size()));
       }
+      if (stopped(cancel_)) return 0;
       std::vector<std::uint32_t> pushed;
       const auto want = [&](std::uint32_t v, double e) {
         if (!movable(v)) return;

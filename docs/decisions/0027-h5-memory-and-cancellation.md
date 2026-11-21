@@ -51,16 +51,18 @@ first copy. The `.vsproj` reader and writer are unchanged on disk.
 `mesh_contents()`, `clip_to_boundary()`, `surface_nets()`,
 `unmerged_net()`, `merge_net()` and their `_cpu` halves take an optional
 `const eval::CancellationToken*`. They check it between stages, per z
-layer, per merge wave (every 4,096 cubes on the serial path), every 65,536
-triangles in the stitch and per round in the containment push, and return
-an empty result (`ContentsMesh::cancelled`). `NodeContext::cancelled()`
+layer, per chunk while the merge builds its fans, per merge wave (every
+4,096 cubes on the serial path), every 65,536 triangles in the stitch
+and per chunk of the containment push, and return an empty result (`ContentsMesh::cancelled`). `NodeContext::cancelled()`
 reaches `convert.field_to_mesh` and the `scatter.*` loops;
 `evaluate_graph()` sets `GraphEvaluation::cancelled` and never caches a
 node that was stopped. The generator turns it into
 `GeneratedContents::cancelled`, so the engine leaves the volume Stale with
 nothing cached and nothing written to `last_valid_`. The test cancels a
-40 mm gyroid at 0.3 mm a fifth, half and four fifths of the way through
-and requires a return within 250 ms (five times that under ASan); a
+40 mm gyroid at 0.3 mm at 0.2, 0.3, 0.5 and 0.8 of the way through
+and requires a return within 250 ms (five times that under ASan); one
+cancelled after the last check finishes the whole mesh instead. On two
+cores the worst return over forty points was about 60 ms. A
 backend that cancels exactly between the clip and the nets checks the
 engine side. Wiring `Session` to the token is H7, as planned.
 
