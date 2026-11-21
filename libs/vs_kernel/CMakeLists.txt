@@ -32,6 +32,8 @@ vs_add_library_tests(vs_kernel
   SOURCES
     tests/test_check.cpp
     tests/test_exchange.cpp
+    tests/test_empty_inputs.cpp
+    tests/test_exchange_documents.cpp
     tests/test_module.cpp
     tests/test_operations.cpp
     tests/test_primitives.cpp
@@ -42,6 +44,9 @@ vs_add_library_tests(vs_kernel
     tests/test_tolerance_spike.cpp)
 
 if(VS_BUILD_TESTS)
+  # test_exchange_documents.cpp counts OCCT's open XCAF documents (plan H1).
+  target_link_libraries(vs_kernel_tests PRIVATE TKXCAF)
+
   # Acceptance: no OCCT header is reachable from a public header.
   #
   # 1. Each public header is compiled on its own in a target that sees only

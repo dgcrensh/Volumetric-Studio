@@ -1,0 +1,14 @@
+# LeakSanitizer suppressions for the linux-clang-asan preset (plan H1).
+# Only leaks inside third-party code that we can't fix belong here, each with
+# the reason. Our own leaks are bugs: fix them instead.
+
+# OCCT keeps the table of presentation drivers in a static handle for the
+# life of the process (TPrsStd_DriverTable::Get(), reached from XCAF).
+leak:TPrsStd_DriverTable::Get
+# OCCT's STEP reader leaks the text of each syntax error it records
+# (StepFile_ReadData::AddError); only malformed STEP files reach it. OCCT is
+# built without frame pointers, so LeakSanitizer's fast unwinder stops at
+# the allocation itself and the suppression has to name it (a slow unwind
+# makes the whole suite several times slower).
+leak:StepFile_ReadData::AddError
+leak:TCollection_AsciiString::allocate

@@ -30,6 +30,7 @@
 #include "vs/proc/generator.hpp"
 #include "vs/proc/templates.hpp"
 #include "widgets.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 using core::Id;

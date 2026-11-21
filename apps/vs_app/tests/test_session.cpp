@@ -9,6 +9,7 @@
 
 #include "samples.hpp"
 #include "session.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 

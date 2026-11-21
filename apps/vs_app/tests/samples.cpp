@@ -1,9 +1,5 @@
 #include "samples.hpp"
 
-#include <QCoreApplication>
-#include <QElapsedTimer>
-#include <QThread>
-
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -71,17 +67,6 @@ vs::model::Project static_mesh() {
   const auto id = vs::mesh::import_mesh_volume(project, bytes, "stl", "Hex", vs::core::ProductSettings::defaults());
   REQUIRE(id.ok());
   return project;
-}
-
-bool wait_until(const std::function<bool()>& done, int timeout_ms) {
-  QElapsedTimer timer;
-  timer.start();
-  while (!done()) {
-    if (timer.elapsed() > timeout_ms) return false;
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    QThread::msleep(1);
-  }
-  return true;
 }
 
 std::string codes(const vs::core::Diagnostics& diagnostics) {

@@ -1,4 +1,7 @@
 #include <algorithm>
+#include <atomic>
+#include <filesystem>
+#include <iterator>
 #include <set>
 
 #include <catch2/catch_test_macros.hpp>
@@ -7,7 +10,10 @@
 #include "bracket.hpp"
 #include "scenes.hpp"
 #include "vs/eval/engine.hpp"
+#include "vs/eval/generator.hpp"
 #include "vs/kernel/exchange.hpp"
+#include "vs/kernel/queries.hpp"
+#include "vs/mesh/mesh.hpp"
 #include "vs/validate/registry.hpp"
 
 using namespace vs;
@@ -391,5 +397,78 @@ TEST_CASE("Splitting the build gives what build() gives", "[eval][engine]") {
           kernel::shape_hash(halves.volumes[i].contents));
     CHECK(bracket::codes(whole.volumes[i].diagnostics) ==
           bracket::codes(halves.volumes[i].diagnostics));
+  }
+}
+
+// --- plan H1: a nondeterministic generator --------------------------------
+
+namespace {
+
+// Fills each parametric volume with a small tetrahedron inside its boundary,
+// moved 0.01 mm further along x on every run: deterministic only when
+// `stable`.
+class FlakyGenerator : public eval::ContentsGenerator {
+ public:
+  explicit FlakyGenerator(bool stable) : stable_(stable) {}
+
+  Job prepare(const model::Document& document, const model::DocumentBuild& layout,
+              std::size_t index, const core::ProductSettings&, eval::ThreadPool&,
+              const eval::CancellationToken&) override {
+    const core::dbox3 box = kernel::bounding_box(layout.volumes[index].boundary);
+    const core::Id volume = document.volumes[index].id;
+    return [this, box, volume](eval::GeneratedContents& out) {
+      const double shift = stable_ ? 0.0 : 0.01 * static_cast<double>(runs_.fetch_add(1) % 4);
+      const core::dvec3 c = box.center() + core::dvec3{shift, 0, 0};
+      mesh::Mesh m;
+      const auto v = [&](double x, double y, double z) {
+        return m.add_vertex(core::to_fp32(c + core::dvec3{x, y, z}));
+      };
+      const std::uint32_t a = v(0, 0, 0), b = v(2, 0, 0), d = v(0, 2, 0), e = v(0, 0, 2);
+      m.add_triangle(a, d, b, volume);
+      m.add_triangle(a, b, e, volume);
+      m.add_triangle(a, e, d, volume);
+      m.add_triangle(b, d, e, volume);
+      out.mesh = std::move(m);
+      out.status = model::VolumeStatus::Current;
+    };
+  }
+
+ private:
+  bool stable_;
+  std::atomic<int> runs_{0};
+};
+
+}  // namespace
+
+TEST_CASE("Nondeterministic contents fail and are never cached", "[eval][engine][h1]") {
+  scenes::TempDir dir;
+  auto r = scenes::row(1);
+  EngineOptions o = threads(2);
+  o.check_determinism = true;
+  o.disk_cache = std::filesystem::path(dir.path) / "cache";
+
+  SECTION("a stable generator passes") {
+    Engine engine(kSettings, o);
+    engine.set_generator(model::VolumeKind::Parametric, std::make_shared<FlakyGenerator>(true));
+    const auto ev = engine.evaluate(r.project);
+    INFO(bracket::codes(ev.diagnostics));
+    CHECK(ev.volumes[0].status == VolumeStatus::Current);
+    CHECK(ev.diagnostics.with_code("eval.nondeterministic").empty());
+  }
+  SECTION("a flaky one fails, shows nothing and leaves no cache entry") {
+    Engine engine(kSettings, o);
+    engine.set_generator(model::VolumeKind::Parametric, std::make_shared<FlakyGenerator>(false));
+    const auto ev = engine.evaluate(r.project);
+    CHECK_FALSE(ev.diagnostics.with_code("eval.nondeterministic").empty());
+    CHECK(ev.volumes[0].status == VolumeStatus::Failed);
+    CHECK_FALSE(ev.ok());
+    const auto files = std::filesystem::exists(o.disk_cache)
+                           ? std::distance(std::filesystem::directory_iterator(o.disk_cache),
+                                           std::filesystem::directory_iterator{})
+                           : 0;
+    CHECK(files == 0);
+    // Evaluating again finds the failure in memory, not contents to show.
+    const auto again = engine.evaluate(r.project);
+    CHECK(again.volumes[0].status == VolumeStatus::Failed);
   }
 }

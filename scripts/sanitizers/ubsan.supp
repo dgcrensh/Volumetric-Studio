@@ -1,0 +1,9 @@
+# UndefinedBehaviorSanitizer suppressions for the linux-clang-asan preset
+# (plan H1). Only reports inside third-party code belong here, each with the
+# reason. Reports in our own code are bugs: fix them instead.
+
+# OCCT's NCollection lists allocate their nodes from NCollection_IncAllocator,
+# which aligns to 4 bytes on this build, and the header's inline accessors
+# then downcast to node types that want 8. Instantiated in our translation
+# units, but OCCT's code and allocation.
+alignment:NCollection_TListNode.hxx

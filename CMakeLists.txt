@@ -5,6 +5,8 @@ cmake_minimum_required(VERSION 3.25)
 option(VS_BUILD_APP "Build the Qt desktop application (vs_app); needs Qt 6" OFF)
 option(VS_BUILD_TESTS "Build the Catch2 test suites" ON)
 option(VS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+set(VS_SANITIZE "" CACHE STRING
+  "Sanitizers for every target built here, such as address;undefined (GCC and Clang)")
 
 # vs_kernel wraps Open CASCADE from M1 onward, so every build needs it.
 list(APPEND VCPKG_MANIFEST_FEATURES "kernel")
@@ -28,6 +30,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(VsCompileOptions)
+vs_enable_sanitizers("${VS_SANITIZE}")
 include(VsModuleRules)
 include(VsModules)
 
@@ -55,9 +58,9 @@ add_subdirectory(libs/vs_eval)
 add_subdirectory(libs/vs_proc)
 add_subdirectory(libs/vs_gpu)
 
-if(VS_BUILD_APP)
-  add_subdirectory(apps/vs_app)
-endif()
+# vs_app_core (the app's Qt-free rules) and its tests build everywhere; the
+# Qt application itself only with VS_BUILD_APP (apps/vs_app/CMakeLists.txt).
+add_subdirectory(apps/vs_app)
 add_subdirectory(apps/vstudio-cli)
 
 if(VS_BUILD_TESTS)

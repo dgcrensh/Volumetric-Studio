@@ -10,16 +10,12 @@ vs_add_library(vs_gpu
     src/glsl.cpp
     src/meshing.cpp
     src/sampler.cpp
+  # What the public headers include; vs_proc brings the rest.
   PUBLIC_LINKS
-    vs::vs_core
-    vs::vs_kernel
-    vs::vs_sketch
-    vs::vs_feature
-    vs::vs_model
-    vs::vs_validate
-    vs::vs_mesh
     vs::vs_eval
-    vs::vs_proc)
+    vs::vs_proc
+  PRIVATE_LINKS
+    vs::vs_core)
 
 if(WIN32)
   target_link_libraries(vs_gpu PRIVATE opengl32 gdi32 user32)

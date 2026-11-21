@@ -28,6 +28,7 @@
 #include "viewport.hpp"
 #include "vs/kernel/queries.hpp"
 #include "vs/model/build.hpp"
+#include "wait.hpp"
 
 using namespace vs;
 using core::Id;

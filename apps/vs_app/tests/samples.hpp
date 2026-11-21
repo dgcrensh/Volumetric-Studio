@@ -2,10 +2,10 @@
 
 // The sample projects the app is tested against: every .vsproj the library
 // suites keep (M5 bracket, M6 validation fixtures, M10–M12 procedural
-// projects), plus helpers to evaluate them and to wait on Qt's event loop.
+// projects), plus helpers to evaluate them. Qt-free: vs_app_core_tests
+// uses it too (wait.hpp has the Qt event-loop helper).
 
 #include <filesystem>
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -33,9 +33,6 @@ vs::model::Project long_procedural(double cell);
 // A static volume: libs/vs_mesh/tests/data/hex_prism.stl imported into a
 // box boundary around it (M8's import path), next to nothing else.
 vs::model::Project static_mesh();
-
-// Processes Qt events until `done` or the timeout; true when done.
-bool wait_until(const std::function<bool()>& done, int timeout_ms);
 
 std::string codes(const vs::core::Diagnostics& diagnostics);
 

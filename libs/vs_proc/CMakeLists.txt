@@ -29,16 +29,15 @@ vs_add_library(vs_proc
     src/nodes_mesh.cpp
     src/templates.cpp
     src/types.cpp
+  # What the public headers include; the rest is private.
   PUBLIC_LINKS
     vs::vs_core
-    vs::vs_kernel
-    vs::vs_sketch
-    vs::vs_feature
     vs::vs_model
-    vs::vs_validate
     vs::vs_mesh
     vs::vs_eval
   PRIVATE_LINKS
+    vs::vs_kernel
+    vs::vs_feature
     nlohmann_json::nlohmann_json
     manifold::manifold)
 
@@ -50,9 +49,6 @@ vs_add_library_tests(vs_proc
     tests/test_curved.cpp
     tests/test_nested.cpp
     tests/test_children.cpp
-    ../vs_model/tests/rack.cpp
-    ../vs_model/tests/curved.cpp
-    ../vs_model/tests/nested.cpp
     tests/test_data.cpp
     tests/test_distance.cpp
     tests/test_engine.cpp
@@ -71,8 +67,16 @@ vs_add_library_tests(vs_proc
     tests/test_mvp_workflows.cpp)
 
 if(VS_BUILD_TESTS)
-  target_include_directories(vs_proc_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../vs_model/tests)
+  target_link_libraries(vs_proc_tests PRIVATE vs_model_test_fixtures)
   target_compile_definitions(vs_proc_tests PRIVATE
     VS_PROC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+
+  # Manifold is linked privately (plan H1): no public header names one of
+  # its headers, as for OCCT in vs_kernel and PlaneGCS in vs_sketch.
+  add_test(NAME "vs_proc: public headers include no Manifold header"
+    COMMAND "${CMAKE_COMMAND}"
+      -DHEADER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/include
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_public_headers.cmake")
+  set_tests_properties("vs_proc: public headers include no Manifold header" PROPERTIES
+    LABELS vs_proc)
 endif()

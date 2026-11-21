@@ -28,3 +28,27 @@ function(vs_set_compile_options target)
     endif()
   endif()
 endfunction()
+
+# vs_enable_sanitizers(<list>)
+#
+# Builds everything in this project (first-party and vendored code, not the
+# vcpkg dependencies) with the given sanitizers, such as "address;undefined"
+# (the linux-clang-asan preset, plan H1). Empty: nothing.
+#
+# UBSan's checks stay recoverable so that scripts/sanitizers/ubsan.supp can
+# silence reports inside third-party headers; the preset's
+# UBSAN_OPTIONS=halt_on_error=1 still stops the program on any other report,
+# so a test can't pass with one in its output.
+function(vs_enable_sanitizers sanitizers)
+  if(NOT sanitizers)
+    return()
+  endif()
+  if(MSVC)
+    message(FATAL_ERROR "VS_SANITIZE is for GCC and Clang builds")
+  endif()
+  list(JOIN sanitizers "," list)
+  set(flags "-fsanitize=${list}" -fno-omit-frame-pointer)
+  add_compile_options(${flags})
+  add_link_options(${flags})
+  message(STATUS "Sanitizers: ${list}")
+endfunction()
