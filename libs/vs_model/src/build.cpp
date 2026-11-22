@@ -131,14 +131,44 @@ class DocumentBuilder {
   // volume, whose layout rebuild and inputs the lookups below use.
   Id level_;
   std::map<Id, feature::ExternalInputs> level_inputs_;
+  mutable std::unordered_map<Id, std::size_t> volume_index_;
+  struct ResultIndex {
+    std::unordered_map<Id, std::size_t> positions;
+    std::size_t size = 0;
+  };
+  mutable std::unordered_map<const feature::RebuildResult*, ResultIndex> result_index_;
 
   kernel::BooleanOptions fuzzy() const { return {settings_.linear_tolerance_mm}; }
 
+  // The first volume with the id, as a search finds it: from a map made
+  // once, since every lookup asks (decision 0032: thousands of generated
+  // children made the search quadratic).
   std::size_t index_of(const Id& volume) const {
-    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
-      if (doc_.volumes[i].id == volume) return i;
+    if (volume_index_.empty()) {
+      for (std::size_t i = 0; i < doc_.volumes.size(); ++i) volume_index_.emplace(doc_.volumes[i].id, i);
     }
-    return doc_.volumes.size();
+    const auto it = volume_index_.find(volume);
+    return it != volume_index_.end() ? it->second : doc_.volumes.size();
+  }
+
+  // r.find(id) through an index of r's features (first wins, as find()),
+  // made again when r has changed; a miss is confirmed by find() itself.
+  const FeatureResult* find_result(const feature::RebuildResult& r, const Id& id) const {
+    auto& index = result_index_[&r];
+    const auto look = [&]() -> const FeatureResult* {
+      const auto it = index.positions.find(id);
+      if (it == index.positions.end() || it->second >= r.features.size()) return nullptr;
+      const FeatureResult& f = r.features[it->second];
+      return f.feature == id ? &f : nullptr;
+    };
+    if (const FeatureResult* f = look()) return f;
+    if (index.size != r.features.size() || index.positions.find(id) != index.positions.end()) {
+      index.positions.clear();
+      for (std::size_t k = 0; k < r.features.size(); ++k) index.positions.emplace(r.features[k].feature, k);
+      index.size = r.features.size();
+      if (const FeatureResult* f = look()) return f;
+    }
+    return r.find(id);
   }
 
   // --- levels (L3) ------------------------------------------------------------------
@@ -278,18 +308,18 @@ class DocumentBuilder {
   Result<const FeatureResult*> layout_result(const Id& id, const SubjectRef& by,
                                              std::string_view code) const {
     const feature::RebuildResult* level = level_rebuild();
-    const FeatureResult* r = level != nullptr ? level->find(id) : nullptr;
+    const FeatureResult* r = level != nullptr ? find_result(*level, id) : nullptr;
     if (r == nullptr && !level_.is_null()) {
       const auto it = level_inputs_.find(level_);
       if (it != level_inputs_.end()) {
         if (const feature::ExternalInput* in = it->second.find(id)) return &in->result;
       }
     }
-    const SubjectRef other = level_tree().subject(id);
     if (!r) {
       return error(by, std::string(code), "a layout feature it uses no longer exists");
     }
     if (!r->ok()) {
+      const SubjectRef other = level_tree().subject(id);
       return error(by, std::string(code),
                    fmt::format("it uses '{}', which {}", other.label,
                                r->status == feature::FeatureStatus::Suppressed
