@@ -97,8 +97,16 @@ class History {
   std::vector<Step> undo_;
   std::vector<Step> redo_;
   std::size_t undo_limit_ = kDefaultUndoLimit;
+  // model::check() of one snapshot, `checked_` (decision 0029): snapshots
+  // never change, so the current state is checked once, not on every edit.
+  mutable std::shared_ptr<const model::Project> checked_;
+  mutable core::Diagnostics checked_diagnostics_;
 
   void trim();
+  const core::Diagnostics& current_check() const;
+  // try_apply(), also giving the new state's check() findings.
+  std::shared_ptr<const model::Project> attempt(const Command& command, core::Diagnostics* diagnostics,
+                                                core::Diagnostics* found) const;
 };
 
 // The errors in `after` that `before` didn't have: what makes a change

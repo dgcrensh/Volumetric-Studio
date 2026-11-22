@@ -78,6 +78,12 @@ Commands:
                     Time the gyroid_infill template in a cube (default 100 mm at a
                     0.5 mm grid), stage by stage: the CPU baseline. --threads takes
                     0 (every core, the default) to 256
+  bench-edit [--volumes N] [--repeat R] [--no-reuse] [--project <project.vsproj>]
+                    Time what an edit costs besides generating: the model check,
+                    the preview tier and the full evaluation, on rows of N
+                    parametric boxes (default 20) with two links, or how long a
+                    project's check, layout and re-evaluation take. --no-reuse
+                    builds and checks everything every time, as before 0029
   version           Print the version (same as --version)
   help              Print this message
 
@@ -211,6 +217,9 @@ int main(int argc, char** argv) {
   }
   if (command == "templates") {
     return vs::cli::run_templates(rest, std::cout, std::cerr);
+  }
+  if (command == "bench-edit") {
+    return vs::cli::run_bench_edit(rest, std::cout, std::cerr);
   }
   if (command == "bench-gyroid") {
     return vs::cli::run_bench_gyroid(rest, std::cout, std::cerr);

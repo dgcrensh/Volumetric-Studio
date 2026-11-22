@@ -71,8 +71,9 @@ void print(const eval::Evaluation& ev, double ms, std::ostream& out) {
   const auto& s = ev.stats;
   out << fmt::format(
       "stats       {} regenerated, {} from cache ({} from disk), {} blocked, {} waves, {} layout "
-      "builds, {:.1f} ms\n",
-      s.regenerated, s.cache_hits, s.disk_hits, s.blocked, s.waves, s.layout_builds, ms);
+      "builds ({} reused), {:.1f} ms\n",
+      s.regenerated, s.cache_hits, s.disk_hits, s.blocked, s.waves, s.layout_builds,
+      s.layouts_reused, ms);
   if (ev.combined) {
     const auto& w = ev.combined->weld;
     out << fmt::format("weld        {} triangles, {} shell{}, watertight {}, manifold {}\n",
