@@ -100,6 +100,10 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 add_library(vs_app_ui STATIC
   src/design_table_dialog.cpp
   src/design_table_dialog.hpp
+  src/drawing_dialogs.cpp
+  src/drawing_dialogs.hpp
+  src/drawing_window.cpp
+  src/drawing_window.hpp
   src/feature_dialog.cpp
   src/feature_dialog.hpp
   src/main_window.cpp
@@ -146,6 +150,7 @@ if(VS_BUILD_TESTS)
     tests/test_authoring_ui.cpp
     tests/test_configurations_ui.cpp
     tests/test_dialogs_ui.cpp
+    tests/test_drawings_ui.cpp
     tests/test_interactive_ui.cpp
     tests/test_nested.cpp
     tests/test_generated.cpp
