@@ -61,8 +61,22 @@ void History::reset(model::Project project) {
   redo_.clear();
 }
 
+const core::Diagnostics& History::current_check() const {
+  if (checked_ != current_) {
+    checked_diagnostics_ = model::check(current_->document);
+    checked_ = current_;
+  }
+  return checked_diagnostics_;
+}
+
 std::shared_ptr<const model::Project> History::try_apply(const Command& command,
                                                          core::Diagnostics* diagnostics) const {
+  return attempt(command, diagnostics, nullptr);
+}
+
+std::shared_ptr<const model::Project> History::attempt(const Command& command,
+                                                       core::Diagnostics* diagnostics,
+                                                       core::Diagnostics* found) const {
   auto next = std::make_shared<model::Project>(*current_);
   if (command.change) {
     core::Diagnostics own = command.change(*next);
@@ -72,7 +86,7 @@ std::shared_ptr<const model::Project> History::try_apply(const Command& command,
     }
   }
   core::Diagnostics after = model::check(next->document);
-  core::Diagnostics added = new_errors(model::check(current_->document), after);
+  core::Diagnostics added = new_errors(current_check(), after);
   if (!added.empty()) {
     if (diagnostics != nullptr) *diagnostics = std::move(added);
     return nullptr;
@@ -85,17 +99,21 @@ std::shared_ptr<const model::Project> History::try_apply(const Command& command,
       if (d.severity != core::Severity::Error) diagnostics->add(d);
     }
   }
+  if (found != nullptr) *found = std::move(after);
   return next;
 }
 
 core::Diagnostics History::apply(const Command& command) {
   core::Diagnostics d;
-  auto next = try_apply(command, &d);
+  core::Diagnostics found;
+  auto next = attempt(command, &d, &found);
   if (!next) return d;
   undo_.push_back({command.label, current_, next});
   trim();
   redo_.clear();
   current_ = std::move(next);
+  checked_ = current_;
+  checked_diagnostics_ = std::move(found);
   return d;
 }
 

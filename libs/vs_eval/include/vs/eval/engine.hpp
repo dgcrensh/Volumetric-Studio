@@ -124,6 +124,10 @@ struct EngineOptions {
   std::filesystem::path disk_cache{};
   // The memory cache's budget in bytes (ContentsCache, H5).
   std::size_t memory_cache_bytes = ContentsCache::kDefaultMemoryBudget;
+  // Keep the last few layouts (and the last check) and reuse them while what
+  // they were built from is unchanged (decision 0029). Off builds and checks
+  // everything every time: the same results, for tests and benchmarks.
+  bool reuse_layouts = true;
 };
 
 struct EvaluateOptions {
@@ -156,7 +160,8 @@ struct EvaluationStats {
   std::size_t disk_hits = 0;
   std::size_t blocked = 0;
   std::size_t waves = 0;
-  std::size_t layout_builds = 0;
+  std::size_t layout_builds = 0;     // model::build_layout() runs
+  std::size_t layouts_reused = 0;    // layouts taken from the engine's last ones (decision 0029)
   std::size_t layouts_generated = 0;  // L4: generators run (not cached)
 };
 
@@ -233,6 +238,31 @@ class Engine {
   std::shared_ptr<LayoutGenerator> layout_generator_;
   // Generated layouts by their composite's key (L4).
   std::map<Hash256, std::shared_ptr<const LayoutOutcome>> layouts_;
+
+  // The last few layouts built, by their layout_inputs() (decision 0029).
+  struct LayoutEntry {
+    model::Document inputs;
+    model::Document shape;  // model::layout_shape() of the same document
+    std::shared_ptr<const model::DocumentBuild> build;
+    std::shared_ptr<const validate::LayoutReport> report;  // null until validated
+    std::shared_ptr<const LayoutShapeHashes> hashes;
+  };
+  std::vector<LayoutEntry> layout_memo_;  // most recently used first
+  // The last document check()ed and what it found (decision 0029).
+  std::optional<std::pair<model::Document, Diagnostics>> last_check_;
+  struct Layout {
+    model::DocumentBuild build;
+    std::shared_ptr<const validate::LayoutReport> report;
+    std::shared_ptr<const LayoutShapeHashes> hashes;
+  };
+  // The layout of `document`, from the memo when it can, and its layout
+  // checks when `validated`.
+  Layout layout_of(const model::Document& document, bool validated, EvaluationStats& stats);
+  std::optional<Hash256> key_of(const model::DocumentIndex& document,
+                                const model::DocumentBuild& layout, std::size_t index,
+                                const LayoutShapeHashes* hashes) const;
+  // The layout checks' ParallelFor: chunks on the pool.
+  validate::ParallelFor parallel_for();
 
   struct Expansion;
   Expansion expand_generated(const model::Document& document, const CancellationToken& cancel,

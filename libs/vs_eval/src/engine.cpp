@@ -174,7 +174,85 @@ void Engine::reset() {
   states_.clear();
   last_valid_.clear();
   layouts_.clear();
+  layout_memo_.clear();
+  last_check_.reset();
   cache_.clear_memory();
+}
+
+std::optional<Hash256> Engine::key_of(const model::DocumentIndex& document,
+                                     const model::DocumentBuild& layout, std::size_t index,
+                                     const LayoutShapeHashes* hashes) const {
+  return hashes != nullptr ? cache_key(document, layout, index, settings_, *hashes)
+                           : cache_key(document, layout, index, settings_);
+}
+
+validate::ParallelFor Engine::parallel_for() {
+  return [this](std::size_t count, const std::function<void(std::size_t)>& task) {
+    pool_.run(count, task);
+  };
+}
+
+Engine::Layout Engine::layout_of(const model::Document& document, bool validated,
+                                 EvaluationStats& stats) {
+  Layout out;
+  if (!options_.reuse_layouts) {
+    // As before decision 0029: from the document itself, every time.
+    out.build = model::build_layout(document, settings_);
+    ++stats.layout_builds;
+    if (validated) {
+      out.report = std::make_shared<const validate::LayoutReport>(
+          validate::validate_layout(document, out.build, settings_, parallel_for()));
+    }
+    return out;  // no hashes: cache_key() works them out
+  }
+
+  // A layout depends only on the document's layout_inputs(): an equal one
+  // kept is this document's layout; one equal under layout_shape() is, once
+  // the leaf parameters that differ are evaluated again; anything else is
+  // built (and kept).
+  constexpr std::size_t kKept = 4;
+  const auto use = [&](LayoutEntry entry) {
+    out.build = *entry.build;
+    if (validated && !entry.report) {
+      entry.report = std::make_shared<const validate::LayoutReport>(
+          validate::validate_layout(entry.inputs, out.build, settings_, parallel_for()));
+    }
+    if (!entry.hashes) {
+      entry.hashes = std::make_shared<const LayoutShapeHashes>(entry.build);
+    }
+    out.report = entry.report;
+    out.hashes = entry.hashes;
+    layout_memo_.insert(layout_memo_.begin(), std::move(entry));
+    if (layout_memo_.size() > kKept) layout_memo_.pop_back();
+  };
+  model::Document inputs = model::layout_inputs(document);
+  for (std::size_t k = 0; k < layout_memo_.size(); ++k) {
+    if (!(layout_memo_[k].inputs == inputs)) continue;
+    LayoutEntry entry = std::move(layout_memo_[k]);
+    layout_memo_.erase(layout_memo_.begin() + static_cast<std::ptrdiff_t>(k));
+    ++stats.layouts_reused;
+    use(std::move(entry));
+    return out;
+  }
+  model::Document shape = model::layout_shape(document);
+  for (const LayoutEntry& e : layout_memo_) {
+    if (!(e.shape == shape)) continue;
+    auto build = std::make_shared<model::DocumentBuild>(*e.build);
+    bool refreshed = true;
+    for (std::size_t i = 0; refreshed && i < inputs.volumes.size(); ++i) {
+      if (inputs.volumes[i].parameters == e.inputs.volumes[i].parameters) continue;
+      refreshed = model::refresh_parameters(inputs, *build, i, settings_);
+    }
+    if (!refreshed) break;
+    // Boundaries, surfaces and the layout checks don't read parameters.
+    ++stats.layouts_reused;
+    use({std::move(inputs), std::move(shape), std::move(build), e.report, e.hashes});
+    return out;
+  }
+  auto build = std::make_shared<const model::DocumentBuild>(model::build_layout(inputs, settings_));
+  ++stats.layout_builds;
+  use({std::move(inputs), std::move(shape), std::move(build), nullptr, nullptr});
+  return out;
 }
 
 void Engine::set_generator(model::VolumeKind kind, std::shared_ptr<ContentsGenerator> generator) {
@@ -212,9 +290,9 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
                                            EvaluationStats& stats) {
   Expansion out;
   out.document = document;
-  const model::DocumentBuild layout = model::build_layout(document, settings_);
+  const Layout built = layout_of(document, false, stats);
+  const model::DocumentBuild& layout = built.build;
   const model::DocumentIndex index(document);
-  ++stats.layout_builds;
   for (const std::size_t i : model::level_order(document)) {
     const model::Volume& v = document.volumes[i];
     const auto* comp = std::get_if<model::CompositeContents>(&v.contents);
@@ -230,7 +308,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
       continue;
     }
     // A boundary that failed fails the composite already (finish_composite).
-    const std::optional<Hash256> key = cache_key(index, layout, i, settings_);
+    const std::optional<Hash256> key = key_of(index, layout, i, built.hashes.get());
     if (!key) continue;
     std::shared_ptr<const LayoutOutcome> outcome;
     if (const auto it = layouts_.find(*key); it != layouts_.end()) {
@@ -283,7 +361,13 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   const std::lock_guard eval_lock(evaluate_mutex_);
 
   // 1. check (below), and generated children (L4) written into the document.
-  Diagnostics checked = model::check(project.document);
+  Diagnostics checked;
+  if (options_.reuse_layouts && last_check_ && last_check_->first == project.document) {
+    checked = last_check_->second;
+  } else {
+    checked = model::check(project.document);
+    if (options_.reuse_layouts) last_check_.emplace(project.document, checked);
+  }
   EvaluationStats early_stats;
   Expansion expansion;
   const bool generates = std::any_of(
@@ -354,6 +438,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   model::DocumentBuild layout;
   // An index of ev.document, made again whenever links change it.
   std::optional<model::DocumentIndex> ev_index;
+  std::shared_ptr<const LayoutShapeHashes> layout_hashes;
   // Composites whose generated children fail the current layout's checks.
   std::set<Id> generated_layout_failed;
   std::vector<model::ContentsMeasure> measures(n);
@@ -377,7 +462,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     c->rebuild = vb.contents_rebuild;
     Hasher key;
     key.add(std::string_view("vstudio.eval.composite"));
-    const std::optional<Hash256> own = cache_key(*ev_index, layout, i, settings_);
+    const std::optional<Hash256> own = key_of(*ev_index, layout, i, layout_hashes.get());
     key.add(own.has_value());
     if (own) key.add(*own);
     Hasher out;
@@ -478,12 +563,10 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     if (values_changed) {
       ev.document = apply_links(doc, link_values);
       ev_index.emplace(ev.document);
-      layout = model::build_layout(ev.document, settings_);
-      ev.layout = validate::validate_layout(
-          ev.document, layout, settings_,
-          [this](std::size_t count, const std::function<void(std::size_t)>& task) {
-            pool_.run(count, task);
-          });
+      Layout built = layout_of(ev.document, true, ev.stats);
+      layout = std::move(built.build);
+      layout_hashes = std::move(built.hashes);
+      ev.layout = *built.report;
       layout_diagnostics = layout.diagnostics;
       layout_diagnostics.append(ev.layout.diagnostics);
       generated_layout_failed.clear();
@@ -494,7 +577,6 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
           if (!owner.is_null()) generated_layout_failed.insert(owner);
         }
       }
-      ++ev.stats.layout_builds;
       values_changed = false;
       notify(ProgressEvent::Kind::LayoutBuilt, {}, VolumeStatus::Stale);
     }
@@ -529,7 +611,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         ++ev.stats.blocked;
         continue;
       }
-      r.key = cache_key(*ev_index, layout, i, settings_);
+      r.key = key_of(*ev_index, layout, i, layout_hashes.get());
       if (!r.key) {
         r.status = VolumeStatus::Failed;  // its boundary or a parameter failed
         continue;

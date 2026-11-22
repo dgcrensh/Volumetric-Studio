@@ -4,6 +4,7 @@
 
 vs_add_application(vstudio-cli
   SOURCES
+    src/bench_edit.cpp
     src/eval_commands.cpp
     src/feature_commands.cpp
     src/kernel_commands.cpp
@@ -298,6 +299,10 @@ if(VS_BUILD_TESTS)
   add_test(NAME "vstudio-cli: selftest reports vs_gpu" COMMAND vstudio-cli selftest)
   set_tests_properties("vstudio-cli: selftest reports vs_gpu" PROPERTIES
     PASS_REGULAR_EXPRESSION "vs_gpu: .*checks passed")
+  add_test(NAME "vstudio-cli: bench-edit times edits with and without reused layouts"
+    COMMAND vstudio-cli bench-edit --volumes 5 --repeat 2)
+  set_tests_properties("vstudio-cli: bench-edit times edits with and without reused layouts" PROPERTIES
+    PASS_REGULAR_EXPRESSION "layouts reused.*contents +[0-9.]+ +[0-9.]+ +0\\.0 +[0-9.]+ +0\\.0.*result +ok")
   add_test(NAME "vstudio-cli: bench-gyroid takes whole thread counts only"
     COMMAND vstudio-cli bench-gyroid --size 10 --cell 1 --threads 1.5)
   set_tests_properties("vstudio-cli: bench-gyroid takes whole thread counts only" PROPERTIES

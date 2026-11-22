@@ -10,6 +10,7 @@
 #include "authoring.hpp"
 #include "history.hpp"
 #include "samples.hpp"
+#include "vs/model/check.hpp"
 #include "vs/model/project.hpp"
 
 using namespace vs;
@@ -209,4 +210,42 @@ TEST_CASE("An error is new by its code and subjects, not its wording (H5)", "[ap
   const auto added = app::new_errors(before, after);
   REQUIRE(added.size() == 1);
   CHECK(added.begin()->subjects.front().id == w.id);
+}
+
+TEST_CASE("Each state's own errors are what an edit is judged against, after undo too (0029)",
+          "[app][history]") {
+  // Opened with an error: a second volume called "Base".
+  model::Project broken = samples::load("bracket.vsproj");
+  model::Volume twin = broken.document.volumes.front();
+  twin.id = Id::random();
+  twin.parameters.clear();
+  twin.outputs.clear();
+  twin.contents = model::StaticContents{};
+  broken.document.volumes.push_back(twin);
+  REQUIRE_FALSE(model::check(broken.document).with_code("model.volume.duplicate_name").empty());
+  History h(broken);
+
+  // An edit that leaves the error is kept; fixing it is kept too.
+  REQUIRE_FALSE(h.apply(app::rename_document("Still broken")).has_errors());
+  const auto fix = h.apply("Rename the twin", [&](model::Project& p) {
+    p.document.find_volume(twin.id)->name = "Twin";
+    return core::Diagnostics{};
+  });
+  REQUIRE_FALSE(fix.has_errors());
+  const auto break_again = [&] {
+    return h.apply("Rename the twin back", [&](model::Project& p) {
+      p.document.find_volume(twin.id)->name = "Base";
+      return core::Diagnostics{};
+    });
+  };
+  // From the fixed state, making the error again is refused ...
+  CHECK_FALSE(break_again().with_code("model.volume.duplicate_name").empty());
+  // ... also after undoing to the broken state and redoing to the fixed one.
+  REQUIRE(h.undo());
+  REQUIRE(h.redo());
+  CHECK_FALSE(break_again().with_code("model.volume.duplicate_name").empty());
+  // Back in the broken state its error is known again: an edit keeping it is kept.
+  REQUIRE(h.undo());
+  CHECK_FALSE(h.apply(app::rename_document("Broken again")).has_errors());
+  CHECK(h.project().document.name == "Broken again");
 }
