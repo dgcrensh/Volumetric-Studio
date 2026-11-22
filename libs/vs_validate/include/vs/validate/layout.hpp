@@ -58,6 +58,7 @@
 #include "vs/core/settings.hpp"
 #include "vs/model/build.hpp"
 #include "vs/model/document.hpp"
+#include "vs/validate/parallel.hpp"
 
 namespace vs::validate {
 
@@ -94,11 +95,14 @@ struct LayoutReport {
 };
 
 // The checks above. `build` must come from model::build(document, ...).
+// `parallel` (optional) runs the pairs of boundaries and the connection
+// surfaces in fixed chunks on several threads, each chunk on its own deep
+// copies of the boundaries it reads; the report is the same either way.
 LayoutReport validate_layout(const model::Document& document, const model::DocumentBuild& build,
-                             const ProductSettings& settings);
+                             const ProductSettings& settings, const ParallelFor& parallel = {});
 
 // The connection type rules alone.
 Diagnostics check_connections(const model::Document& document, const model::DocumentBuild& build,
-                              const ProductSettings& settings);
+                              const ProductSettings& settings, const ParallelFor& parallel = {});
 
 }  // namespace vs::validate

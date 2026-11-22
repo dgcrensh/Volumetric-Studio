@@ -51,6 +51,7 @@
 #include "vs/core/settings.hpp"
 #include "vs/core/vec.hpp"
 #include "vs/kernel/shape.hpp"
+#include "vs/validate/parallel.hpp"
 
 namespace vs::validate {
 
@@ -81,9 +82,6 @@ struct ContainmentResult {
 ContainmentResult check_containment(const kernel::Solid& boundary, const kernel::Solid& contents,
                                     const core::SubjectRef& volume,
                                     const core::ProductSettings& settings);
-// Runs task(0) .. task(n - 1), in any order, on any threads (vs_eval's
-// ThreadPool::run, say; vs_validate sits below it).
-using ParallelFor = std::function<void(std::size_t n, const std::function<void(std::size_t)>& task)>;
 
 ContainmentResult check_containment(const kernel::Solid& boundary, const MeshView& mesh,
                                     const core::SubjectRef& volume,

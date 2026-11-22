@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <queue>
 
 #include <fmt/format.h>
 
 #include "vs/model/hierarchy.hpp"
+#include "vs/model/index.hpp"
 
 namespace vs::model {
 
@@ -33,7 +35,7 @@ constexpr std::string_view kArrow = " \xE2\x86\x92 ";  // →
 
 class GraphBuilder {
  public:
-  explicit GraphBuilder(const Document& doc) : doc_(doc) {}
+  explicit GraphBuilder(const DocumentIndex& index) : ix_(index), doc_(index.document()) {}
 
   std::vector<DependencyNode> nodes;
   std::vector<std::vector<std::size_t>> inputs;
@@ -44,6 +46,7 @@ class GraphBuilder {
   }
 
  private:
+  const DocumentIndex& ix_;
   const Document& doc_;
   std::map<std::pair<NodeKind, Id>, std::size_t> index_;
 
@@ -68,39 +71,40 @@ class GraphBuilder {
     if (std::find(in.begin(), in.end(), *to) == in.end()) in.push_back(*to);
   }
 
-  std::string volume_name(const Id& vid) const { return doc_.volume_subject(vid).label; }
+  std::string volume_name(const Id& vid) const { return ix_.volume_subject(vid).label; }
 
   void add_nodes() {
     const auto& vars = doc_.layout.variables();
     for (const auto& v : vars.variables()) {
       add(NodeKind::Variable, v.id, {}, vars.subject(v.id), fmt::format("variable '{}'", v.name));
     }
-    for (const auto& f : doc_.layout.features()) {
-      const auto s = doc_.layout.subject(f.id);
-      add(NodeKind::Feature, f.id, {}, s, fmt::format("'{}'", s.label));
+    const auto subjects = doc_.layout.subjects();
+    for (std::size_t i = 0; i < subjects.size(); ++i) {
+      const auto& s = subjects[i];
+      add(NodeKind::Feature, s.id, {}, s, fmt::format("'{}'", s.label));
     }
     for (const auto& k : doc_.keep_outs) {
-      const auto s = doc_.keep_out_subject(k.id);
+      const auto s = ix_.keep_out_subject(k.id);
       add(NodeKind::KeepOut, k.id, {}, s, fmt::format("keep-out '{}'", s.label));
     }
     for (const auto& c : doc_.connections) {
-      const auto s = doc_.connection_subject(c.id);
+      const auto s = ix_.connection_subject(c.id);
       add(NodeKind::ConnectionSurface, c.id, {}, s,
           fmt::format("connection surface '{}'", s.label));
     }
     for (const auto& v : doc_.volumes) {
       const std::string name = volume_name(v.id);
-      add(NodeKind::VolumeBoundary, v.id, v.id, doc_.boundary_subject(v.id),
+      add(NodeKind::VolumeBoundary, v.id, v.id, ix_.boundary_subject(v.id),
           fmt::format("boundary of '{}'", name));
       for (const auto& p : v.parameters) {
         add(NodeKind::Parameter, p.id, v.id,
             {SubjectKind::Parameter, p.id, fmt::format("{}.{}", name, p.name)},
             fmt::format("parameter '{}' of '{}'", p.name, name));
       }
-      add(NodeKind::VolumeContents, v.id, v.id, doc_.volume_subject(v.id),
+      add(NodeKind::VolumeContents, v.id, v.id, ix_.volume_subject(v.id),
           fmt::format("contents of '{}'", name));
       for (const auto& o : v.outputs) {
-        add(NodeKind::PublishedOutput, o.id, v.id, doc_.output_subject({v.id, o.id}),
+        add(NodeKind::PublishedOutput, o.id, v.id, ix_.output_subject({v.id, o.id}),
             fmt::format("output '{}' of '{}'", o.name, name));
       }
       // A composite's layout is a level of its own (L3): its variables and
@@ -111,9 +115,8 @@ class GraphBuilder {
           add(NodeKind::Variable, var.id, v.id, cvars.subject(var.id),
               fmt::format("variable '{}' of '{}'", var.name, name));
         }
-        for (const auto& f : comp->layout.features()) {
-          const auto s = comp->layout.subject(f.id);
-          add(NodeKind::Feature, f.id, v.id, s, fmt::format("'{}' of '{}'", s.label, name));
+        for (const auto& s : comp->layout.subjects()) {
+          add(NodeKind::Feature, s.id, v.id, s, fmt::format("'{}' of '{}'", s.label, name));
         }
       }
     }
@@ -133,13 +136,13 @@ class GraphBuilder {
   // A name at `level`: a variable of its layout, or inside a composite one
   // of the composite's parameters.
   void uses_variable(std::size_t from, std::string_view name, const Id& level = {}) {
-    if (const feature::FeatureTree* t = level_layout(doc_, level)) {
+    if (const feature::FeatureTree* t = ix_.level_layout(level)) {
       if (const auto* v = t->variables().find(name)) {
         edge(from, find(NodeKind::Variable, v->id));
         return;
       }
     }
-    if (const Volume* c = level.is_null() ? nullptr : doc_.find_volume(level)) {
+    if (const Volume* c = level.is_null() ? nullptr : ix_.volume(level)) {
       if (const auto* p = c->find_parameter(name)) edge(from, find(NodeKind::Parameter, p->id));
     }
   }
@@ -268,10 +271,8 @@ class GraphBuilder {
         uses_point(b, box.min);
         uses_point(b, box.max);
       }
-      for (const auto& k : doc_.keep_outs) {
-        if (std::find(k.volumes.begin(), k.volumes.end(), v.id) != k.volumes.end()) {
-          edge(b, find(NodeKind::KeepOut, k.id));
-        }
+      for (const std::size_t k : ix_.keep_outs_of(v.id)) {
+        edge(b, find(NodeKind::KeepOut, doc_.keep_outs[k].id));
       }
       for (const auto& p : v.parameters) {
         uses_param(*find(NodeKind::Parameter, p.id), p.value, v.parent);
@@ -279,13 +280,13 @@ class GraphBuilder {
 
       const std::size_t c = *find(NodeKind::VolumeContents, v.id);
       edge(c, b);
-      for (const auto& s : doc_.connections) {
-        if (joins(doc_, s, v.id)) edge(c, find(NodeKind::ConnectionSurface, s.id));
+      for (const std::size_t k : ix_.joining(v.id)) {
+        edge(c, find(NodeKind::ConnectionSurface, doc_.connections[k].id));
       }
       for (const auto& p : v.parameters) edge(c, find(NodeKind::Parameter, p.id));
       // A composite's contents are its children (L3).
       if (v.composite()) {
-        for (const std::size_t i : children(doc_, v.id)) {
+        for (const std::size_t i : ix_.children(v.id)) {
           edge(c, find(NodeKind::VolumeContents, doc_.volumes[i].id));
         }
       }
@@ -295,7 +296,7 @@ class GraphBuilder {
     for (const auto& k : doc_.keep_outs) {
       const std::size_t n = *find(NodeKind::KeepOut, k.id);
       for (const auto& id : k.cutters) {
-        if (doc_.find_volume(id)) {
+        if (ix_.volume(id)) {
           edge(n, find(NodeKind::VolumeBoundary, id));
         } else {
           uses_layout(n, id);
@@ -305,7 +306,7 @@ class GraphBuilder {
 
     for (const auto& s : doc_.connections) {
       const std::size_t n = *find(NodeKind::ConnectionSurface, s.id);
-      const Id level = level_of(doc_, s);
+      const Id level = ix_.level_of(s);
       if (const auto* sp = std::get_if<SketchPatch>(&s.geometry)) {
         uses_layout(n, sp->sketch);
       } else if (const auto* cp = std::get_if<CylinderPatch>(&s.geometry)) {
@@ -356,19 +357,25 @@ class GraphBuilder {
 }  // namespace
 
 DependencyGraph DependencyGraph::build(const Document& document) {
-  GraphBuilder b(document);
+  return build(DocumentIndex(document));
+}
+
+DependencyGraph DependencyGraph::build(const DocumentIndex& index) {
+  GraphBuilder b(index);
   b.run();
   DependencyGraph g;
   g.nodes_ = std::move(b.nodes);
   g.inputs_ = std::move(b.inputs);
+  for (std::size_t i = 0; i < g.nodes_.size(); ++i) {
+    g.index_.emplace(std::make_pair(g.nodes_[i].kind, g.nodes_[i].id), i);  // first wins
+  }
   return g;
 }
 
 std::optional<std::size_t> DependencyGraph::find(NodeKind kind, const Id& id) const {
-  for (std::size_t i = 0; i < nodes_.size(); ++i) {
-    if (nodes_[i].kind == kind && nodes_[i].id == id) return i;
-  }
-  return std::nullopt;
+  const auto it = index_.find({kind, id});
+  if (it == index_.end()) return std::nullopt;
+  return it->second;
 }
 
 std::vector<std::size_t> DependencyGraph::dependants(std::size_t node) const {
@@ -392,6 +399,19 @@ bool DependencyGraph::depends_on(std::size_t node, std::size_t other) const {
     stack.insert(stack.end(), inputs_[n].begin(), inputs_[n].end());
   }
   return false;
+}
+
+std::vector<bool> DependencyGraph::upstream(std::size_t node) const {
+  std::vector<bool> seen(nodes_.size(), false);
+  std::vector<std::size_t> stack(inputs_[node].begin(), inputs_[node].end());
+  while (!stack.empty()) {
+    const std::size_t n = stack.back();
+    stack.pop_back();
+    if (seen[n]) continue;
+    seen[n] = true;
+    stack.insert(stack.end(), inputs_[n].begin(), inputs_[n].end());
+  }
+  return seen;
 }
 
 std::vector<std::vector<std::size_t>> DependencyGraph::loops() const {
@@ -473,18 +493,17 @@ std::vector<std::size_t> DependencyGraph::order() const {
   for (std::size_t i = 0; i < n; ++i) {
     for (const std::size_t w : inputs_[i]) users[w].push_back(i);
   }
-  std::vector<std::size_t> ready;
+  std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>> ready;
   for (std::size_t i = 0; i < n; ++i) {
-    if (remaining[i] == 0) ready.push_back(i);
+    if (remaining[i] == 0) ready.push(i);
   }
   std::vector<std::size_t> out;
   while (!ready.empty()) {
-    const auto it = std::min_element(ready.begin(), ready.end());
-    const std::size_t v = *it;
-    ready.erase(it);
+    const std::size_t v = ready.top();
+    ready.pop();
     out.push_back(v);
     for (const std::size_t u : users[v]) {
-      if (--remaining[u] == 0) ready.push_back(u);
+      if (--remaining[u] == 0) ready.push(u);
     }
   }
   return out;

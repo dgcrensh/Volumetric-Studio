@@ -2,6 +2,7 @@
 #include "vs/model/hierarchy.hpp"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <unordered_set>
 #include <utility>
@@ -56,12 +57,13 @@ namespace {
 // the shared surface, or meet them, so their centroids may stray outside by
 // the seam's deflection plus the boundary tessellation's; nothing else gets
 // any. Empty when no curved surface joins the volume.
-std::vector<float> curved_seam_slack(const model::Document& document,
+std::vector<float> curved_seam_slack(const model::DocumentIndex& index,
                                      const model::DocumentBuild& layout, const Id& volume,
                                      const mesh::Mesh& m, const core::ProductSettings& settings) {
+  const model::Document& document = index.document();
   bool curved = false;
-  for (std::size_t k = 0; k < document.connections.size(); ++k) {
-    if (model::joins(document, document.connections[k], volume) && k < layout.connections.size() &&
+  for (const std::size_t k : index.joining(volume)) {
+    if (k < layout.connections.size() &&
         layout.connections[k].ok && layout.connections[k].cylinder) {
       curved = true;
     }
@@ -211,6 +213,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
   Expansion out;
   out.document = document;
   const model::DocumentBuild layout = model::build_layout(document, settings_);
+  const model::DocumentIndex index(document);
   ++stats.layout_builds;
   for (const std::size_t i : model::level_order(document)) {
     const model::Volume& v = document.volumes[i];
@@ -227,7 +230,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
       continue;
     }
     // A boundary that failed fails the composite already (finish_composite).
-    const std::optional<Hash256> key = cache_key(document, layout, i, settings_);
+    const std::optional<Hash256> key = cache_key(index, layout, i, settings_);
     if (!key) continue;
     std::shared_ptr<const LayoutOutcome> outcome;
     if (const auto it = layouts_.find(*key); it != layouts_.end()) {
@@ -349,6 +352,8 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   // their measures up and its key hashes theirs. `layout` is the current
   // wave's layout build.
   model::DocumentBuild layout;
+  // An index of ev.document, made again whenever links change it.
+  std::optional<model::DocumentIndex> ev_index;
   // Composites whose generated children fail the current layout's checks.
   std::set<Id> generated_layout_failed;
   std::vector<model::ContentsMeasure> measures(n);
@@ -372,13 +377,13 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     c->rebuild = vb.contents_rebuild;
     Hasher key;
     key.add(std::string_view("vstudio.eval.composite"));
-    const std::optional<Hash256> own = cache_key(ev.document, layout, i, settings_);
+    const std::optional<Hash256> own = cache_key(*ev_index, layout, i, settings_);
     key.add(own.has_value());
     if (own) key.add(*own);
     Hasher out;
     out.add(std::string_view("vstudio.eval.composite.output"));
     model::ContentsMeasure total;
-    for (const std::size_t j : model::children(ev.document, v.id)) {
+    for (const std::size_t j : ev_index->children(v.id)) {
       const VolumeResult& child = ev.volumes[j];
       c->status = model::worse(c->status, child.status);
       key.add(child.volume).add(child.key.has_value());
@@ -433,16 +438,24 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
   const model::DependencyGraph graph = model::DependencyGraph::build(doc);
   std::vector<std::vector<std::size_t>> upstream(n);
   {
+    // The volumes by their contents' node (one walk per volume, not one per
+    // pair: generated children make thousands).
     std::vector<std::optional<std::size_t>> node(n);
+    std::map<std::size_t, std::vector<std::size_t>> volumes_at;
     for (std::size_t i = 0; i < n; ++i) {
       node[i] = graph.find(model::NodeKind::VolumeContents, doc.volumes[i].id);
+      if (node[i]) volumes_at[*node[i]].push_back(i);
     }
     for (std::size_t i = 0; i < n; ++i) {
-      for (std::size_t j = 0; j < n; ++j) {
-        if (i != j && node[i] && node[j] && graph.depends_on(*node[i], *node[j])) {
-          upstream[i].push_back(j);
+      if (!node[i]) continue;
+      const std::vector<bool> up = graph.upstream(*node[i]);
+      for (const auto& [m, volumes] : volumes_at) {
+        if (!up[m]) continue;
+        for (const std::size_t j : volumes) {
+          if (j != i) upstream[i].push_back(j);
         }
       }
+      std::sort(upstream[i].begin(), upstream[i].end());
     }
   }
 
@@ -464,8 +477,13 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     // 2. the layout, rebuilt when link values changed it
     if (values_changed) {
       ev.document = apply_links(doc, link_values);
+      ev_index.emplace(ev.document);
       layout = model::build_layout(ev.document, settings_);
-      ev.layout = validate::validate_layout(ev.document, layout, settings_);
+      ev.layout = validate::validate_layout(
+          ev.document, layout, settings_,
+          [this](std::size_t count, const std::function<void(std::size_t)>& task) {
+            pool_.run(count, task);
+          });
       layout_diagnostics = layout.diagnostics;
       layout_diagnostics.append(ev.layout.diagnostics);
       generated_layout_failed.clear();
@@ -511,7 +529,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         ++ev.stats.blocked;
         continue;
       }
-      r.key = cache_key(ev.document, layout, i, settings_);
+      r.key = cache_key(*ev_index, layout, i, settings_);
       if (!r.key) {
         r.status = VolumeStatus::Failed;  // its boundary or a parameter failed
         continue;
@@ -652,7 +670,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
           contained = validate::check_containment(boundary, c.solid, self, settings_);
         } else if (c.mesh) {
           const std::vector<float> slack =
-              curved_seam_slack(ev.document, layout, v.id, *c.mesh, settings_);
+              curved_seam_slack(*ev_index, layout, v.id, *c.mesh, settings_);
           contained = validate::check_containment(
               boundary, validate::MeshView{c.mesh->positions, c.mesh->indices, slack}, self,
               settings_,

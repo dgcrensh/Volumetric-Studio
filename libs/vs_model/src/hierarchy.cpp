@@ -2,14 +2,13 @@
 
 #include <algorithm>
 
+#include "lookup.hpp"
+#include "vs/model/index.hpp"
+
 namespace vs::model {
 
 const feature::FeatureTree* level_layout(const Document& doc, const Id& level) {
-  if (level.is_null()) return &doc.layout;
-  const Volume* v = doc.find_volume(level);
-  if (v == nullptr) return nullptr;
-  const auto* c = std::get_if<CompositeContents>(&v->contents);
-  return c != nullptr ? &c->layout : nullptr;
+  return detail::level_layout_in(detail::Scan{doc}, level);
 }
 
 std::vector<std::size_t> children(const Document& doc, const Id& level) {
@@ -21,46 +20,28 @@ std::vector<std::size_t> children(const Document& doc, const Id& level) {
 }
 
 std::vector<Id> ancestors(const Document& doc, const Id& volume) {
-  std::vector<Id> out;
-  const Volume* v = doc.find_volume(volume);
-  while (v != nullptr && !v->parent.is_null()) {
-    if (v->parent == volume || std::find(out.begin(), out.end(), v->parent) != out.end()) break;
-    out.push_back(v->parent);
-    if (out.size() > doc.volumes.size()) break;
-    v = doc.find_volume(v->parent);
-  }
-  return out;
+  return detail::ancestors_in(detail::Scan{doc}, volume);
 }
 
 bool is_within(const Document& doc, const Id& volume, const Id& level) {
-  if (level.is_null()) return true;
-  const auto up = ancestors(doc, volume);
-  return std::find(up.begin(), up.end(), level) != up.end();
+  return detail::is_within_in(detail::Scan{doc}, volume, level);
 }
 
 std::size_t depth(const Document& doc, const Id& volume) { return ancestors(doc, volume).size(); }
 
 Id child_toward(const Document& doc, const Id& level, const Id& volume) {
-  const Volume* v = doc.find_volume(volume);
-  if (v == nullptr) return {};
-  if (v->parent == level) return volume;
-  const auto up = ancestors(doc, volume);
-  // up = parent, grandparent, ...: the one just below `level` holds it.
-  for (std::size_t i = 0; i < up.size(); ++i) {
-    const Volume* a = doc.find_volume(up[i]);
-    if (a != nullptr && a->parent == level) return up[i];
-  }
-  return {};
+  return detail::child_toward_in(detail::Scan{doc}, level, volume);
 }
 
 std::vector<std::size_t> level_order(const Document& doc) {
+  const DocumentIndex index(doc);
   std::vector<std::size_t> out;
   std::vector<Id> levels{Id{}};
   std::vector<bool> taken(doc.volumes.size(), false);
   while (!levels.empty()) {
     std::vector<Id> next;
     for (const Id& level : levels) {
-      for (const std::size_t i : children(doc, level)) {
+      for (const std::size_t i : index.children(level)) {
         if (taken[i]) continue;
         taken[i] = true;
         out.push_back(i);
@@ -71,53 +52,32 @@ std::vector<std::size_t> level_order(const Document& doc) {
   }
   // Within one depth the batches above follow their parents' order; put
   // each depth in document order instead, so it doesn't depend on that.
+  std::vector<std::size_t> depths(doc.volumes.size(), 0);
+  for (const std::size_t i : out) depths[i] = index.depth(doc.volumes[i].id);
   std::stable_sort(out.begin(), out.end(), [&](std::size_t a, std::size_t b) {
-    const std::size_t da = depth(doc, doc.volumes[a].id);
-    const std::size_t db = depth(doc, doc.volumes[b].id);
-    return da != db ? da < db : a < b;
+    return depths[a] != depths[b] ? depths[a] < depths[b] : a < b;
   });
   return out;
 }
 
 Id level_of(const Document& doc, const ConnectionSurface& surface) {
-  for (const Id& id : surface.volumes) {
-    if (const Volume* v = doc.find_volume(id)) return v->parent;
-  }
-  return {};
+  return detail::level_of_in(detail::Scan{doc}, surface);
 }
 
 Id level_of(const Document& doc, const KeepOut& keep_out) {
-  for (const Id& id : keep_out.volumes) {
-    if (const Volume* v = doc.find_volume(id)) return v->parent;
-  }
-  return {};
+  return detail::level_of_in(detail::Scan{doc}, keep_out);
 }
 
 Id level_of(const Document& doc, const Link& link) {
-  const Volume* v = doc.find_volume(link.source.volume);
-  return v != nullptr ? v->parent : Id{};
+  return detail::level_of_in(detail::Scan{doc}, link);
 }
 
 Id delegate_of(const Document& doc, const Id& composite, const Id& surface) {
-  const Volume* v = doc.find_volume(composite);
-  if (v == nullptr) return {};
-  const auto* c = std::get_if<CompositeContents>(&v->contents);
-  if (c == nullptr) return {};
-  const Delegation* d = c->delegation(surface);
-  return d != nullptr ? d->child : Id{};
+  return detail::Scan{doc}.delegate_of(composite, surface);
 }
 
 bool joins(const Document& doc, const ConnectionSurface& surface, const Id& volume) {
-  if (surface.joins(volume)) return true;
-  // Walk up: each step must be the delegate of the next one up, until a
-  // volume the surface names.
-  Id at = volume;
-  for (const Id& parent : ancestors(doc, volume)) {
-    if (!(delegate_of(doc, parent, surface.id) == at)) return false;
-    if (surface.joins(parent)) return true;
-    at = parent;
-  }
-  return false;
+  return detail::joins_in(detail::Scan{doc}, surface, volume);
 }
 
 std::vector<const ConnectionSurface*> joining_surfaces(const Document& doc, const Id& volume) {

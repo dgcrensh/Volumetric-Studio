@@ -56,13 +56,17 @@
 // else with the first node of the loop in document order.
 
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "vs/model/document.hpp"
 
 namespace vs::model {
+
+class DocumentIndex;
 
 enum class NodeKind {
   Variable,
@@ -89,6 +93,9 @@ struct DependencyNode {
 class DependencyGraph {
  public:
   static DependencyGraph build(const Document& document);
+  // The same through an index of the document (index.hpp), which a caller
+  // that has one passes rather than have it built again.
+  static DependencyGraph build(const DocumentIndex& index);
 
   [[nodiscard]] const std::vector<DependencyNode>& nodes() const { return nodes_; }
   [[nodiscard]] std::optional<std::size_t> find(NodeKind kind, const Id& id) const;
@@ -100,6 +107,9 @@ class DependencyGraph {
   [[nodiscard]] std::vector<std::size_t> dependants(std::size_t node) const;
   // True when `node` uses `other`, directly or through others.
   [[nodiscard]] bool depends_on(std::size_t node, std::size_t other) const;
+  // Per node, whether `node` uses it, directly or through others:
+  // depends_on(node, i) for every i in one walk.
+  [[nodiscard]] std::vector<bool> upstream(std::size_t node) const;
 
   // Each loop once, as the nodes along it (the first not repeated at the
   // end), rotated as described at the top of this header.
@@ -116,6 +126,7 @@ class DependencyGraph {
  private:
   std::vector<DependencyNode> nodes_;
   std::vector<std::vector<std::size_t>> inputs_;
+  std::map<std::pair<NodeKind, Id>, std::size_t> index_;  // find(): the first node
 };
 
 }  // namespace vs::model

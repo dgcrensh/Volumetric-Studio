@@ -50,6 +50,13 @@ void add_optional(Hasher& h, const std::optional<double>& v) {
 std::optional<Hash256> cache_key(const model::Document& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings) {
+  return cache_key(model::DocumentIndex(document), layout, index, settings);
+}
+
+std::optional<Hash256> cache_key(const model::DocumentIndex& document_index,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings) {
+  const model::Document& document = document_index.document();
   const model::Volume& v = document.volumes[index];
   const model::VolumeBuild& vb = layout.volumes[index];
   if (vb.boundary.is_empty() || vb.status == VolumeStatus::Failed) return std::nullopt;
@@ -102,9 +109,8 @@ std::optional<Hash256> cache_key(const model::Document& document,
   add_named_faces(h, vb.boundary_faces);
 
   // The connection surfaces joining it.
-  for (std::size_t k = 0; k < document.connections.size(); ++k) {
+  for (const std::size_t k : document_index.joining(v.id)) {
     const model::ConnectionSurface& c = document.connections[k];
-    if (!model::joins(document, c, v.id)) continue;
     const model::ConnectionBuild& cb = layout.connections[k];
     h.add(c.id).add(c.type()).add(cb.ok);
     if (!cb.ok) continue;

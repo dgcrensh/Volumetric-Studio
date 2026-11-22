@@ -1,7 +1,10 @@
 #include "vs/feature/tree.hpp"
 
 #include <algorithm>
+#include <map>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <fmt/format.h>
 
@@ -83,6 +86,25 @@ Id FeatureTree::insert(std::size_t index, Feature feature) {
   return id;
 }
 
+std::vector<Id> FeatureTree::append(std::vector<Feature> features) {
+  std::unordered_set<Id> used;
+  used.reserve(features_.size() + features.size());
+  for (const auto& f : features_) used.insert(f.id);
+  std::vector<Id> ids;
+  ids.reserve(features.size());
+  features_.reserve(features_.size() + features.size());
+  for (auto& f : features) {
+    if (f.id.is_null()) {
+      if (const auto* s = std::get_if<SketchFeature>(&f.definition)) f.id = s->sketch.id();
+    }
+    if (f.id.is_null() || used.contains(f.id)) f.id = Id::random();
+    used.insert(f.id);
+    ids.push_back(f.id);
+    features_.push_back(std::move(f));
+  }
+  return ids;
+}
+
 bool FeatureTree::remove(const Id& id) {
   const auto i = index_of(id);
   if (!i) return false;
@@ -161,17 +183,41 @@ core::SubjectRef FeatureTree::subject(const Id& id) const {
   return {core::SubjectKind::Feature, id, label(id)};
 }
 
+std::vector<core::SubjectRef> FeatureTree::subjects() const {
+  // label() names the first feature with an id, counting the features of
+  // its kind up to it; a repeated id takes its first feature's label.
+  std::vector<core::SubjectRef> out;
+  out.reserve(features_.size());
+  std::map<FeatureKind, int> counts;
+  std::unordered_map<Id, std::size_t> first;
+  for (const auto& f : features_) {
+    const int n = ++counts[f.kind()];
+    const auto [it, fresh] = first.emplace(f.id, out.size());
+    if (!fresh) {
+      out.push_back(out[it->second]);
+      continue;
+    }
+    std::string text;
+    if (!f.name.empty()) {
+      text = f.name;
+    } else if (const auto* s = f.as<SketchFeature>(); s && !s->sketch.name().empty()) {
+      text = s->sketch.name();
+    } else {
+      text = fmt::format("{} {}", to_string(f.kind()), n);
+    }
+    out.push_back({core::SubjectKind::Feature, f.id, std::move(text)});
+  }
+  return out;
+}
+
 Diagnostics FeatureTree::validate() const {
   Diagnostics out;
-  for (std::size_t i = 0; i < features_.size(); ++i) {
-    for (std::size_t j = 0; j < i; ++j) {
-      if (features_[i].id == features_[j].id) {
-        out.add(Diagnostic::error(
-            "feature.tree.duplicate_id",
-            fmt::format("Two features share the id {}", features_[i].id.to_string()),
-            {subject(features_[i].id)}));
-        break;
-      }
+  std::unordered_set<Id> seen;
+  for (const auto& f : features_) {
+    if (!seen.insert(f.id).second) {
+      out.add(Diagnostic::error("feature.tree.duplicate_id",
+                                fmt::format("Two features share the id {}", f.id.to_string()),
+                                {subject(f.id)}));
     }
   }
   out.append(variables_.check());
@@ -348,12 +394,14 @@ std::vector<TreeId> tree_ids(const FeatureTree& tree) {
   for (const auto& v : tree.variables().variables()) {
     out.push_back({v.id, TreeIdKind::Variable, {}, tree.variables().subject(v.id)});
   }
-  for (const auto& f : tree.features()) {
-    out.push_back({f.id, TreeIdKind::Feature, f.id, tree.subject(f.id)});
+  const auto subjects = tree.subjects();
+  for (std::size_t i = 0; i < tree.features().size(); ++i) {
+    const auto& f = tree.features()[i];
+    out.push_back({f.id, TreeIdKind::Feature, f.id, subjects[i]});
     const auto* s = f.as<SketchFeature>();
     if (s == nullptr) continue;
     if (!(s->sketch.id() == f.id)) {
-      out.push_back({s->sketch.id(), TreeIdKind::Sketch, f.id, tree.subject(f.id)});
+      out.push_back({s->sketch.id(), TreeIdKind::Sketch, f.id, subjects[i]});
     }
     for (const auto& e : s->sketch.entities()) {
       out.push_back({e.id, TreeIdKind::SketchEntity, f.id, s->sketch.subject(e.id)});
