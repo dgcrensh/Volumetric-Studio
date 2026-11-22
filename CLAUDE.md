@@ -389,6 +389,11 @@ so they are registered. A new library must also be added to
   from a sweep along x; an optional `ParallelFor` (`parallel.hpp`) runs
   pairs and surfaces in fixed chunks with their own boundary copies,
   folded in order, so the report is the same on any thread count (0031).
+  Pairs of boundaries that are exactly their boxes, and rectangular
+  patches on them, are checked by arithmetic (`LayoutOptions::
+  box_fast_path`, decision 0032): same codes, subjects and face names,
+  numbers within the tolerance of OCCT's; `test_box_path.cpp` compares
+  both paths on random layouts. Keep the box path and OCCT's in step.
   `vs_validate_tests "[.scaling]"` times the layout phases on n × n grids.
 - **Containment** (`containment.hpp`): `check_containment(boundary, solid
   or MeshView, volume subject, settings)`, for M9 to call after generation.
