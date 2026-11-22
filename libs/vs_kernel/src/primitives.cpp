@@ -176,6 +176,36 @@ std::vector<dvec3> loop_samples(const Loop& loop) {
   return pts;
 }
 
+// True when `loop` is all lines and turns the same way at every corner,
+// once round in all, about `normal`: a strictly convex polygon, which
+// can't cross itself. make_wire() has already refused sides shorter than
+// the minimum feature size and gaps between them.
+bool convex_polygon(const Loop& loop, const dvec3& normal) {
+  const std::size_t n = loop.segments.size();
+  if (n < 3) return false;
+  std::vector<dvec3> sides;
+  sides.reserve(n);
+  for (const auto& s : loop.segments) {
+    const auto* line = std::get_if<LineSegment>(&s);
+    if (line == nullptr) return false;
+    sides.push_back(line->end - line->start);
+  }
+  double sign = 0.0;
+  double turning = 0.0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const dvec3& a = sides[i];
+    const dvec3& b = sides[(i + 1) % n];
+    const double sine = core::dot(core::cross(a, b), normal);
+    const double cosine = core::dot(a, b);
+    // Nearly straight or folded back corners go through the full check.
+    if (std::abs(sine) <= 1e-9 * core::length(a) * core::length(b)) return false;
+    if (sign == 0.0) sign = sine > 0.0 ? 1.0 : -1.0;
+    if (sine * sign <= 0.0) return false;
+    turning += std::atan2(sine * sign, cosine);
+  }
+  return std::abs(turning - 2.0 * std::numbers::pi) < 1e-6;
+}
+
 // Twice the signed area of the polygon through `pts`, seen along `normal`.
 double signed_area(const std::vector<dvec3>& pts, const dvec3& normal) {
   dvec3 sum{};
@@ -234,6 +264,9 @@ Result<Face> make_face(const Loop& outer, std::span<const Loop> holes,
 
     auto face = Face::from(detail::wrap(mk.Face()));
     if (!face) return face;
+    // A strictly convex polygon without holes is valid by construction
+    // (decision 0033): skip the general check, most of the face's cost.
+    if (holes.empty() && convex_polygon(outer, normal)) return face;
     const Diagnostics problems = check_validity(*face);
     if (problems.has_errors()) {
       return Diagnostic::error(
@@ -287,7 +320,13 @@ Result<Solid> make_box(const dbox3& box, const ProductSettings& settings) {
       }
     }
     BRepPrimAPI_MakeBox mk(to_occ(box.min), to_occ(box.max));
-    return finish_primitive(mk.Solid(), "box", settings);
+    // A box of finite sides no shorter than the minimum feature size is
+    // valid by construction (decision 0033): the general check was nine
+    // tenths of its cost, and layouts make thousands.
+    auto solid = Solid::from(detail::wrap(mk.Solid()));
+    if (!solid) return solid;
+    if (auto d = check_in_working_space(*solid, settings)) return *d;
+    return solid;
   });
 }
 
