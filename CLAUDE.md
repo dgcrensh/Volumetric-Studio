@@ -921,10 +921,26 @@ so they are registered. A new library must also be added to
   refused table keeps the dialog open with the reason), and the
   inspector and Variables panel showing a driven number as `<value>
   (configuration: <expr>)`. Tests: `test_configurations_ui.cpp`.
+- **Drawings** (L6, decision 0038): `drawings.*` (no Qt) holds the
+  commands (add, rename, remove drawings; add, change, remove views and
+  dimensions; move a dimension's line) and what the dock and dialogs
+  list (`drawing_rows()`, `anchor_choices()`: stable anchors first,
+  disposable ones in parentheses). In the window: a Drawings dock
+  (tabbed with Variables), a drawing window (`drawing_window.*`,
+  `SheetView` paints the `Sheet` with QPainter, redrawn on the session's
+  worker after every shown evaluation and history change), modeless
+  `ViewDialog` and `DimensionDialog`, Model > New Drawing (a
+  `standard_drawing()` of the shown evaluation) and File > Export
+  Drawing… (SVG, PDF, DXF by extension, after the shipping check as
+  for STEP). Entry points: `new_drawing()`, `open_drawing()`,
+  `delete_drawing_item()`, `rename_drawing_item()`,
+  `add_drawing_view()`, `add_drawing_dimension()`,
+  `export_drawing_to()`. Tests: `test_drawings.cpp` (core),
+  `test_drawings_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]
-  [--slice]] [--size WxH]
+  [--slice]] [--drawing <name> [--drawing-image out.bmp]] [--size WxH]
   [--screenshot out.bmp] [--viewport-image out.bmp]`; the capture flags
   wait for the evaluation, save (BMP: this Qt has no PNG) and quit.
 - **From a Claude desktop-app session** `%LOCALAPPDATA%` is virtualised and

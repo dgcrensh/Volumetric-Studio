@@ -3,7 +3,7 @@
 Nov 22, 2026 · follows L5 (configurations and design tables) · decision
 record: `docs/decisions/0038-drawings.md`
 
-Status: in progress.
+Status: done.
 
 ## Goal
 
