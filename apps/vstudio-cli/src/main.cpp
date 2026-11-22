@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bench_commands.hpp"
 #include "eval_commands.hpp"
 #include "proc_commands.hpp"
 #include "feature_commands.hpp"
@@ -78,6 +79,11 @@ Commands:
                     Time the gyroid_infill template in a cube (default 100 mm at a
                     0.5 mm grid), stage by stage: the CPU baseline. --threads takes
                     0 (every core, the default) to 256
+  bench-rack [--cells N[,N...]] [--cell <mm>] [--threads N] [--csv <file>]
+                    Time Engine::preview() on the rack fixture (a composite whose
+                    generator makes a grid of cells) at 10, 100, 1,000 and 10,000
+                    cells, phase by phase with peak memory (Linux): how the preview
+                    tier scales
   version           Print the version (same as --version)
   help              Print this message
 
@@ -211,6 +217,9 @@ int main(int argc, char** argv) {
   }
   if (command == "templates") {
     return vs::cli::run_templates(rest, std::cout, std::cerr);
+  }
+  if (command == "bench-rack") {
+    return vs::cli::run_bench_rack(rest, std::cout, std::cerr);
   }
   if (command == "bench-gyroid") {
     return vs::cli::run_bench_gyroid(rest, std::cout, std::cerr);

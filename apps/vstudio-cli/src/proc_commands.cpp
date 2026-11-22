@@ -1,5 +1,6 @@
 #include "proc_commands.hpp"
 #include "files.hpp"
+#include "memory.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -37,30 +38,6 @@
 namespace vs::cli {
 
 namespace {
-
-// The process's peak resident memory in MB since it started or since the
-// last reset (Linux: VmHWM, reset through clear_refs; elsewhere nothing),
-// for bench-gyroid (H5).
-std::optional<double> peak_rss_mb() {
-#if defined(__linux__)
-  std::ifstream status("/proc/self/status");
-  std::string line;
-  while (std::getline(status, line)) {
-    if (line.starts_with("VmHWM:")) {
-      std::istringstream in(line.substr(6));
-      double kb = 0;
-      if (in >> kb) return kb / 1024.0;
-    }
-  }
-#endif
-  return std::nullopt;
-}
-
-void reset_peak_rss() {
-#if defined(__linux__)
-  std::ofstream("/proc/self/clear_refs") << "5";
-#endif
-}
 
 std::string peak_text() {
   const auto mb = peak_rss_mb();
