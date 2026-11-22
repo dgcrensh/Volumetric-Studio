@@ -414,6 +414,30 @@ struct Link {
   friend bool operator==(const Link&, const Link&) = default;
 };
 
+// --- configurations (L5) ---------------------------------------------------------------
+
+// One number a configuration drives: `target` is a variable of the root's
+// or a composite's layout, or a volume's parameter (what a link may drive,
+// at any depth); `expression` is what it takes there, evaluated where the
+// target is (configuration.hpp).
+struct ConfigurationValue {
+  Id target;
+  std::string expression;
+  friend bool operator==(const ConfigurationValue&, const ConfigurationValue&) = default;
+};
+
+// A named variant of the document (spec, "Later": configurations and
+// design tables): values for some of the numbers fixed inputs are made
+// of. Every number it doesn't drive keeps its authored value. A design
+// table (design_table.hpp) is every configuration at once.
+struct Configuration {
+  Id id;
+  std::string name;
+  std::vector<ConfigurationValue> values;  // one per target at most
+  [[nodiscard]] const ConfigurationValue* find(const Id& target) const;
+  friend bool operator==(const Configuration&, const Configuration&) = default;
+};
+
 // --- the document --------------------------------------------------------------------
 
 struct Document {
@@ -424,6 +448,10 @@ struct Document {
   std::vector<ConnectionSurface> connections;
   std::vector<KeepOut> keep_outs;
   std::vector<Link> links;
+  // L5: the document's configurations, and the one it builds (null: the
+  // authored values). Both written to JSON only when set.
+  std::vector<Configuration> configurations;
+  Id active_configuration;
 
   [[nodiscard]] const Volume* find_volume(const Id& id) const;
   [[nodiscard]] Volume* find_volume(const Id& id);
@@ -432,6 +460,8 @@ struct Document {
   [[nodiscard]] ConnectionSurface* find_connection(const Id& id);
   [[nodiscard]] const KeepOut* find_keep_out(const Id& id) const;
   [[nodiscard]] const Link* find_link(const Id& id) const;
+  [[nodiscard]] const Configuration* find_configuration(const Id& id) const;
+  [[nodiscard]] const Configuration* find_configuration(std::string_view name) const;
 
   // The volume whose contents hold `id` (a feature, variable or sketch
   // entity of a parametric volume's tree), if any.
@@ -444,6 +474,7 @@ struct Document {
   [[nodiscard]] SubjectRef keep_out_subject(const Id& keep_out) const;
   [[nodiscard]] SubjectRef output_subject(const PublishedOutputRef& output) const;
   [[nodiscard]] SubjectRef link_subject(const Id& link) const;
+  [[nodiscard]] SubjectRef configuration_subject(const Id& configuration) const;
 
   friend bool operator==(const Document&, const Document&) = default;
 };

@@ -245,6 +245,14 @@ Diagnostics VariableTable::set_expression(std::string_view name, std::string exp
   return out;
 }
 
+bool VariableTable::set_expression_unchecked(const Id& id, std::string expression) {
+  const auto it = std::find_if(variables_.begin(), variables_.end(),
+                               [&](const Variable& v) { return v.id == id; });
+  if (it == variables_.end()) return false;
+  it->expression = std::move(expression);
+  return true;
+}
+
 bool VariableTable::remove(const Id& id) {
   const auto it = std::find_if(variables_.begin(), variables_.end(),
                                [&](const Variable& v) { return v.id == id; });

@@ -41,6 +41,12 @@
 // Failed; with no layout generator installed it is Stale. Documents
 // without a generator take exactly the M9 path.
 //
+// Configurations (L5). The document is checked as authored, then its
+// active configuration is written in (model::configured()) and that is
+// what every later step sees. Keys hash values, never which configuration
+// gave them, so switching configurations regenerates only volumes whose
+// inputs differ, and switching back finds the rest in the cache.
+//
 // Volume states (model::VolumeStatus), on each VolumeResult:
 //
 //   Current       its contents match its current inputs (generated now, or
@@ -171,8 +177,13 @@ struct EvaluationStats {
 struct Evaluation {
   bool checked = false;    // model::check() passed
   bool cancelled = false;
-  // The document as evaluated: links applied to their targets.
+  // The document as evaluated: its active configuration (L5) and links
+  // applied to their targets, generated children (L4) expanded.
   model::Document document;
+  // The configuration evaluated (L5) and its name; null and empty: the
+  // authored values.
+  Id configuration;
+  std::string configuration_name;
   // The last layout build, with each volume's shown contents applied (its
   // status and diagnostics are the engine's), for vs_mesh and vs_validate.
   model::DocumentBuild build;

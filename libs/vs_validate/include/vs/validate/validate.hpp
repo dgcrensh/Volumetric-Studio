@@ -7,7 +7,8 @@
 //      (model.*, feature.*). Errors here stop validation: a document that
 //      breaks the authoring rules isn't built.
 //   2. model::build(): the layout, boundaries, connection surfaces and the
-//      contents M5 can make. Its diagnostics are included.
+//      contents M5 can make, of the active configuration (L5). Its
+//      diagnostics are included.
 //   3. validate_layout() (layout.hpp): overlap, undeclared contact and the
 //      connection type rules.
 //   4. check_containment() (containment.hpp) for every volume with built

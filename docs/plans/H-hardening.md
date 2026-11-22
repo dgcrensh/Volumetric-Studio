@@ -2,7 +2,7 @@
 
 Nov 20, 2026 · follows L4 · precedes L5 (configurations and design tables)
 
-**Status: in progress.** H1 done (PR 31, decision 0023); H2 done (PR 32, decision 0024); H3 done (PR 33, decision 0025); H4 done (PR 34, decision 0026); H5 done (PR 35, decision 0027); the merge's peak memory, a follow-up to H5, done (PR 36, decision 0028); leaner edits done (PR 37, decision 0029); rack benchmark done (PR 38, decision 0030); document index done (PR 39, decision 0031); box layout checks done (PR 40, decision 0032); layout build done (PR 41, decision 0033); lean layout checks done (PR 42, decision 0034); H6 done (PR 43, decision 0035) and H7 in review (decision 0036), both on Dallas's desktop in place of the VM.
+**Status: done.** H1 done (PR 31, decision 0023); H2 done (PR 32, decision 0024); H3 done (PR 33, decision 0025); H4 done (PR 34, decision 0026); H5 done (PR 35, decision 0027); the merge's peak memory, a follow-up to H5, done (PR 36, decision 0028); leaner edits done (PR 37, decision 0029); rack benchmark done (PR 38, decision 0030); document index done (PR 39, decision 0031); box layout checks done (PR 40, decision 0032); layout build done (PR 41, decision 0033); lean layout checks done (PR 42, decision 0034); H6 done (PR 43, decision 0035) and H7 done (PR 44, decision 0036), both on Dallas's desktop in place of the VM.
 
 **Revised.** The first draft (`1e2a378`) also moved procedural fields and the unmerged surface net to FP32 for the GPU. Review cut that (see "What was cut" below) and reordered the phases so that everything a Linux cloud session can build and test runs first, and the work that needs the Windows desktop (a GPU, the Qt app, `[gui]` suites) is grouped at the end. Dallas accepted the revision on Nov 20, 2026.
 

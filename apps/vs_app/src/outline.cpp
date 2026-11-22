@@ -284,6 +284,9 @@ std::vector<Property> inspect(const eval::Evaluation& evaluation, const Selectio
   switch (selection.kind) {
     case Selection::Kind::None: {
       add("Project", "Name", doc.name);
+      if (!evaluation.configuration.is_null()) {
+        add("Project", "Configuration", evaluation.configuration_name);
+      }
       add("Project", "Volumes", std::to_string(doc.volumes.size()));
       add("Project", "Connection surfaces", std::to_string(doc.connections.size()));
       for (const auto& var : doc.layout.variables().variables()) {

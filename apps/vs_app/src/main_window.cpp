@@ -12,6 +12,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
@@ -22,6 +23,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTableWidget>
@@ -38,6 +40,8 @@
 #include <iterator>
 
 #include "authoring.hpp"
+#include "configurations.hpp"
+#include "design_table_dialog.hpp"
 #include "feature_dialog.hpp"
 #include "model_dialogs.hpp"
 #include "node_editor.hpp"
@@ -206,6 +210,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   build_docks();
   build_menus();
 
+  // L5: which configuration is shown.
+  configuration_bar_ = new QToolBar(tr("Configuration"), this);
+  configuration_bar_->setObjectName(QStringLiteral("configuration"));
+  configuration_bar_->addWidget(new QLabel(tr(" Configuration: ")));
+  configuration_box_ = new QComboBox;
+  configuration_box_->setObjectName(QStringLiteral("configuration_box"));
+  configuration_box_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+  configuration_box_->setMinimumContentsLength(16);
+  configuration_box_->setToolTip(tr("The configuration shown: the authored values, or one of the project's "
+                                    "configurations (Model > Design Table… edits them)"));
+  configuration_bar_->addWidget(configuration_box_);
+  connect(configuration_box_, &QComboBox::currentIndexChanged, this, [this](int index) {
+    if (index < 0) return;
+    const auto id = Id::parse(sstr(configuration_box_->itemData(index).toString()));
+    show_configuration(id ? *id : Id::null());
+  });
+  addToolBar(Qt::TopToolBarArea, configuration_bar_);
+  refresh_configurations();
+
   context_bar_ = new QToolBar(tr("Editing in context"), this);
   context_bar_->setObjectName(QStringLiteral("context"));
   context_bar_->setMovable(false);
@@ -291,6 +314,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     fitted_ = false;
     selection_ = {};
     refresh_edit_actions();
+    refresh_configurations();
     update_title();
   });
   connect(viewport_, &Viewport::picked, this, [this](core::Id subject) {
@@ -427,6 +451,8 @@ void MainWindow::build_menus() {
   cancel_action_ = model->addAction(tr("&Cancel"), QKeySequence(Qt::Key_Escape), session_, &Session::cancel);
   cancel_action_->setEnabled(false);
   model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, [this] { validate(); });
+  model->addSeparator();
+  model->addAction(tr("&Design Table…"), this, [this] { open_design_table(); });
 
   QMenu* view = menuBar()->addMenu(tr("V&iew"));
   fit_action_ = view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
@@ -645,6 +671,7 @@ void MainWindow::show_project() {
   refresh_edit_actions();
   update_title();
   refresh_graph();
+  refresh_configurations();
   emit historyChanged();
 }
 
@@ -962,6 +989,11 @@ void MainWindow::refresh_variables() {
       auto* value = new QTableWidgetItem(it != values.end() ? QString::number(it->second, 'g', 10) : tr("?"));
       value->setFlags(value->flags() & ~Qt::ItemIsEditable);
       value->setForeground(QColor(90, 90, 100));
+      // L5: a variable the shown configuration drives says so.
+      if (const auto e = active_value(history_.project().document, var.id)) {
+        value->setText(tr("%1 (configuration: %2)").arg(value->text(), qstr(*e)));
+        value->setForeground(QColor(29, 79, 145));
+      }
       variables_->setItem(row, 2, value);
     }
   }
@@ -982,6 +1014,37 @@ void MainWindow::refresh_inspector() {
   inspector_->clear();
   const SnapshotPtr s = session_->latest();
   if (!s) return;
+  // L5: the numbers the shown configuration drives, by (group, name), as
+  // "<value> (configuration: <expression>)". The evaluated document is the
+  // configured one; the authored project names what is driven.
+  std::map<std::pair<std::string, std::string>, std::string> driven;
+  if (s->project) {
+    const model::Document& authored = s->project->document;
+    const auto mark = [](std::optional<double> value, const std::string& expression) {
+      return fmt::format("{} (configuration: {})", value ? sstr(QString::number(*value, 'g', 10)) : "?",
+                         expression);
+    };
+    if (selection_.kind == Selection::Kind::None) {
+      for (const auto& var : authored.layout.variables().variables()) {
+        if (const auto e = active_value(authored, var.id)) {
+          driven[{"Variables", var.name}] = mark(s->evaluation.build.layout.variables.get(var.name), *e);
+        }
+      }
+    } else if (selection_.kind == Selection::Kind::Volume) {
+      if (const model::Volume* v = authored.find_volume(selection_.id)) {
+        const model::VolumeBuild* vb = s->evaluation.build.find_volume(v->id);
+        for (const auto& p : v->parameters) {
+          const auto e = active_value(authored, p.id);
+          if (!e) continue;
+          std::optional<double> value;
+          if (vb != nullptr) {
+            if (const auto it = vb->parameters.find(p.name); it != vb->parameters.end()) value = it->second;
+          }
+          driven[{"Parameters", p.name}] = mark(value, *e);
+        }
+      }
+    }
+  }
   std::map<std::string, QTreeWidgetItem*> groups;
   for (const Property& p : inspect(s->evaluation, selection_)) {
     QTreeWidgetItem*& group = groups[p.group];
@@ -992,8 +1055,18 @@ void MainWindow::refresh_inspector() {
       group->setFont(0, f);
       group->setFirstColumnSpanned(true);
     }
-    auto* item = new QTreeWidgetItem(group, {qstr(p.name), qstr(p.value)});
-    item->setToolTip(1, qstr(p.value));
+    const auto it = driven.find({p.group, p.name});
+    if (it == driven.end()) {
+      auto* item = new QTreeWidgetItem(group, {qstr(p.name), qstr(p.value)});
+      item->setToolTip(1, qstr(p.value));
+      continue;
+    }
+    auto* item = new QTreeWidgetItem(group, {qstr(p.name), qstr(it->second)});
+    item->setToolTip(1, tr("Driven by the configuration shown (%1)").arg(qstr(s->evaluation.configuration_name)));
+    item->setForeground(1, QColor(29, 79, 145));
+    QFont f = item->font(1);
+    f.setItalic(true);
+    item->setFont(1, f);
   }
   inspector_->expandAll();
 }
@@ -1535,6 +1608,42 @@ KeepOutDialog* MainWindow::new_keep_out() {
   k.name = unique_name("Keep-out", taken);
   auto* d = new KeepOutDialog(k, s->evaluation, authoring_level(), this);
   start_dialog(d, [d] { return add_keep_out(d->value()); });
+  return d;
+}
+
+// --- configurations (L5) ----------------------------------------------------------------------
+
+void MainWindow::refresh_configurations() {
+  if (configuration_box_ == nullptr) return;
+  const QSignalBlocker block(configuration_box_);
+  configuration_box_->clear();
+  const bool has_project = session_->has_project();
+  if (has_project) {
+    for (const ConfigurationChoice& c : configuration_choices(history_.project().document)) {
+      configuration_box_->addItem(qstr(c.label), qstr(c.id.is_null() ? std::string() : c.id.to_string()));
+      if (c.active) configuration_box_->setCurrentIndex(configuration_box_->count() - 1);
+    }
+  }
+  configuration_box_->setEnabled(has_project && configuration_box_->count() > 1);
+}
+
+core::Diagnostics MainWindow::show_configuration(const Id& configuration) {
+  if (!session_->has_project()) return {};
+  if (history_.project().document.active_configuration == configuration) {
+    refresh_configurations();
+    return {};
+  }
+  close_dialog();
+  const core::Diagnostics d = apply(set_active_configuration(configuration));
+  // Refused (a configuration removed meanwhile): the box shows what is.
+  if (d.has_errors()) refresh_configurations();
+  return d;
+}
+
+DesignTableDialog* MainWindow::open_design_table() {
+  if (!session_->has_project()) return nullptr;
+  auto* d = new DesignTableDialog(history_.project().document, this);
+  start_dialog(d, [d] { return set_design_table(d->table()); });
   return d;
 }
 

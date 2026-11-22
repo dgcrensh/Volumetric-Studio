@@ -1,5 +1,6 @@
 #include "validate_commands.hpp"
 #include "files.hpp"
+#include "config_commands.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -14,8 +15,9 @@
 namespace vs::cli {
 
 int run_validate(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
-  if (args.size() != 1) {
-    err << "usage: vstudio-cli validate <project.vsproj>\n";
+  const bool with_config = args.size() == 3 && args[1] == "--config";
+  if (args.size() != 1 && !with_config) {
+    err << "usage: vstudio-cli validate <project.vsproj> [--config <name>]\n";
     return 2;
   }
   const std::filesystem::path path = to_path(args[0]);
@@ -24,6 +26,7 @@ int run_validate(std::span<const std::string_view> args, std::ostream& out, std:
     err << loaded.error().to_string() << "\n";
     return 1;
   }
+  if (with_config && !use_configuration(*loaded, args[2], err)) return 1;
   const auto settings = core::ProductSettings::defaults();
   const auto t0 = std::chrono::steady_clock::now();
   const auto report = validate::validate(loaded->document, settings, &loaded->blobs);
@@ -32,6 +35,9 @@ int run_validate(std::span<const std::string_view> args, std::ostream& out, std:
 
   const auto& d = report.diagnostics;
   out << fmt::format("project     {}\n", loaded->document.name);
+  if (const auto* c = loaded->document.find_configuration(loaded->document.active_configuration)) {
+    out << fmt::format("configuration {}\n", c->name);
+  }
   out << fmt::format("volumes     {}, connection surfaces {}\n", loaded->document.volumes.size(),
                      loaded->document.connections.size());
   out << fmt::format("checked     in {:.0f} ms\n", ms);

@@ -54,6 +54,9 @@
 //   dependencies   model.dependency.loop           (dependency.hpp)
 //                  model.composite.generated_link  (L4) a link feeds the inputs of a composite
 //                                                  with a generator, from outside it
+//   configurations model.configuration.*         (L5, configuration.hpp) every configuration
+//                                                  must build: names, targets, expressions,
+//                                                  loops, the active one; .linked warns
 //
 // Generated volumes (L4, generated.hpp) are checked like authored ones,
 // except that their names (and their surfaces') needn't be distinct.

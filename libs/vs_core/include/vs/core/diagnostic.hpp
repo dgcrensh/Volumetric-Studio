@@ -50,6 +50,7 @@ enum class SubjectKind {
   KeepOut,    // a keep-out region (vs_model)
   Parameter,  // a volume's parameter (vs_model)
   Link,       // a published output feeding a variable or parameter (vs_model)
+  Configuration,  // a named set of driven values (vs_model, L5)
 };
 
 std::string_view to_string(SubjectKind kind);

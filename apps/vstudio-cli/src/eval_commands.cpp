@@ -1,5 +1,6 @@
 #include "eval_commands.hpp"
 #include "files.hpp"
+#include "config_commands.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -91,11 +92,12 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
       "usage: vstudio-cli rebuild <project.vsproj> [--threads N] [--check-determinism] [--weld] "
       "[--stl <out.stl>] [--3mf <out.3mf> [--per-volume]] [--step <out.step> "
       "[--procedural-boundary]] [--cache] "
-      "[--set <volume>.<parameter>=<value>]... [--twice]\n";
+      "[--set <volume>.<parameter>=<value>]... [--config <name>] [--twice]\n";
   std::optional<std::string_view> project_arg;
   eval::EngineOptions engine_options;
   eval::EvaluateOptions options;
   bool cache = false, twice = false;
+  std::optional<std::string_view> config;
   std::optional<std::string_view> stl, three_mf;
   bool per_volume = false;
   std::optional<std::string_view> step;
@@ -133,6 +135,8 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
       twice = true;
     } else if (a == "--set" && i + 1 < args.size()) {
       sets.push_back(args[++i]);
+    } else if (a == "--config" && i + 1 < args.size()) {
+      config = args[++i];
     } else if (a.starts_with("-") || project_arg) {
       return err << kUsage, 2;
     } else {
@@ -152,6 +156,7 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
   const bool zip = !std::filesystem::is_directory(path);
   std::optional<model::Project> as_read;
   if (cache && zip) as_read = *loaded;
+  if (config && !use_configuration(*loaded, *config, err)) return 1;
   for (const auto set : sets) {
     const auto dot = set.find('.');
     const auto eq = set.find('=');
@@ -192,6 +197,9 @@ int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::
                      volumes, volumes == 1 ? "" : "s", engine.pool().size(),
                      engine.pool().size() == 1 ? "" : "s",
                      engine_options.check_determinism ? ", checking determinism" : "");
+  if (const auto* c = loaded->document.find_configuration(loaded->document.active_configuration)) {
+    out << fmt::format("configuration {}\n", c->name);
+  }
   bool errors = false;
   for (int run = 0; run < (twice ? 2 : 1); ++run) {
     if (twice) out << fmt::format("evaluation  {}\n", run + 1);

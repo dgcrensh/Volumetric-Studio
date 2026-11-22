@@ -50,7 +50,10 @@
 //       }],
 //       "keep_outs": [{"id": "...", "name": "...", "cutters": [...], "volumes": [...]}],
 //       "links": [{"id": "...", "source": {"volume": "<id>", "output": "<id>"},
-//                  "target": "<id>"}]
+//                  "target": "<id>"}],
+//       "configurations": [{"id": "...", "name": "Heavy",                (L5, when any)
+//                           "values": [{"target": "<id>", "expression": "80"}]}],
+//       "active_configuration": "<id>"                                    (L5, when set)
 //     },
 //     "blobs": [{"path": "blobs/<hash>.step", "size": 1234, "blake3": "<64 hex>"}]
 //   }

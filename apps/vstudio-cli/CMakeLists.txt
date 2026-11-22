@@ -6,6 +6,7 @@ vs_add_application(vstudio-cli
   SOURCES
     src/bench_commands.cpp
     src/bench_edit.cpp
+    src/config_commands.cpp
     src/eval_commands.cpp
     src/feature_commands.cpp
     src/kernel_commands.cpp
@@ -325,4 +326,62 @@ if(VS_BUILD_TESTS)
   add_test(NAME "vstudio-cli: bench-rack takes at most 10000 cells"
     COMMAND vstudio-cli bench-rack --cells 10001)
   set_tests_properties("vstudio-cli: bench-rack takes at most 10000 cells" PROPERTIES WILL_FAIL TRUE)
+endif()
+
+if(VS_BUILD_TESTS)
+  # Configurations and design tables (L5) on a copy of the sample bracket.
+  set(cli_data "${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  set(config_project "${CMAKE_CURRENT_BINARY_DIR}/configured.vsproj")
+  add_test(NAME "vstudio-cli: copy the bracket for configurations"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj" "${config_project}")
+  set_tests_properties("vstudio-cli: copy the bracket for configurations" PROPERTIES
+    FIXTURES_SETUP config_project)
+  add_test(NAME "vstudio-cli: design-table imports a CSV table"
+    COMMAND vstudio-cli design-table "${config_project}"
+            --import "${cli_data}/bracket-configurations.csv")
+  set_tests_properties("vstudio-cli: design-table imports a CSV table" PROPERTIES
+    PASS_REGULAR_EXPRESSION "table +2 configurations, 2 columns.*saved"
+    FIXTURES_REQUIRED config_project FIXTURES_SETUP config_table)
+  add_test(NAME "vstudio-cli: design-table refuses an unknown column"
+    COMMAND vstudio-cli design-table "${config_project}" --import "${cli_data}/bad-column.csv")
+  set_tests_properties("vstudio-cli: design-table refuses an unknown column" PROPERTIES
+    WILL_FAIL TRUE FIXTURES_REQUIRED config_table)
+  add_test(NAME "vstudio-cli: design-table writes the table as CSV"
+    COMMAND vstudio-cli design-table "${config_project}")
+  set_tests_properties("vstudio-cli: design-table writes the table as CSV" PROPERTIES
+    PASS_REGULAR_EXPRESSION "configuration,width,Base\\.thickness\r?\nThin,,6\r?\nHeavy,80,"
+    FIXTURES_REQUIRED config_table)
+  add_test(NAME "vstudio-cli: configs --build evaluates every configuration with one cache"
+    COMMAND vstudio-cli configs "${config_project}" --build --threads 2)
+  set_tests_properties("vstudio-cli: configs --build evaluates every configuration with one cache"
+    PROPERTIES PASS_REGULAR_EXPRESSION
+    "Thin\n +Base\\.thickness = 6.*Heavy\n +width = 80 +\\(authored: 60 mm\\).*build +\\(authored\\): 2 of 2 volumes current, 2 regenerated.*Base\\.mass = 29\\.76.*build +Thin: 2 of 2 volumes current, 1 regenerated.*Base\\.mass = 17\\.856.*build +Heavy: 2 of 2 volumes current, 2 regenerated.*result +ok"
+    FIXTURES_REQUIRED config_table)
+  add_test(NAME "vstudio-cli: rebuild --config evaluates one configuration"
+    COMMAND vstudio-cli rebuild "${config_project}" --config Thin)
+  set_tests_properties("vstudio-cli: rebuild --config evaluates one configuration" PROPERTIES
+    PASS_REGULAR_EXPRESSION "configuration Thin.*mass = 17\\.856.*result +ok"
+    FIXTURES_REQUIRED config_table)
+  add_test(NAME "vstudio-cli: validate --config validates one configuration"
+    COMMAND vstudio-cli validate "${config_project}" --config Heavy)
+  set_tests_properties("vstudio-cli: validate --config validates one configuration" PROPERTIES
+    PASS_REGULAR_EXPRESSION "configuration Heavy.*result +valid"
+    FIXTURES_REQUIRED config_table)
+  add_test(NAME "vstudio-cli: rebuild --config needs a known configuration"
+    COMMAND vstudio-cli rebuild "${config_project}" --config Nope)
+  set_tests_properties("vstudio-cli: rebuild --config needs a known configuration" PROPERTIES
+    WILL_FAIL TRUE FIXTURES_REQUIRED config_table)
+  add_test(NAME "vstudio-cli: configs --activate saves the active configuration"
+    COMMAND vstudio-cli configs "${config_project}" --activate Heavy)
+  set_tests_properties("vstudio-cli: configs --activate saves the active configuration" PROPERTIES
+    PASS_REGULAR_EXPRESSION "saved"
+    FIXTURES_REQUIRED config_table FIXTURES_SETUP config_active
+    # It rewrites the project the others read.
+    DEPENDS "vstudio-cli: design-table refuses an unknown column;vstudio-cli: design-table writes the table as CSV;vstudio-cli: configs --build evaluates every configuration with one cache;vstudio-cli: rebuild --config evaluates one configuration;vstudio-cli: validate --config validates one configuration;vstudio-cli: rebuild --config needs a known configuration")
+  add_test(NAME "vstudio-cli: info builds the active configuration"
+    COMMAND vstudio-cli info "${config_project}" --build)
+  set_tests_properties("vstudio-cli: info builds the active configuration" PROPERTIES
+    PASS_REGULAR_EXPRESSION "configurations \\(2\\).*Heavy +1 value, active.*Base +current +boundary 32000 mm"
+    FIXTURES_REQUIRED config_active)
 endif()

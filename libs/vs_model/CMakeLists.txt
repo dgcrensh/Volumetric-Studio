@@ -11,7 +11,9 @@ vs_add_library(vs_model
   SOURCES
     src/build.cpp
     src/check.cpp
+    src/configuration.cpp
     src/dependency.cpp
+    src/design_table.cpp
     src/document.cpp
     src/generated.cpp
     src/hierarchy.cpp
@@ -33,6 +35,7 @@ vs_add_library(vs_model
 vs_add_library_tests(vs_model
   SOURCES
     tests/test_build.cpp
+    tests/test_configurations.cpp
     tests/test_curved.cpp
     tests/test_dependency.cpp
     tests/test_design_rules.cpp

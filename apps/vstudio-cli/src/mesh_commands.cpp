@@ -1,5 +1,6 @@
 #include "mesh_commands.hpp"
 #include "files.hpp"
+#include "config_commands.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -19,13 +20,15 @@
 #include "vs/mesh/seam_library.hpp"
 #include "vs/mesh/topology.hpp"
 #include "vs/model/build.hpp"
+#include "vs/model/configuration.hpp"
 #include "vs/model/project.hpp"
 
 namespace vs::cli {
 
 int run_seams(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
-  if (args.size() != 1) {
-    err << "usage: vstudio-cli seams <project.vsproj>\n";
+  const bool with_config = args.size() == 3 && args[1] == "--config";
+  if (args.size() != 1 && !with_config) {
+    err << "usage: vstudio-cli seams <project.vsproj> [--config <name>]\n";
     return 2;
   }
   const std::filesystem::path path = to_path(args[0]);
@@ -34,8 +37,10 @@ int run_seams(std::span<const std::string_view> args, std::ostream& out, std::os
     err << loaded.error().to_string() << "\n";
     return 1;
   }
+  if (with_config && !use_configuration(*loaded, args[2], err)) return 1;
   const auto settings = core::ProductSettings::defaults();
-  const model::Document& doc = loaded->document;
+  // The active configuration's values (L5), as everything here is built.
+  const model::Document doc = model::configured(loaded->document);
   const model::DocumentBuild built = model::build(doc, settings, &loaded->blobs);
   const mesh::SeamLibrary lib = mesh::build_seams(doc, built, settings);
 
@@ -88,8 +93,8 @@ int run_seams(std::span<const std::string_view> args, std::ostream& out, std::os
 int run_export(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   constexpr std::string_view kUsage =
       "usage: vstudio-cli export <project.vsproj> --stl <file> | --3mf <file> [--per-volume] "
-      "[--placeholders] [--deflection <mm>]\n";
-  std::optional<std::string_view> project, stl, three_mf;
+      "[--placeholders] [--deflection <mm>] [--config <name>]\n";
+  std::optional<std::string_view> project, stl, three_mf, config;
   bool per_volume = false;
   mesh::CombineOptions options;
   for (std::size_t i = 0; i < args.size(); ++i) {
@@ -106,6 +111,9 @@ int run_export(std::span<const std::string_view> args, std::ostream& out, std::o
       if (!three_mf) return err << kUsage, 2;
     } else if (a == "--per-volume") {
       per_volume = true;
+    } else if (a == "--config") {
+      config = value();
+      if (!config) return err << kUsage, 2;
     } else if (a == "--placeholders") {
       options.placeholders = true;
     } else if (a == "--deflection") {
@@ -128,8 +136,9 @@ int run_export(std::span<const std::string_view> args, std::ostream& out, std::o
     err << loaded.error().to_string() << "\n";
     return 1;
   }
+  if (config && !use_configuration(*loaded, *config, err)) return 1;
   const auto settings = core::ProductSettings::defaults();
-  const model::Document& doc = loaded->document;
+  const model::Document doc = model::configured(loaded->document);
   const model::DocumentBuild built = model::build(doc, settings, &loaded->blobs);
   for (const auto& d : built.diagnostics) {
     if (d.severity == core::Severity::Error) out << d.to_string() << "\n";

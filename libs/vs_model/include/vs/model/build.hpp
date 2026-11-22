@@ -252,7 +252,10 @@ std::vector<OutputResult> composite_outputs(const Volume& composite,
 VolumeStatus worse(VolumeStatus a, VolumeStatus b);
 
 // `blobs` holds static contents' files; without it static contents aren't
-// read and stay Stale.
+// read and stay Stale. Builds the document's active configuration (L5,
+// configuration.hpp: configured()); build_layout() and build_contents()
+// build the document they're given, so callers of the halves (vs_eval)
+// pass configured() themselves.
 DocumentBuild build(const Document& document, const ProductSettings& settings,
                     const BlobStore* blobs = nullptr);
 

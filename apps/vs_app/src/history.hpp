@@ -19,6 +19,11 @@
 // (H5). The undo stack keeps at most undo_limit() steps, dropping the
 // oldest.
 //
+// After a change, configuration values whose target it removed (a
+// variable, parameter or volume) are dropped (L5,
+// model::prune_configurations()), so a deletion is never refused because a
+// configuration drives what it deletes.
+//
 // A document opened with errors (the app opens what the validator opens)
 // can still be edited: a change is refused only when it adds an error that
 // wasn't there before, so fixing one error at a time works.

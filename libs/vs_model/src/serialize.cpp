@@ -227,6 +227,22 @@ ojson document_json(const Document& d) {
                           {"target", l.target.to_string()}});
   }
   j["links"] = std::move(links);
+  // L5: only when set, so documents without them read and hash as before.
+  if (!d.configurations.empty()) {
+    ojson configurations = ojson::array();
+    for (const auto& c : d.configurations) {
+      ojson values = ojson::array();
+      for (const auto& v : c.values) {
+        values.push_back(ojson{{"target", v.target.to_string()}, {"expression", v.expression}});
+      }
+      configurations.push_back(
+          ojson{{"id", c.id.to_string()}, {"name", c.name}, {"values", std::move(values)}});
+    }
+    j["configurations"] = std::move(configurations);
+  }
+  if (!d.active_configuration.is_null()) {
+    j["active_configuration"] = d.active_configuration.to_string();
+  }
   return j;
 }
 
@@ -611,6 +627,28 @@ Document read_document(const json& j) {
                           read_id(member(s, "output", lw), lw + ".source.output")},
                          read_id(member(l, "target", lw), lw + ".target")});
     }
+  }
+  if (const json* cs = array("configurations")) {
+    for (std::size_t i = 0; i < cs->size(); ++i) {
+      const std::string cw = fmt::format("document.configurations[{}]", i);
+      const json& c = (*cs)[i];
+      Configuration config;
+      config.id = read_own_id(member(c, "id", cw), cw + ".id");
+      config.name = read_optional_string(c, "name", cw);
+      if (const json* vs = optional_member(c, "values")) {
+        if (!vs->is_array()) fail(cw + ".values", "expected an array");
+        for (std::size_t k = 0; k < vs->size(); ++k) {
+          const std::string vw = fmt::format("{}.values[{}]", cw, k);
+          const json& v = (*vs)[k];
+          config.values.push_back({read_id(member(v, "target", vw), vw + ".target"),
+                                   read_optional_string(v, "expression", vw)});
+        }
+      }
+      d.configurations.push_back(std::move(config));
+    }
+  }
+  if (const json* a = optional_member(j, "active_configuration")) {
+    d.active_configuration = read_id(*a, "document.active_configuration");
   }
   return d;
 }

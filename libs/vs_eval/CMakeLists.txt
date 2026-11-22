@@ -30,6 +30,7 @@ vs_add_library_tests(vs_eval
   SOURCES
     tests/scenes.cpp
     tests/test_cache.cpp
+    tests/test_configurations.cpp
     tests/test_engine.cpp
     tests/test_import.cpp
     tests/test_layout_reuse.cpp

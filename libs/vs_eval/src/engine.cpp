@@ -14,6 +14,7 @@
 #include "vs/mesh/io.hpp"
 #include "vs/mesh/seam_library.hpp"
 #include "vs/model/check.hpp"
+#include "vs/model/configuration.hpp"
 #include "vs/model/dependency.hpp"
 #include "vs/validate/containment.hpp"
 
@@ -385,19 +386,25 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     if (options_.reuse_layouts) last_check_.emplace(project.document, checked);
   }
   phase_finished(options.progress, "check");
+  // L5: the active configuration's values written in (check() has refused
+  // any configuration that wouldn't build). No copy without configurations.
+  std::optional<model::Document> applied;
+  if (!checked.has_errors() && model::has_configurations(project.document)) {
+    applied = model::configured(project.document);
+  }
+  const model::Document& authored = applied ? *applied : project.document;
   EvaluationStats early_stats;
   Expansion expansion;
   const bool generates = std::any_of(
-      project.document.volumes.begin(), project.document.volumes.end(),
-      [](const model::Volume& v) {
+      authored.volumes.begin(), authored.volumes.end(), [](const model::Volume& v) {
         const auto* c = std::get_if<model::CompositeContents>(&v.contents);
         return c != nullptr && c->generates();
       });
   if (generates && !checked.has_errors()) {
-    expansion = expand_generated(project.document, options.cancel, options.progress, early_stats);
+    expansion = expand_generated(authored, options.cancel, options.progress, early_stats);
   }
-  const model::Document& doc = generates && !checked.has_errors() ? expansion.document
-                                                                  : project.document;
+  const model::Document& doc =
+      generates && !checked.has_errors() ? expansion.document : authored;
   const std::size_t n = doc.volumes.size();
 
   std::mutex progress_mutex;
@@ -422,6 +429,10 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
 
   Evaluation ev;
   ev.stats = early_stats;
+  ev.configuration = project.document.active_configuration;
+  if (const auto* c = project.document.find_configuration(ev.configuration)) {
+    ev.configuration_name = c->name;
+  }
   ev.document = doc;
   ev.volumes.resize(n);
   for (std::size_t i = 0; i < n; ++i) {

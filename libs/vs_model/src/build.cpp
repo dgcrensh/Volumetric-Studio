@@ -1,4 +1,6 @@
 #include "vs/model/build.hpp"
+
+#include "vs/model/configuration.hpp"
 #include "vs/model/index.hpp"
 
 #include <algorithm>
@@ -1137,8 +1139,12 @@ VolumeStatus worse(VolumeStatus a, VolumeStatus b) {
   return rank(a) >= rank(b) ? a : b;
 }
 
-DocumentBuild build(const Document& document, const ProductSettings& settings,
+DocumentBuild build(const Document& authored, const ProductSettings& settings,
                     const BlobStore* blobs) {
+  // L5: the active configuration's values (no copy without configurations).
+  std::optional<Document> applied;
+  if (has_configurations(authored)) applied = configured(authored);
+  const Document& document = applied ? *applied : authored;
   DocumentBuild out;
   DocumentBuilder layout(document, settings, out);
   layout.run_layout();
