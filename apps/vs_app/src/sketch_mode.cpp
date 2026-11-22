@@ -584,8 +584,9 @@ bool SketchMode::set_dimension_text(const Id& constraint, const QString& text) {
   const auto param = parse_param(text, c->kind == ConstraintKind::Angle ? ParamUnit::Angle : ParamUnit::Length);
   bool ok = false;
   if (param) ok = editor_->set_dimension(constraint, param->value, param->expression).empty();
-  if (!ok) status_->setText(tr("Can't use \"%1\" as a dimension.").arg(text));
   refresh();
+  // After refresh(), which shows the solver's status: the reason stays (H7).
+  if (!ok) status_->setText(tr("Can't use \"%1\" as a dimension.").arg(text));
   return ok;
 }
 

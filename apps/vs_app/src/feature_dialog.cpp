@@ -188,6 +188,8 @@ void FeatureDialog::build() {
     w.pages = new QStackedWidget;
     f->addRow(w.pages);
     connect(w.kind_of_definition, &QComboBox::currentIndexChanged, w.pages, &QStackedWidget::setCurrentIndex);
+    // A Pick button on the page being left can't stay pressed (H7).
+    connect(w.kind_of_definition, &QComboBox::currentIndexChanged, this, [this] { end_pick(); });
   };
 
   switch (original_.kind()) {
@@ -302,7 +304,7 @@ void FeatureDialog::build() {
                  (e.other && *e.other == r.edge->face && e.face == r.edge->other);
         };
         if (std::none_of(ww.edges.begin(), ww.edges.end(), same)) ww.edges.push_back(*r.edge);
-        set_feature(feature());
+        show_edges();
         emit changed();
         return true;
       });
@@ -318,7 +320,7 @@ void FeatureDialog::build() {
         const auto face = ww.edge_face.get();
         if (!face) return;
         ww.edges.push_back({*face, ww.edge_other.get()});
-        set_feature(feature());
+        show_edges();
         emit changed();
       });
       connect(remove, &QPushButton::clicked, this, [this] {
@@ -326,7 +328,7 @@ void FeatureDialog::build() {
         const int row_index = ww.edge_list->currentRow();
         if (row_index < 0 || row_index >= static_cast<int>(ww.edges.size())) return;
         ww.edges.erase(ww.edges.begin() + row_index);
-        set_feature(feature());
+        show_edges();
         emit changed();
       });
       w.p1 = param(original_.kind() == FeatureKind::Fillet ? tr("Radius") : tr("Distance"), ParamUnit::Length);
@@ -442,13 +444,7 @@ void FeatureDialog::set_feature(const Feature& feat) {
           w.flag->setChecked(d.outward);
         } else if constexpr (std::is_same_v<T, FilletFeature> || std::is_same_v<T, ChamferFeature>) {
           w.edges = d.edges;
-          w.edge_list->clear();
-          for (const auto& e : d.edges) {
-            QString text = qstr(choices_.label_of(e.face));
-            if (text.isEmpty()) text = tr("(missing face)");
-            text += e.other ? QStringLiteral(" / ") + qstr(choices_.label_of(*e.other)) : tr(" (every edge)");
-            w.edge_list->addItem(text);
-          }
+          show_edges();
           if constexpr (std::is_same_v<T, FilletFeature>) {
             w.p1->set_param(d.radius);
           } else {
@@ -470,6 +466,19 @@ void FeatureDialog::set_feature(const Feature& feat) {
       },
       feat.definition);
   if (w.pages != nullptr) w.pages->setCurrentIndex(w.kind_of_definition->currentIndex());
+}
+
+void FeatureDialog::show_edges() {
+  auto& w = *w_;
+  if (w.edge_list == nullptr) return;
+  const QSignalBlocker block(w.edge_list);
+  w.edge_list->clear();
+  for (const auto& e : w.edges) {
+    QString text = qstr(choices_.label_of(e.face));
+    if (text.isEmpty()) text = tr("(missing face)");
+    text += e.other ? QStringLiteral(" / ") + qstr(choices_.label_of(*e.other)) : tr(" (every edge)");
+    w.edge_list->addItem(text);
+  }
 }
 
 Feature FeatureDialog::feature() const {
@@ -623,10 +632,13 @@ bool FeatureDialog::apply_pick(const PickResolution& pick) {
 
 bool FeatureDialog::complete() const {
   const auto& w = *w_;
-  auto ok = [](const ParamEdit* e) { return e == nullptr || !e->isEnabled() || e->param().has_value(); };
-  const bool params = ok(w.p1) && ok(w.p2) && ok(w.p3) && ok(w.angle) &&
-                      (w.pages == nullptr || ok(w.page_angle) || w.pages->currentIndex() != 2);
-  if (!params) return false;
+  // A datum checks only the page of its definition: the other pages'
+  // fields (empty for a datum defined by points, say) aren't used (H7).
+  // Every other feature's numbers are all on show.
+  if (w.pages == nullptr) {
+    auto ok = [](const ParamEdit* e) { return e == nullptr || !e->isEnabled() || e->param().has_value(); };
+    if (!(ok(w.p1) && ok(w.p2) && ok(w.p3) && ok(w.angle))) return false;
+  }
   switch (original_.kind()) {
     case FeatureKind::Sketch: return w.plane.get().has_value();
     case FeatureKind::DatumPlane:

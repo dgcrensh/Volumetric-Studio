@@ -274,7 +274,7 @@ TEST_CASE("The UI stays responsive while a long procedural volume regenerates", 
     if (last >= 0) max_gap = std::max(max_gap, static_cast<double>(now - last) / 1e6);
     last = now;
     ++ticks;
-    w.viewport().update();
+    w.viewport().refresh_all();  // a full frame, as orbiting draws
   });
   std::size_t slow_frames = 0;  // over 50 ms
   QObject::connect(&w.viewport(), &app::Viewport::frameRendered, [&](double ms) {

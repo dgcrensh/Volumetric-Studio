@@ -550,6 +550,9 @@ so they are registered. A new library must also be added to
   `output_hashes_by_threads()` and `check_determinism` compare output hashes (BRep text, mesh, outputs).
   Pools of size 0 take `VS_THREADS` when set (`default_thread_count()`);
   CI reruns the vs_proc and vs_eval suites on 1, 4 and 16 threads (H3).
+  `WorkerPriority::Low` (`EngineOptions::worker_priority`) runs workers
+  below normal priority; the app does, so generation never starves the UI
+  (H7, decision 0036). It changes no result.
 - **Generators** (`generator.hpp`): a library above vs_eval plugs a
   content kind in with `Engine::set_generator(kind, g)`: `prepare()` on
   the calling thread, then a job on the pool that fills
@@ -832,6 +835,17 @@ so they are registered. A new library must also be added to
   With Project is on) are the entry points tests drive; `Session::open()`
   loads a project's caches into the engine. The GUI walk of the five
   workflows is `docs/manual-tests/mvp-workflows.md`.
+- **H7** (decision 0036): `Session` drops whatever a newer request replaced
+  (drag previews wait in one slot, progress is the newest request's,
+  superseded evaluations build no scene, node previews are cancelled by a
+  token) and clears its caches on a new project. The viewport redraws in
+  full only when what it shows changes (`refresh_all()`; hover draws the
+  immediate layer) and keeps big B-reps' faces pickable across parts.
+  New, Open and Close ask about unsaved changes
+  (`MainWindow::set_unsaved_prompt()` for tests); sketch mode owns Ctrl+Z,
+  Ctrl+Y, Esc and F. GDI screen grabs can't see the OpenGL viewport on the
+  desktop's NVIDIA driver, so `[gui]` tests compare off-screen renders
+  and say when a grab saw nothing.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

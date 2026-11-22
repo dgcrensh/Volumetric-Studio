@@ -320,6 +320,7 @@ void Session::regenerate() {
     current_cancel_.cancel();  // the running evaluation, if any
     current_cancel_ = cancel;
     newest_ = generation;
+    newest_full_ = generation;
   }
   emit evaluationStarted(generation);
   post([this, generation, project = project_, cancel] { evaluate_job(generation, project, cancel); });
@@ -367,9 +368,10 @@ Session::Preparer Session::preparer() const {
   return preparer_;
 }
 
-bool Session::superseded(std::uint64_t generation) const {
+bool Session::superseded(std::uint64_t generation, bool drag) const {
   std::lock_guard lock(mutex_);
-  return generation != newest_ || stopping_;
+  if (stopping_) return true;
+  return drag ? newest_full_ > generation : generation != newest_;
 }
 
 void Session::cancel() {
@@ -467,7 +469,7 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
     s->drag = drag;
     s->project = project;
     s->evaluation = engine_.preview(*project);
-    if (superseded(generation)) return;
+    if (superseded(generation, drag)) return;
     finish_snapshot(s, t0);
     deliver(s);
   }
@@ -499,7 +501,7 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
           Qt::QueuedConnection);
     };
     s->evaluation = engine_.evaluate(*project, options);
-    if (superseded(generation)) return;
+    if (superseded(generation, drag)) return;
     finish_snapshot(s, t0);
     deliver(s);
   }

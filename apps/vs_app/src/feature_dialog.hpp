@@ -85,6 +85,9 @@ class FeatureDialog : public EditDialog {
     QPushButton* button = nullptr;
   };
   void build();
+  // Lists a fillet's or chamfer's edges, touching no other field (so a
+  // number being typed survives adding an edge).
+  void show_edges();
   // A Pick button for a field, registered in fields_.
   QPushButton* pick_button(PickKind kind, const QString& label, bool multiple,
                            std::function<bool(const PickResolution&)> apply);

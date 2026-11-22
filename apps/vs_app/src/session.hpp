@@ -131,7 +131,8 @@ class Session : public QObject {
   //
   // Whatever a newer request replaced is dropped: its progress isn't
   // reported (progressed() is for the newest request only), and the worker
-  // stops before building its scene.
+  // stops before building its scene. A drag preview is dropped only when a
+  // regeneration replaced it: each one that finishes still shows.
   void drag_preview(std::shared_ptr<const model::Project> project);
   void cancel();
   [[nodiscard]] bool busy() const;
@@ -192,8 +193,10 @@ class Session : public QObject {
   void worker_loop();
   void evaluate_job(std::uint64_t generation, std::shared_ptr<const model::Project> project,
                     eval::CancellationToken cancel, bool drag = false);
-  // Whether a newer request (or the session closing) replaced `generation`.
-  [[nodiscard]] bool superseded(std::uint64_t generation) const;
+  // Whether `generation` was replaced: by any newer request, or for a drag
+  // preview only by a regeneration (each drag preview that finishes still
+  // shows; a drag asks faster than they come), or the session is closing.
+  [[nodiscard]] bool superseded(std::uint64_t generation, bool drag) const;
   [[nodiscard]] Preparer preparer() const;
 
   core::ProductSettings settings_ = core::ProductSettings::defaults();
@@ -215,6 +218,7 @@ class Session : public QObject {
   std::deque<std::function<void()>> jobs_;
   bool stopping_ = false;
   std::uint64_t newest_ = 0;    // the newest generation requested
+  std::uint64_t newest_full_ = 0;  // the newest regenerate() (not a drag)
   std::uint64_t running_ = 0;   // the generation being evaluated (0: none)
   eval::CancellationToken current_cancel_;
   // The newest drag preview waiting for the worker (drag_preview()): one

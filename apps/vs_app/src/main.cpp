@@ -22,6 +22,7 @@
 #include <QComboBox>
 #include <QImage>
 #include <QPixmap>
+#include <QPointer>
 #include <QScreen>
 #include <QString>
 #include <QTimer>
@@ -111,7 +112,9 @@ int main(int argc, char** argv) {
 
   const bool capture = !screenshot.isEmpty() || !viewport_image.isEmpty();
   bool applied = false;
-  vs::app::EditDialog* dialog = nullptr;
+  // The dialog --edit opened; it may be closed (and deleted) by the time
+  // the capture runs (H7).
+  QPointer<vs::app::EditDialog> dialog;
   QObject::connect(&window, &vs::app::MainWindow::evaluationShown, &window, [&] {
     if (applied) return;
     applied = true;
@@ -170,11 +173,12 @@ int main(int argc, char** argv) {
     QTimer::singleShot(2500, &window, [&] {
       if (!viewport_image.isEmpty()) window.viewport().render_image().save(viewport_image);
       if (!screenshot.isEmpty()) {
-        window.screen()->grabWindow(window.winId()).save(screenshot);
-        if (dialog != nullptr) {
+        // A window off every screen has none.
+        if (QScreen* screen = window.screen()) screen->grabWindow(window.winId()).save(screenshot);
+        if (dialog) {
           QString out = screenshot;
           out.replace(QStringLiteral(".bmp"), QStringLiteral("-dialog.bmp"));
-          dialog->screen()->grabWindow(dialog->winId()).save(out);
+          if (QScreen* screen = dialog->screen()) screen->grabWindow(dialog->winId()).save(out);
         }
       }
       QApplication::quit();

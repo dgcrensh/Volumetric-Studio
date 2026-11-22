@@ -169,6 +169,8 @@ TEST_CASE("Generated volumes are read-only in the window", "[app][gui][generated
   CHECK(w.edit_graph(r.rack));
   w.leave_graph();
 
+  // Closing never waits on a question (H7: unsaved changes are asked about).
+  w.set_unsaved_prompt([] { return app::MainWindow::UnsavedChoice::Discard; });
   w.close();
   std::error_code ignored;
   std::filesystem::remove_all(dir, ignored);
