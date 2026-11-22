@@ -130,9 +130,9 @@ uniform uint count;
 std::string make_arithmetic() {
   return R"(double next_up(double c) { uvec2 b = unpackDouble2x32(c); b.x += 1u; if (b.x == 0u) b.y += 1u; return packDouble2x32(b); }
 double next_down(double c) { uvec2 b = unpackDouble2x32(c); if (b.x == 0u) b.y -= 1u; b.x -= 1u; return packDouble2x32(b); }
-// The correctly rounded square root: the hardware's, then its neighbours
-// checked against the exact residual x - c*c.
-double sqrt_rn(double x) {
+// The correctly rounded square root of a normal x: the hardware's, then its
+// neighbours checked against the exact residual x - c*c.
+double sqrt_rn_normal(double x) {
   P double c = sqrt(x);
   if (!(x > 0.0lf) || isinf(x)) return c;
   for (int it = 0; it < 3; ++it) {
@@ -148,6 +148,18 @@ double sqrt_rn(double x) {
     break;
   }
   return c;
+}
+// Any x. Below 2^-900 (subnormals included) the residual's products would
+// underflow, and hardware may flush a subnormal's root: scale by 2^256
+// (exact, and normal), take the root, scale it by 2^-128 (exact: the root
+// of anything above zero is normal).
+double sqrt_rn(double x) {
+  if (x > 0.0lf && x < packDouble2x32(uvec2(0u, 0x07b00000u))) {
+    P double scaled = x * packDouble2x32(uvec2(0u, 0x4ff00000u));
+    P double r = sqrt_rn_normal(scaled) * packDouble2x32(uvec2(0u, 0x37f00000u));
+    return r;
+  }
+  return sqrt_rn_normal(x);
 }
 // std::min, std::max and std::clamp as the C++ library writes them.
 double mn(double a, double b) { return (b < a) ? b : a; }
@@ -420,12 +432,14 @@ class Translator {
       out_.d.insert(out_.d.end(), e->numbers().begin(), e->numbers().end());
     }
     for (std::size_t m = 0; m < meshes_.size(); ++m) upload(m, 1 + 2 * n + 8 * static_cast<std::uint32_t>(m));
+    out_.meshes = meshes_.size();
     std::string& s = out_.source;
     s = prelude();
     s += code_;
     s += fmt::format(R"(
 void main() {{
-  uint g = gl_GlobalInvocationID.x;
+  // Dispatched in two dimensions (device.hpp dispatch_2d()).
+  uint g = gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
   if (g >= count) return;
   uint i = g % nx;
   uint j = (g / nx) % ny;
@@ -598,9 +612,8 @@ FieldProgram translate(const FieldExpr& root) {
   // Mesh info bases, now that the node count is known.
   const std::uint32_t n = p.u.empty() ? 0 : p.u[0];
   std::string defines;
-  for (std::size_t m = 0;; ++m) {
+  for (std::size_t m = 0; m < p.meshes; ++m) {
     const std::string name = fmt::format("MESH{}", m);
-    if (p.source.find(name) == std::string::npos) break;
     defines += fmt::format("#define {} {}u\n", name, 1 + 2 * n + 8 * m);
   }
   // After the #version line.

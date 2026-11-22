@@ -24,6 +24,7 @@ endif()
 vs_add_library_tests(vs_gpu
   SOURCES
     tests/test_arithmetic.cpp
+    tests/test_device.cpp
     tests/test_fields.cpp
     tests/test_meshing.cpp)
 
@@ -31,4 +32,7 @@ if(VS_BUILD_TESTS)
   target_include_directories(vs_gpu_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_compile_definitions(vs_gpu_tests PRIVATE
     VS_PROC_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/../vs_proc/tests/data")
+  # Hidden from discovery: after it the process has no GPU, so it runs alone.
+  add_test(NAME "vs_gpu: Shutdown closes the device for good" COMMAND vs_gpu_tests "[.shutdown]")
+  set_tests_properties("vs_gpu: Shutdown closes the device for good" PROPERTIES LABELS vs_gpu)
 endif()

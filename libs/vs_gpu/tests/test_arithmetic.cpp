@@ -5,6 +5,8 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <random>
 #include <vector>
 
@@ -12,36 +14,24 @@
 #include <fmt/format.h>
 
 #include "device.hpp"
+#include "glsl.hpp"
 
 using namespace vs::gpu;
 
 namespace {
 
-// out[i] = op(a[i], b[i]) for each op, as doubles, plus float(a[i]).
-const char* kShader = R"(#version 430
+// out[i] = op(a[i], b[i]) for each op, as doubles, plus float(a[i]); the
+// square root is the one every field shader uses (arithmetic_glsl()).
+const char* kHeader = R"(#version 430
+#define P precise
 layout(local_size_x = 64) in;
 layout(std430, binding = 0) readonly buffer A { double a[]; };
 layout(std430, binding = 1) readonly buffer B { double b[]; };
 layout(std430, binding = 2) writeonly buffer O { double o[]; };
 layout(std430, binding = 3) writeonly buffer F { float fo[]; };
 uniform uint n;
-double next_up(double c) { uvec2 b = unpackDouble2x32(c); b.x += 1u; if (b.x == 0u) b.y += 1u; return packDouble2x32(b); }
-double next_down(double c) { uvec2 b = unpackDouble2x32(c); if (b.x == 0u) b.y -= 1u; b.x -= 1u; return packDouble2x32(b); }
-double sqrt_rn(double x) {
-  precise double c = sqrt(x);
-  if (!(x > 0.0) || isinf(x)) return c;
-  for (int it = 0; it < 3; ++it) {
-    precise double up = next_up(c);
-    precise double u = up - c;
-    precise double d = fma(-c, c, x);
-    if (d > c * u) { c = up; continue; }
-    precise double dn = next_down(c);
-    precise double ul = c - dn;
-    if (d <= -(c * ul)) { c = dn; continue; }
-    break;
-  }
-  return c;
-}
+)";
+const char* kMain = R"(
 void main() {
   uint i = gl_GlobalInvocationID.x;
   if (i >= n) return;
@@ -88,12 +78,24 @@ TEST_CASE("GPU double arithmetic matches the CPU bit for bit", "[gpu][arithmetic
   // Rounding cases for float(): halfway values in FP32.
   a[0] = 1.0 + std::ldexp(1.0, -24);
   a[1] = 1.0 + 3.0 * std::ldexp(1.0, -24);
+  // H6: subnormals and tiny normals, where the residual test of sqrt_rn()
+  // underflowed: every exponent from the smallest subnormal up to 2^-880.
+  for (std::uint32_t i = 0; i < 4096; ++i) {
+    const int e = -1074 + static_cast<int>(i % 195);
+    a[2 + i] = std::ldexp(mantissa(rng), e) * ((i & 1) ? -1.0 : 1.0);
+  }
+  a[4100] = std::numeric_limits<double>::denorm_min();
+  a[4101] = std::numeric_limits<double>::min();
+  a[4102] = std::nextafter(std::numeric_limits<double>::min(), 0.0);
+  a[4103] = std::ldexp(1.0, -900);
+  a[4104] = std::nextafter(std::ldexp(1.0, -900), 0.0);
 
+  const std::string shader = std::string(kHeader) + arithmetic_glsl() + kMain;
   std::vector<double> out(8 * static_cast<std::size_t>(n));
   std::vector<float> fout(n);
   std::string log;
   device.run([&](const gl::Functions& f) {
-    const gl::GLuint program = device.program(f, kShader, log);
+    const gl::GLuint program = device.program(f, shader, log);
     if (program == 0) return;
     Buffer ba(f, n * sizeof(double), a.data());
     Buffer bb(f, n * sizeof(double), b.data());

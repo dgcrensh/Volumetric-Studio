@@ -3,9 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cmath>
-#include <map>
 #include <chrono>
+#include <cmath>
+#include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -14,8 +15,8 @@
 
 #include "device.hpp"
 #include "glsl.hpp"
-#include "vs/core/transform.hpp"
 #include "state.hpp"
+#include "vs/core/transform.hpp"
 #include "vs/eval/thread_pool.hpp"
 #include "vs/proc/distance.hpp"
 #include "vs/proc/mesher.hpp"
@@ -26,30 +27,36 @@ namespace {
 
 struct State {
   std::mutex mutex;
-  std::unique_ptr<Device> device;
+  std::shared_ptr<Device> device;
   bool tried = false;
+  bool shut_down = false;
   Status status;
   InstallOptions options;
   std::set<std::string> failed_sources;  // shaders that didn't compile
   std::size_t slab_samples = 1 << 16;    // adapted to keep dispatches short
+  // Held for the whole of install(), so two callers never check and
+  // calibrate at once; taken before `mutex`, never while holding it.
+  std::mutex install_mutex;
 };
 
+// Never destroyed: the device thread and opengl32.dll must not be torn
+// down by static destructors at exit (shutdown() does that, in order).
 State& state() {
-  static State s;
-  return s;
+  static State* s = new State;
+  return *s;
 }
 
-Device* device_locked(State& s) {
-  if (!s.tried) {
+std::shared_ptr<Device> device_locked(State& s) {
+  if (!s.tried && !s.shut_down) {
     s.tried = true;
-    s.device = std::make_unique<Device>();
+    s.device = std::make_shared<Device>();
     if (s.device->ok()) {
       s.status.device = s.device->description();
     } else {
       s.status.why = s.device->why();
     }
   }
-  return s.device && s.device->ok() ? s.device.get() : nullptr;
+  return s.device && s.device->ok() ? s.device : nullptr;
 }
 
 // Whether a grid of `samples` points goes to the GPU for a stage.
@@ -94,10 +101,10 @@ constexpr double kTargetMs = 100.0;
 
 }  // namespace
 
-Device* shared_device(std::string* why) {
+std::shared_ptr<Device> shared_device(std::string* why) {
   State& s = state();
   std::lock_guard lock(s.mutex);
-  Device* d = device_locked(s);
+  auto d = device_locked(s);
   if (d == nullptr && why != nullptr) *why = s.status.why;
   return d;
 }
@@ -106,24 +113,22 @@ std::optional<proc::SampledField> sample_gpu(const proc::FieldExpr& field, const
                                              std::string* error, const eval::CancellationToken* cancel,
                                              bool* cancelled) {
   State& s = state();
-  Device* device = nullptr;
+  const auto fail = [&](std::string why) -> std::optional<proc::SampledField> {
+    if (error != nullptr) *error = std::move(why);
+    return std::nullopt;
+  };
+  std::string why;
+  const std::shared_ptr<Device> device = shared_device(&why);
+  if (device == nullptr) return fail(why);
   std::size_t slab = 0;
   {
     std::lock_guard lock(s.mutex);
-    device = device_locked(s);
     slab = s.slab_samples;
-  }
-  if (device == nullptr) {
-    if (error != nullptr) *error = s.status.why;
-    return std::nullopt;
   }
   FieldProgram program = translate(field);
   {
     std::lock_guard lock(s.mutex);
-    if (s.failed_sources.contains(program.source)) {
-      if (error != nullptr) *error = "the field's shader doesn't compile";
-      return std::nullopt;
-    }
+    if (s.failed_sources.contains(program.source)) return fail("the field's shader doesn't compile");
   }
   program.d[0] = grid.origin.x;
   program.d[1] = grid.origin.y;
@@ -132,23 +137,41 @@ std::optional<proc::SampledField> sample_gpu(const proc::FieldExpr& field, const
 
   proc::SampledField out;
   out.grid = grid;
-  out.values.assign(grid.size(), 0.0f);
   if (cancelled != nullptr) *cancelled = false;
-  std::string log;
-  bool compiled = false;
   const std::size_t plane = static_cast<std::size_t>(grid.nx) * grid.ny;
   if (plane == 0 || grid.nz == 0) return out;
+  // Every buffer within what a shader may address, and a slab's sample
+  // indices within 32 bits.
+  const std::size_t max_block = device->max_block_bytes();
+  const std::size_t d_bytes = program.d.size() * sizeof(double);
+  const std::size_t u_bytes = program.u.size() * sizeof(std::uint32_t);
+  if (d_bytes > max_block || u_bytes > max_block) {
+    return fail(fmt::format("the field's data ({} MB) is larger than a GPU storage block ({} MB)",
+                            std::max(d_bytes, u_bytes) >> 20, max_block >> 20));
+  }
+  const std::size_t max_slices =
+      std::min<std::size_t>(max_block / (plane * sizeof(float)), ((std::size_t{1} << 32) - 1) / plane);
+  if (max_slices == 0) {
+    return fail(fmt::format("a z slice of {} x {} samples is larger than a GPU storage block", grid.nx, grid.ny));
+  }
+  out.values.assign(grid.size(), 0.0f);
 
+  std::string log;
+  std::string gl_error;
+  bool compiled = false;
   device->run([&](const gl::Functions& f) {
+    while (f.GetError() != gl::kNoError) {
+    }
     const gl::GLuint id = device->program(f, program.source, log);
     if (id == 0) return;
     compiled = true;
-    Buffer d(f, program.d.size() * sizeof(double), program.d.data());
-    Buffer u(f, program.u.size() * sizeof(std::uint32_t), program.u.data());
-    // Slabs of whole z slices, at most what one dispatch can address.
-    const std::size_t max_slices = std::max<std::size_t>(1, (65535ull * kLocalSize) / plane);
+    Buffer d(f, d_bytes, program.d.data());
+    Buffer u(f, u_bytes, program.u.data());
+    // Slabs of whole z slices.
     std::size_t slices = std::clamp<std::size_t>(slab / plane, 1, std::min<std::size_t>(max_slices, grid.nz));
     Buffer o(f, std::min<std::size_t>(max_slices, grid.nz) * plane * sizeof(float));
+    gl_error = gl_errors(f);
+    if (!gl_error.empty()) return;
     d.bind(0);
     u.bind(1);
     o.bind(2);
@@ -167,10 +190,16 @@ std::optional<proc::SampledField> sample_gpu(const proc::FieldExpr& field, const
       const auto t0 = std::chrono::steady_clock::now();
       f.Uniform1ui(k0, static_cast<gl::GLuint>(k));
       f.Uniform1ui(count, static_cast<gl::GLuint>(samples));
-      f.DispatchCompute(static_cast<gl::GLuint>((samples + kLocalSize - 1) / kLocalSize), 1, 1);
+      // Two dimensions, so a wide slice never needs more than 65,535
+      // workgroups along one.
+      const Dispatch groups = dispatch_2d((samples + kLocalSize - 1) / kLocalSize);
+      f.DispatchCompute(groups.x, groups.y, 1);
       f.MemoryBarrier(gl::kBufferUpdateBarrierBit | gl::kShaderStorageBarrierBit);
       f.Finish();
       o.read(out.values.data() + k * plane, samples * sizeof(float));
+      // Never silent zeros: a dispatch or read GL refused fails the call.
+      gl_error = gl_errors(f);
+      if (!gl_error.empty()) return;
       const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       k += n;
       // Aim the next slab at the target time.
@@ -184,11 +213,12 @@ std::optional<proc::SampledField> sample_gpu(const proc::FieldExpr& field, const
     s.slab_samples = slices * plane;
   });
   if (!compiled) {
+    if (log.empty()) return fail("the GPU device stopped");
     std::lock_guard lock(s.mutex);
     s.failed_sources.insert(program.source);
-    if (error != nullptr) *error = log.empty() ? std::string("no device") : "the shader doesn't compile: " + log;
-    return std::nullopt;
+    return fail("the shader doesn't compile: " + log);
   }
+  if (!gl_error.empty()) return fail("OpenGL error " + gl_error);
   return out;
 }
 
@@ -436,13 +466,14 @@ double ms_since(std::chrono::steady_clock::time_point t) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
 }
 
-// The fastest of a few runs of `f`, in milliseconds.
+// The fastest of a few runs of `f`, in milliseconds; infinite when a run
+// failed (`f` returned false), so a failing stage never wins.
 template <typename F>
 double best_of(int runs, const F& f) {
-  double best = 1e300;
+  double best = std::numeric_limits<double>::infinity();
   for (int r = 0; r < runs; ++r) {
     const auto t = std::chrono::steady_clock::now();
-    f();
+    if (!f()) return std::numeric_limits<double>::infinity();
     best = std::min(best, ms_since(t));
   }
   return best;
@@ -457,7 +488,7 @@ struct Calibration {
 
 // Each stage on a gyroid infill in a ball, half a million samples: on the GPU
 // (the better of two runs, so shader compiles don't count) and on every
-// CPU thread. The GPU takes a stage only when it was faster.
+// CPU thread. The GPU takes a stage only when it ran and was faster.
 Calibration calibrate(bool meshing_ok) {
   using namespace proc;
   const auto ball = std::make_shared<const TriangleDistance>(ball_mesh(24.0, 3), true);
@@ -468,28 +499,43 @@ Calibration calibrate(bool meshing_ok) {
   if (!grid) return c;
   eval::ThreadPool pool(0);
   const auto row = [&](const char* name, double gpu, double cpu) {
-    c.text += fmt::format("{}{} GPU {:.0f} ms, CPU {:.0f} ms", c.text.empty() ? "" : "; ", name, gpu, cpu);
-    return gpu < cpu;
+    const std::string g = std::isfinite(gpu) ? fmt::format("GPU {:.0f} ms", gpu) : std::string("GPU failed");
+    c.text += fmt::format("{}{} {}, CPU {:.0f} ms", c.text.empty() ? "" : "; ", name, g, cpu);
+    return gpu_wins(gpu, cpu);
   };
   SampledField samples;
-  const double s_gpu = best_of(2, [&] { sample_gpu(*field, *grid); });
-  const double s_cpu = best_of(1, [&] { samples = sample_cpu(*field, *grid, &pool); });
+  const double s_gpu = best_of(2, [&] { return sample_gpu(*field, *grid).has_value(); });
+  const double s_cpu = best_of(1, [&] {
+    samples = sample_cpu(*field, *grid, &pool);
+    return true;
+  });
   c.sampling = row("sampling", s_gpu, s_cpu);
   if (!meshing_ok) return c;
   SampledField clipped;
-  const double c_gpu = best_of(2, [&] { clip_gpu(samples, *ball, kContentsInset); });
-  const double c_cpu = best_of(1, [&] { clipped = clip_to_boundary_cpu(samples, *ball, kContentsInset, &pool); });
+  const double c_gpu = best_of(2, [&] { return clip_gpu(samples, *ball, kContentsInset).has_value(); });
+  const double c_cpu = best_of(1, [&] {
+    clipped = clip_to_boundary_cpu(samples, *ball, kContentsInset, &pool);
+    return true;
+  });
   c.clip = row("clip", c_gpu, c_cpu);
-  const double n_gpu = best_of(2, [&] { unmerged_net_gpu(clipped); });
-  const double n_cpu = best_of(1, [&] { unmerged_net_cpu(clipped, &pool); });
+  const double n_gpu = best_of(2, [&] { return unmerged_net_gpu(clipped).has_value(); });
+  const double n_cpu = best_of(1, [&] {
+    unmerged_net_cpu(clipped, &pool);
+    return true;
+  });
   c.meshing = row("unmerged net", n_gpu, n_cpu);
   return c;
 }
 
 }  // namespace
 
+bool gpu_wins(double gpu_ms, double cpu_ms) { return std::isfinite(gpu_ms) && gpu_ms < cpu_ms; }
+
 Status install(const InstallOptions& options) {
   State& s = state();
+  // One install at a time: a second caller waits, then sees the first's
+  // status.
+  std::lock_guard installing(s.install_mutex);
   bool run_check = false;
   {
     std::lock_guard lock(s.mutex);
@@ -526,6 +572,11 @@ Status install(const InstallOptions& options) {
   } else {
     c = calibrate(meshing_why.empty());
   }
+  {
+    // Shut down meanwhile: install nothing.
+    std::lock_guard lock(s.mutex);
+    if (s.shut_down) return s.status;
+  }
   proc::set_sampling_backend(std::make_shared<GpuBackend>());
   proc::set_meshing_backend(std::make_shared<GpuMeshingBackend>());
   std::lock_guard lock(s.mutex);
@@ -547,6 +598,22 @@ void uninstall() {
   state().status.sampling = false;
   state().status.clip = false;
   state().status.meshing = false;
+}
+
+void shutdown() {
+  State& s = state();
+  uninstall();
+  std::shared_ptr<Device> device;
+  {
+    std::lock_guard lock(s.mutex);
+    s.shut_down = true;
+    s.tried = true;
+    if (s.device) s.status.why = "the GPU was shut down";
+    device = std::move(s.device);
+  }
+  // The last holder closes the device: here, or a call still running on
+  // another thread, when it returns.
+  device.reset();
 }
 
 Status status() {

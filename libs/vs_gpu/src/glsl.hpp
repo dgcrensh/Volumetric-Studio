@@ -30,6 +30,7 @@ struct FieldProgram {
   std::string source;
   std::vector<double> d;
   std::vector<std::uint32_t> u;
+  std::size_t meshes = 0;  // distinct boundary meshes (MESH0 .. MESH{meshes - 1} in the source)
 };
 
 inline constexpr unsigned kLocalSize = 64;

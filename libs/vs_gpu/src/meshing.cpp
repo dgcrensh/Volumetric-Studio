@@ -341,19 +341,20 @@ std::optional<proc::UnmergedNet> unmerged_net_gpu(const proc::SampledField& samp
   proc::UnmergedNet out;
   if (grid.size() == 0 || samples.values.size() != grid.size()) return out;
   std::string why;
-  Device* device = shared_device(&why);
+  const std::shared_ptr<Device> device = shared_device(&why);
   if (device == nullptr) return fail(why);
+  const std::size_t max_buffer = std::min(kMaxBuffer, device->max_block_bytes());
 
   const std::size_t cubes = (std::size_t{grid.nx} + 1) * (std::size_t{grid.ny} + 1) * (std::size_t{grid.nz} + 1);
   const std::size_t points = (std::size_t{grid.nx} + 2) * (std::size_t{grid.ny} + 2) * (std::size_t{grid.nz} + 2);
-  if (points >= (std::size_t{1} << 32) || 4 * points > kMaxBuffer) return fail("the grid is too large");
+  if (points >= (std::size_t{1} << 32) || 4 * points > max_buffer) return fail("the grid is too large");
 
   static const std::string sources[4] = {cubes_source(), vertices_source(), counts_source(), triangles_source()};
   const double d[4] = {grid.origin.x, grid.origin.y, grid.origin.z, grid.cell};
   const auto outside = std::bit_cast<std::uint32_t>(static_cast<float>(grid.cell));
   bool ok = true;
 
-  device->run([&](const gl::Functions& f) {
+  const bool ran = device->run([&](const gl::Functions& f) {
     gl::GLuint programs[4];
     for (int p = 0; p < 4; ++p) {
       std::string log;
@@ -383,10 +384,13 @@ std::optional<proc::UnmergedNet> unmerged_net_gpu(const proc::SampledField& samp
         f.Finish();  // one dispatch at a time: well inside the GPU timeout
       }
     };
+    // Any GL error (out of memory, mostly) fails the call: never silent zeros.
     const auto out_of_memory = [&] {
-      while (f.GetError() != gl::kNoError) ok = false;
-      if (!ok) why = "the GPU is out of memory for this grid";
-      return !ok;
+      const std::string errors = gl_errors(f);
+      if (errors.empty()) return false;
+      ok = false;
+      why = "OpenGL error " + errors + " (out of GPU memory for this grid?)";
+      return true;
     };
     while (f.GetError() != gl::kNoError) {
     }
@@ -417,7 +421,7 @@ std::optional<proc::UnmergedNet> unmerged_net_gpu(const proc::SampledField& samp
     }
     out.group_starts.push_back(static_cast<std::uint32_t>(nv));
     masks = {};
-    if (nv >= (std::size_t{1} << 32) || 3 * nv * sizeof(double) > kMaxBuffer) {
+    if (nv >= (std::size_t{1} << 32) || 3 * nv * sizeof(double) > max_buffer) {
       why = "the grid is too large";
       ok = false;
       return;
@@ -449,7 +453,7 @@ std::optional<proc::UnmergedNet> unmerged_net_gpu(const proc::SampledField& samp
       at[p] = static_cast<std::uint32_t>(nt);
       nt += c;
     }
-    if (nt >= (std::size_t{1} << 32) || 3 * nt * sizeof(std::uint32_t) > kMaxBuffer) {
+    if (nt >= (std::size_t{1} << 32) || 3 * nt * sizeof(std::uint32_t) > max_buffer) {
       why = "the grid is too large";
       ok = false;
       return;
@@ -479,6 +483,7 @@ std::optional<proc::UnmergedNet> unmerged_net_gpu(const proc::SampledField& samp
     tris.read(out.triangles.data(), nt * sizeof(mesh::Triangle));
     if (out_of_memory()) return;
   });
+  if (!ran) return fail("the GPU device stopped");
   if (!ok) return fail(why);
   return out;
 }

@@ -180,6 +180,11 @@ int main(int argc, char** argv) {
   // Opening a GL context and calibrating takes seconds; only the commands
   // that sample fields pay for it (H4).
   if (!gpu.empty() && samples_fields(command)) install_gpu(gpu == "--gpu=force");
+  // Whatever opened the GPU (--gpu, selftest) closes it before main
+  // returns, never in static destructors (H6).
+  struct GpuShutdown {
+    ~GpuShutdown() { vs::gpu::shutdown(); }
+  } gpu_shutdown;
   if (command == "version") {
     print_version(std::cout);
     return 0;

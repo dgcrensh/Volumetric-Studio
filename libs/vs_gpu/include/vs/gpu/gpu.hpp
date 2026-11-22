@@ -67,6 +67,12 @@ Status install(const InstallOptions& options = {});
 // Removes the backends; vs_proc uses the CPU again. The device stays open
 // for the *_gpu() functions.
 void uninstall();
+// Uninstalls and closes the device (its thread, GL context and
+// opengl32.dll) for good; later calls find no device. Applications call it
+// before they exit, while the process is whole: the device is never torn
+// down by static destructors. Calls still running on other threads finish
+// first (the last one closes the device). Safe when nothing was opened.
+void shutdown();
 Status status();
 
 // Samples on the GPU whatever the size, or nullopt (with `error`) when
