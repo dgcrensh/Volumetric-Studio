@@ -16,6 +16,9 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <initializer_list>
+
 #include "reference_choices.hpp"
 
 namespace vs::app {
@@ -259,6 +262,21 @@ model::Volume VolumeDialog::value() const {
 bool VolumeDialog::complete() const {
   const auto& w = *w_;
   if (w.name->text().trimmed().isEmpty()) return false;
+  // Numbers that don't read aren't taken as 0 (H7): the seed, each
+  // parameter's value and each output's density (positive).
+  bool ok = false;
+  (void)w.seed->text().trimmed().toULongLong(&ok);
+  if (!ok) return false;
+  for (int r = 0; r < w.parameters->rowCount(); ++r) {
+    const auto* value = w.parameters->item(r, 1);
+    if (value == nullptr || !parse_param(value->text(), ParamUnit::Length)) return false;
+  }
+  for (int r = 0; r < w.outputs->rowCount(); ++r) {
+    const auto* density = w.outputs->item(r, 2);
+    if (density == nullptr) return false;
+    const double d = density->text().trimmed().toDouble(&ok);
+    if (!ok || !(d > 0.0)) return false;
+  }
   if (w.boundary_kind->currentIndex() == 0) return !w.features.get().empty();
   return w.min.get().has_value() && w.max.get().has_value();
 }
@@ -498,12 +516,26 @@ model::ConnectionSurface ConnectionDialog::value() const {
 bool ConnectionDialog::complete() const {
   const auto& w = *w_;
   if (w.name->text().trimmed().isEmpty() || !w.first.get()) return false;
-  if (w.patch_kind->currentIndex() == 0) return w.sketch.get().has_value();
-  if (w.patch_kind->currentIndex() == 2) {
-    return w.axis.get() && w.radius->param() && w.arc_start->param() && w.sweep->param() &&
-           w.along->param() && w.length->param();
+  // The type's numbers, on the pages shown, read (H7): value() would take
+  // any that don't as 0.
+  auto all = [](std::initializer_list<const ParamEdit*> edits) {
+    return std::all_of(edits.begin(), edits.end(), [](const ParamEdit* e) { return e->param().has_value(); });
+  };
+  switch (w.type->currentIndex()) {
+    case 0: break;
+    case 1:
+      if (!all({w.gap})) return false;
+      break;
+    default:
+      if (!all({w.hole_u, w.hole_v, w.min_wall})) return false;
+      if (w.holes_kind->currentIndex() == 0 ? !all({w.count, w.diameter, w.start_angle})
+                                            : !all({w.columns, w.rows, w.pitch_x, w.pitch_y})) {
+        return false;
+      }
   }
-  return w.plane.get() && w.u->param() && w.v->param() && w.width->param() && w.height->param();
+  if (w.patch_kind->currentIndex() == 0) return w.sketch.get().has_value();
+  if (w.patch_kind->currentIndex() == 2) return w.axis.get() && all({w.radius, w.arc_start, w.sweep, w.along, w.length});
+  return w.plane.get() && all({w.u, w.v, w.width, w.height});
 }
 
 // --- keep-out regions --------------------------------------------------------------------------

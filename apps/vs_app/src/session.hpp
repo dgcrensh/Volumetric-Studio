@@ -102,7 +102,8 @@ class Session : public QObject {
   // current project stays.
   core::Diagnostics open(const std::filesystem::path& path);
   // Replaces the project (no file, or `path`) and regenerates, with
-  // `cache` (eval::project_cache_files()) in the engine's cache.
+  // `cache` (eval::project_cache_files()) in the engine's cache. The last
+  // project's caches (contents, nodes, preview inputs) are dropped.
   void set_project(model::Project project, std::filesystem::path path = {},
                    model::CacheFiles cache = {});
   // An edit (or a dialog's live preview) of the same project: replaces it
@@ -123,10 +124,15 @@ class Session : public QObject {
   // A dimension drag (M16): shows `project` (the drag's edit applied, not
   // kept) as the preview tier only: no generation, contents of volumes the
   // edit changes left out (boundary only), untouched volumes' contents from
-  // the cache. Cancels whatever is running; only the newest request runs,
-  // so a fast drag skips the positions the worker couldn't keep up with.
-  // The project shown stays as it was; regenerate() or update_project()
-  // ends the drag.
+  // the cache. Cancels whatever is running; the requests wait in one slot,
+  // so a fast drag skips the positions the worker couldn't keep up with
+  // (H7). The project shown stays as it was; regenerate() or
+  // update_project() ends the drag.
+  //
+  // Whatever a newer request replaced is dropped: its progress isn't
+  // reported (progressed() is for the newest request only), and the worker
+  // stops before building its scene. A drag preview is dropped only when a
+  // regeneration replaced it: each one that finishes still shows.
   void drag_preview(std::shared_ptr<const model::Project> project);
   void cancel();
   [[nodiscard]] bool busy() const;
@@ -141,9 +147,10 @@ class Session : public QObject {
   [[nodiscard]] eval::Engine& engine() { return engine_; }
 
   using Preparer = std::function<std::shared_ptr<const PreparedScene>(const Scene&)>;
-  // Called on the worker thread for every snapshot's scene. Set it before
-  // the first regenerate().
-  void set_preparer(Preparer preparer) { preparer_ = std::move(preparer); }
+  // Called on the worker threads for every snapshot's scene and node
+  // preview. Set it before the first regenerate() (a later one is safe,
+  // and applies from the next snapshot).
+  void set_preparer(Preparer preparer);
 
   // Runs `work` on the worker thread after what is queued, then `done` on
   // the UI thread (unless the session is gone by then).
@@ -157,12 +164,18 @@ class Session : public QObject {
   // kept per layout, so only the first preview after a layout change pays
   // for them. Only the newest request is answered, through nodePreviewed()
   // on the UI thread; the result's scene is already prepared for the
-  // viewport. Returns the request's number.
+  // viewport. A new request stops the one running (H7). Returns the
+  // request's number.
   std::uint64_t preview_node(NodePreviewRequest request);
-  // Drops any pending preview (its answer won't be delivered).
+  // Drops any pending preview and stops the one running, within a
+  // fraction of a second; neither answer is delivered.
   void cancel_preview();
   // Node evaluations the procedural generator and the previews ran.
   [[nodiscard]] std::size_t nodes_evaluated() const;
+  // Entries in the procedural generator's node cache (tests).
+  [[nodiscard]] std::size_t node_cache_entries() const;
+  // Jobs waiting for the worker, not counting the one running (tests).
+  [[nodiscard]] std::size_t queued_jobs() const;
 
  signals:
   void projectChanged();
@@ -180,6 +193,11 @@ class Session : public QObject {
   void worker_loop();
   void evaluate_job(std::uint64_t generation, std::shared_ptr<const model::Project> project,
                     eval::CancellationToken cancel, bool drag = false);
+  // Whether `generation` was replaced: by any newer request, or for a drag
+  // preview only by a regeneration (each drag preview that finishes still
+  // shows; a drag asks faster than they come), or the session is closing.
+  [[nodiscard]] bool superseded(std::uint64_t generation, bool drag) const;
+  [[nodiscard]] Preparer preparer() const;
 
   core::ProductSettings settings_ = core::ProductSettings::defaults();
   eval::Engine engine_;
@@ -187,7 +205,8 @@ class Session : public QObject {
   bool has_project_ = false;
   std::filesystem::path path_;
   SnapshotPtr latest_;
-  Preparer preparer_;
+  mutable std::mutex preparer_mutex_;
+  Preparer preparer_;  // under preparer_mutex_
   std::atomic<std::size_t> cache_entries_loaded_{0};
 
   // UI thread only.
@@ -199,13 +218,20 @@ class Session : public QObject {
   std::deque<std::function<void()>> jobs_;
   bool stopping_ = false;
   std::uint64_t newest_ = 0;    // the newest generation requested
+  std::uint64_t newest_full_ = 0;  // the newest regenerate() (not a drag)
   std::uint64_t running_ = 0;   // the generation being evaluated (0: none)
   eval::CancellationToken current_cancel_;
+  // The newest drag preview waiting for the worker (drag_preview()): one
+  // slot, so a fast drag never queues a job per mouse move.
+  std::shared_ptr<const model::Project> drag_project_;
+  std::uint64_t drag_generation_ = 0;
+  eval::CancellationToken drag_cancel_;
+  bool drag_queued_ = false;
   std::thread worker_;
 
   // Node previews (preview_node()).
   void preview_loop();
-  void preview_job(std::uint64_t id, const NodePreviewRequest& request);
+  void preview_job(std::uint64_t id, const NodePreviewRequest& request, const eval::CancellationToken& cancel);
   std::shared_ptr<proc::ProceduralGenerator> generator_;
   std::unique_ptr<detail::PreviewState> preview_;
   std::uint64_t preview_requested_ = 0;  // UI thread

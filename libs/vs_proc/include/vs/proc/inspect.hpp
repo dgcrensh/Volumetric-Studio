@@ -72,12 +72,15 @@ struct Preview {
   std::optional<mesh::Mesh> mesh;      // Field (meshed region), Mesh
   std::optional<SampledField> samples;  // Field
   std::vector<core::fvec3> points;     // Frames origins, Curves points
+  bool cancelled = false;              // stopped by the token: no mesh
 };
 
 // The preview grid's default: 32 cells along the boundary box's longest side.
 inline constexpr double kPreviewCells = 32.0;
 
+// A cancelled token stops the sampling and meshing of a field early (H7):
+// the preview then has no mesh and is `cancelled`.
 Preview preview(const Value& value, const GraphInputs& inputs, double cell = 0.0,
-                eval::ThreadPool* pool = nullptr);
+                eval::ThreadPool* pool = nullptr, const eval::CancellationToken* cancel = nullptr);
 
 }  // namespace vs::proc

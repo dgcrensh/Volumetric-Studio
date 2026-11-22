@@ -54,12 +54,15 @@
 //     face or edge (picking.hpp), within edit-in-context's rules.
 
 #include <QMainWindow>
+#include <QKeySequence>
 #include <QPointer>
 
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "authoring.hpp"
 #include "dimension_drag.hpp"
@@ -74,6 +77,7 @@
 #include "widgets.hpp"
 
 class QAction;
+class QCloseEvent;
 class QDockWidget;
 class QLabel;
 class QMenu;
@@ -111,6 +115,15 @@ class MainWindow : public QMainWindow {
   bool open_project(const std::filesystem::path& path);
   // Starts an empty project.
   void new_project(const std::string& name = "Untitled");
+
+  // Unsaved changes (H7): File > New, Open, Open Recent and closing the
+  // window ask first whether to save them, discard them or stay. The
+  // question is a message box unless replaced (tests, scripts).
+  enum class UnsavedChoice { Save, Discard, Cancel };
+  void set_unsaved_prompt(std::function<UnsavedChoice()> prompt) { unsaved_prompt_ = std::move(prompt); }
+  // Asks when there are unsaved changes; false when the user stays (Cancel,
+  // or saving didn't happen).
+  bool confirm_discard();
 
   void select(const Selection& selection);
   [[nodiscard]] const Selection& selection() const { return selection_; }
@@ -270,8 +283,14 @@ class MainWindow : public QMainWindow {
   // A node preview reached the viewport (M15).
   void nodePreviewShown();
 
+ protected:
+  void closeEvent(QCloseEvent* event) override;
+
  private:
   void build_menus();
+  // Sketch mode has its own undo, redo and Esc; the window's shortcuts for
+  // those (and F, fit) are set aside meanwhile (H7).
+  void suspend_window_shortcuts(bool suspend);
   void build_docks();
   void show_snapshot(const SnapshotPtr& snapshot);
   void refresh_volume_tree();
@@ -335,6 +354,9 @@ class MainWindow : public QMainWindow {
   // only for that same snapshot (H5). Weak, so it keeps nothing alive.
   std::weak_ptr<const Snapshot> last_check_snapshot_;
   QAction* undo_action_ = nullptr;
+  QAction* fit_action_ = nullptr;
+  std::vector<std::pair<QAction*, QKeySequence>> suspended_shortcuts_;
+  std::function<UnsavedChoice()> unsaved_prompt_;
   QAction* redo_action_ = nullptr;
   QAction* leave_context_action_ = nullptr;
   QToolBar* context_bar_ = nullptr;

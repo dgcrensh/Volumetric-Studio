@@ -105,7 +105,8 @@ class Viewport : public QWidget {
   // Picks at a point of the widget as a click there would (emitting what a
   // click emits); what was hit, if anything.
   std::optional<PickedPart> pick_at(QPointF position);
-  // Where a model point appears in the widget (nullopt without a view).
+  // Where a model point appears in the widget (nullopt without a view, or
+  // behind the camera).
   [[nodiscard]] std::optional<QPointF> project(const core::dvec3& point) const;
 
   // --- dimension handles (M16)
@@ -121,6 +122,12 @@ class Viewport : public QWidget {
   [[nodiscard]] QImage render_image();
   // Whether OpenGL came up (false on a machine without a usable driver).
   [[nodiscard]] bool has_gpu() const;
+  // Paints that redrew the whole view rather than only OCCT's immediate
+  // layer (hover highlights): only after what is shown changed (tests).
+  [[nodiscard]] std::size_t full_redraws() const;
+  // Asks for a paint that redraws the whole view. The viewport does this
+  // itself whenever what it shows changes; tests use it to drive frames.
+  void refresh_all();
   // Scene items shown (an item split into parts counts once).
   [[nodiscard]] std::size_t displayed_items() const;
   // True while parts of big meshes are still being added, one per frame.

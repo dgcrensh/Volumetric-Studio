@@ -67,6 +67,24 @@ double coverage(const QImage& image) {
   return static_cast<double>(differ) / (static_cast<double>(image.width() / 4) * (image.height() / 4));
 }
 
+// Whether the image is one flat colour, give or take its corners (a grab
+// that saw nothing; a scene always has a gradient behind it).
+bool uniform(const QImage& image) {
+  if (image.isNull()) return true;
+  const QColor middle = image.pixelColor(image.width() / 2, image.height() / 2);
+  std::size_t differ = 0, total = 0;
+  for (int y = 0; y < image.height(); y += 4) {
+    for (int x = 0; x < image.width(); x += 4) {
+      const QColor c = image.pixelColor(x, y);
+      const int d = std::abs(c.red() - middle.red()) + std::abs(c.green() - middle.green()) +
+                    std::abs(c.blue() - middle.blue());
+      differ += d > 6 ? 1 : 0;
+      ++total;
+    }
+  }
+  return static_cast<double>(differ) < 0.005 * static_cast<double>(total);
+}
+
 }  // namespace
 
 TEST_CASE("The window opens each sample project and draws it", "[app][gui][acceptance]") {
@@ -105,9 +123,12 @@ TEST_CASE("The window opens each sample project and draws it", "[app][gui][accep
 
 TEST_CASE("Each kind of scene item is visible on its own", "[app][gui]") {
   app::Viewport viewport;
+  viewport.setWindowFlag(Qt::WindowStaysOnTopHint);
   viewport.resize(800, 600);
   viewport.show();
   REQUIRE(viewport.has_gpu());
+  int frames = 0;
+  QObject::connect(&viewport, &app::Viewport::frameRendered, [&](double) { ++frames; });
   const auto ev = samples::evaluate(samples::load("bolt_bosses.vsproj"));
   REQUIRE(ev.ok());
   const auto scene = app::build_scene(ev, core::ProductSettings::defaults());
@@ -119,14 +140,25 @@ TEST_CASE("Each kind of scene item is visible on its own", "[app][gui]") {
     }
     only.bounds = scene.bounds;
     REQUIRE(!only.items.empty());
+    const int before = frames;
     viewport.show_scene(only, nullptr, true);
-    QApplication::processEvents();
+    // Wait for the paint show_scene() asked for, not a fixed time.
+    REQUIRE(samples::wait_until([&] { return frames > before; }, 10000));
     const QImage image = viewport.render_image();
     CHECK(coverage(image) > 0.01);
     // What reaches the screen is the new scene, not the last one: compare
-    // the window's pixels with the off-screen render.
-    samples::wait_until([] { return false; }, 300);
+    // the window's pixels with the off-screen render. The window stays on
+    // top, so nothing covers it (the old failures in full runs). Where a
+    // grab can't see the OpenGL window at all (one flat colour: on the
+    // desktop with NVIDIA's 616.87 driver every GDI grab, PrintWindow
+    // included, reads it so, decision 0036), there is nothing to compare,
+    // and the test says so.
+    samples::wait_until([] { return false; }, 100);  // the compositor's next frame
     const QImage screen = viewport.screen()->grabWindow(viewport.winId()).toImage();
+    if (uniform(screen)) {
+      WARN("A screen grab can't see this OpenGL window here; compared off screen only");
+      continue;
+    }
     const bool same = std::abs(coverage(screen) - coverage(image)) < 0.05;
     CHECK(same);
     if (!same) {
@@ -242,7 +274,7 @@ TEST_CASE("The UI stays responsive while a long procedural volume regenerates", 
     if (last >= 0) max_gap = std::max(max_gap, static_cast<double>(now - last) / 1e6);
     last = now;
     ++ticks;
-    w.viewport().update();
+    w.viewport().refresh_all();  // a full frame, as orbiting draws
   });
   std::size_t slow_frames = 0;  // over 50 ms
   QObject::connect(&w.viewport(), &app::Viewport::frameRendered, [&](double ms) {

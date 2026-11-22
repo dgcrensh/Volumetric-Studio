@@ -135,11 +135,13 @@ if(VS_BUILD_TESTS)
     tests/wait.cpp
     tests/wait.hpp
     tests/test_authoring_ui.cpp
+    tests/test_dialogs_ui.cpp
     tests/test_interactive_ui.cpp
     tests/test_nested.cpp
     tests/test_generated.cpp
     tests/test_node_editor.cpp
     tests/test_session.cpp
+    tests/test_viewport_ui.cpp
     tests/test_ship_ui.cpp
     tests/test_window.cpp)
   target_link_libraries(vs_app_tests PRIVATE vs_app_ui vs_model_test_fixtures Catch2::Catch2)

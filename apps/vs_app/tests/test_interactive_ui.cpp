@@ -549,3 +549,30 @@ TEST_CASE("Fillet, cut or mate on generated contents shows guidance with the rig
   w.dismiss_guidance();
   CHECK_FALSE(w.shown_guidance().has_value());
 }
+
+TEST_CASE("A drag takes down the progress of the regeneration it supersedes", "[app][gui][drag]") {
+  app::MainWindow w;
+  w.resize(1280, 800);
+  w.show();
+  bool started = false;
+  QObject::connect(&w.session(), &app::Session::progressed, [&](int, int) { started = true; });
+  w.session().set_project(samples::long_procedural(0.15));
+  REQUIRE(samples::wait_until([&] { return started; }, 60000));
+  CHECK(w.progress_bar().isVisible());
+  // The drag cancels the regeneration, whose full snapshot never comes:
+  // its progress bar and Cancel go with it (H7).
+  bool drag_shown = false;
+  QObject::connect(&w, &app::MainWindow::dragPreviewShown, [&] { drag_shown = true; });
+  w.session().drag_preview(w.session().project_ptr());
+  REQUIRE(samples::wait_until([&] { return drag_shown; }, 60000));
+  samples::wait_until([] { return false; }, 200);
+  CHECK_FALSE(w.progress_bar().isVisible());
+  CHECK_FALSE(w.cancel_action().isEnabled());
+  // Releasing regenerates, with its own progress, and finishes.
+  bool full = false;
+  QObject::connect(&w, &app::MainWindow::evaluationShown, [&] { full = true; });
+  w.session().regenerate();
+  CHECK(w.progress_bar().isVisible());
+  REQUIRE(samples::wait_until([&] { return full; }, 300000));
+  CHECK_FALSE(w.progress_bar().isVisible());
+}

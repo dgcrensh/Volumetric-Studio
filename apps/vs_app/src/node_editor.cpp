@@ -496,7 +496,8 @@ class GraphScene : public QGraphicsScene {
       }
       if (auto* e = dynamic_cast<EdgeItem*>(item)) {
         const proc::Edge edge = e->edge();
-        QMenu menu;
+        // Parented, so it is styled and placed with the editor's window (H7).
+        QMenu menu(editor_);
         QAction* del = menu.addAction(QObject::tr("Delete connection"));
         if (menu.exec(event->screenPos()) == del) {
           NodeEditor* editor = editor_;
@@ -1272,6 +1273,11 @@ void NodeForm::show_node(const proc::Graph& graph, const Id& id, const GraphCont
     for (QLayoutItem* item : {row.labelItem, row.fieldItem}) {
       if (item == nullptr) continue;
       if (QWidget* w = item->widget()) {
+        // Its signals go first: a name or number field losing focus as it
+        // hides (or before it is deleted) would otherwise commit its text
+        // to the node shown next (H7).
+        QObject::disconnect(w, nullptr, this, nullptr);
+        for (QObject* child : w->findChildren<QObject*>()) QObject::disconnect(child, nullptr, this, nullptr);
         w->hide();
         w->deleteLater();
       }

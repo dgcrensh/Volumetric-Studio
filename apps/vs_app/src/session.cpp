@@ -32,9 +32,13 @@ struct PreviewState {
   std::mutex mutex;
   std::condition_variable wake;
   std::optional<std::pair<std::uint64_t, NodePreviewRequest>> pending;
+  eval::CancellationToken pending_cancel;  // the pending request's
+  eval::CancellationToken running_cancel;  // the running request's
+  bool clear_inputs = false;               // set_project(): drop `inputs`
   bool stopping = false;
   // Its own pool: the engine's is busy generating while previews run.
-  eval::ThreadPool pool{std::max<std::size_t>(2, std::thread::hardware_concurrency() / 2)};
+  eval::ThreadPool pool{std::max<std::size_t>(2, std::thread::hardware_concurrency() / 2),
+                        eval::WorkerPriority::Low};
   std::atomic<std::size_t> evaluated{0};
 
   // Gathered inputs by inputs_key() (the preview thread only).
@@ -57,12 +61,16 @@ namespace {
 
 // The engine's pool leaves two hardware threads to the UI thread and the
 // GPU driver: with every core busy generating, frames stall for 100 ms and
-// more (measured on Dallas's desktop, M13).
+// more (measured on Dallas's desktop, M13). That alone still let a frame
+// stall past 100 ms about one run in five while a procedural volume
+// generated (H7), so the workers also run below normal priority, as do the
+// session's own threads: the UI and the driver always win a core.
 eval::EngineOptions with_ui_headroom(eval::EngineOptions options) {
   if (options.threads == 0) {
     const unsigned hw = std::thread::hardware_concurrency();
     options.threads = hw > 3 ? hw - 2 : 1;
   }
+  options.worker_priority = eval::WorkerPriority::Low;
   return options;
 }
 
@@ -106,7 +114,9 @@ std::uint64_t Session::preview_node(NodePreviewRequest request) {
   const std::uint64_t id = ++preview_requested_;
   {
     std::lock_guard lock(preview_->mutex);
+    preview_->running_cancel.cancel();  // only the newest is answered
     preview_->pending = std::make_pair(id, std::move(request));
+    preview_->pending_cancel = eval::CancellationToken{};
   }
   preview_->wake.notify_one();
   return id;
@@ -116,27 +126,43 @@ void Session::cancel_preview() {
   ++preview_requested_;
   std::lock_guard lock(preview_->mutex);
   preview_->pending.reset();
+  preview_->running_cancel.cancel();
 }
 
 std::size_t Session::nodes_evaluated() const {
   return generator_->nodes_evaluated() + preview_->evaluated.load();
 }
 
+std::size_t Session::node_cache_entries() const { return generator_->cache().size(); }
+
+std::size_t Session::queued_jobs() const {
+  std::lock_guard lock(mutex_);
+  return jobs_.size();
+}
+
 void Session::preview_loop() {
+  eval::set_current_thread_priority(eval::WorkerPriority::Low);
   for (;;) {
     std::pair<std::uint64_t, NodePreviewRequest> job;
+    eval::CancellationToken cancel;
+    bool clear_inputs = false;
     {
       std::unique_lock lock(preview_->mutex);
       preview_->wake.wait(lock, [this] { return preview_->stopping || preview_->pending.has_value(); });
       if (preview_->stopping) return;
       job = std::move(*preview_->pending);
       preview_->pending.reset();
+      cancel = preview_->pending_cancel;
+      preview_->running_cancel = cancel;
+      clear_inputs = std::exchange(preview_->clear_inputs, false);
     }
-    preview_job(job.first, job.second);
+    if (clear_inputs) preview_->inputs.clear();
+    preview_job(job.first, job.second, cancel);
   }
 }
 
-void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request) {
+void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request,
+                          const eval::CancellationToken& cancel) {
   auto result = std::make_shared<NodePreviewResult>();
   result->volume = request.volume;
   result->node = request.node;
@@ -174,8 +200,10 @@ void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request) {
     proc::EvaluateGraphOptions options;
     options.cache = &generator_->cache();
     options.pool = &preview_->pool;
+    options.cancel = &cancel;
     const proc::NodeInspection inspection = proc::inspect_node(request.graph, *inputs, request.node, options);
     preview_->evaluated += inspection.evaluated;
+    if (cancel.cancelled()) return;  // replaced or cancelled: never answered
     result->diagnostics = inspection.diagnostics;
     result->from_cache = inspection.from_cache;
     result->evaluated = inspection.evaluated;
@@ -199,7 +227,8 @@ void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request) {
     if (chosen != nullptr) {
       result->port = chosen->first;
       result->type = proc::type_of(chosen->second);
-      const proc::Preview pv = proc::preview(chosen->second, *inputs, request.cell, &preview_->pool);
+      const proc::Preview pv = proc::preview(chosen->second, *inputs, request.cell, &preview_->pool, &cancel);
+      if (pv.cancelled || cancel.cancelled()) return;
       result->text = pv.text;
       result->scene = preview_scene(pv, request.volume, request.node, core::to_fp32(inputs->bounds), request.options);
       // Every output's value, for the editor's status line.
@@ -217,8 +246,9 @@ void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request) {
     }
     result->preview_ms = ms_since(t1);
   }
+  if (cancel.cancelled()) return;
   std::shared_ptr<const PreparedScene> prepared;
-  if (preparer_) prepared = preparer_(result->scene);
+  if (const Preparer prepare = preparer()) prepared = prepare(result->scene);
   QMetaObject::invokeMethod(
       this,
       [this, id, result, prepared] {
@@ -247,9 +277,16 @@ void Session::set_project(model::Project project, std::filesystem::path path, mo
   has_project_ = true;
   path_ = std::move(path);
   latest_.reset();
-  // A new project shares nothing with the last one worth keeping on screen.
+  // A new project shares nothing with the last one worth keeping on screen
+  // or in memory: the node cache (up to 1 GiB) and the previews' inputs go
+  // with the engine's state.
+  {
+    std::lock_guard lock(preview_->mutex);
+    preview_->clear_inputs = true;
+  }
   post([this, cache = std::make_shared<const model::CacheFiles>(std::move(cache))] {
     engine_.reset();
+    generator_->cache().clear();
     cache_entries_loaded_ = engine_.cache().insert_files(*cache);
   });
   emit projectChanged();
@@ -283,6 +320,7 @@ void Session::regenerate() {
     current_cancel_.cancel();  // the running evaluation, if any
     current_cancel_ = cancel;
     newest_ = generation;
+    newest_full_ = generation;
   }
   emit evaluationStarted(generation);
   post([this, generation, project = project_, cancel] { evaluate_job(generation, project, cancel); });
@@ -292,13 +330,48 @@ void Session::drag_preview(std::shared_ptr<const model::Project> project) {
   if (!has_project_ || !project) return;
   const std::uint64_t generation = ++requested_;
   eval::CancellationToken cancel;
+  bool queue = false;
   {
     std::lock_guard lock(mutex_);
     current_cancel_.cancel();
     current_cancel_ = cancel;
     newest_ = generation;
+    // One slot: a job already queued takes the newest position.
+    drag_project_ = std::move(project);
+    drag_generation_ = generation;
+    drag_cancel_ = cancel;
+    queue = !std::exchange(drag_queued_, true);
   }
-  post([this, generation, project = std::move(project), cancel] { evaluate_job(generation, project, cancel, true); });
+  if (!queue) return;
+  post([this] {
+    std::shared_ptr<const model::Project> project;
+    std::uint64_t generation = 0;
+    eval::CancellationToken cancel;
+    {
+      std::lock_guard lock(mutex_);
+      project = std::move(drag_project_);
+      generation = drag_generation_;
+      cancel = drag_cancel_;
+      drag_queued_ = false;
+    }
+    if (project) evaluate_job(generation, std::move(project), std::move(cancel), true);
+  });
+}
+
+void Session::set_preparer(Preparer preparer) {
+  std::lock_guard lock(preparer_mutex_);
+  preparer_ = std::move(preparer);
+}
+
+Session::Preparer Session::preparer() const {
+  std::lock_guard lock(preparer_mutex_);
+  return preparer_;
+}
+
+bool Session::superseded(std::uint64_t generation, bool drag) const {
+  std::lock_guard lock(mutex_);
+  if (stopping_) return true;
+  return drag ? newest_full_ > generation : generation != newest_;
 }
 
 void Session::cancel() {
@@ -327,6 +400,7 @@ void Session::post(std::function<void()> job) {
 }
 
 void Session::worker_loop() {
+  eval::set_current_thread_priority(eval::WorkerPriority::Low);
   for (;;) {
     std::function<void()> job;
     {
@@ -372,11 +446,21 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
     SceneOptions scene_options;
     scene_options.hide_stale_contents = s->drag;
     s->scene = build_scene(s->evaluation, settings_, scene_options);
-    if (preparer_) s->prepared = preparer_(s->scene);
+    if (const Preparer prepare = preparer()) s->prepared = prepare(s->scene);
     s->scene_ms = ms_since(t1);
   };
+  // However this returns, the worker is free again.
+  struct Idle {
+    Session* session;
+    ~Idle() {
+      std::lock_guard lock(session->mutex_);
+      session->running_ = 0;
+    }
+  } idle{this};
 
-  // 1. the preview tier
+  // 1. the preview tier. Replaced meanwhile (the next drag position, an
+  // edit), its scene would only be thrown away on the UI thread: stop
+  // before building it (H7).
   {
     const auto t0 = std::chrono::steady_clock::now();
     auto s = std::make_shared<Snapshot>();
@@ -385,18 +469,15 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
     s->drag = drag;
     s->project = project;
     s->evaluation = engine_.preview(*project);
+    if (superseded(generation, drag)) return;
     finish_snapshot(s, t0);
     deliver(s);
   }
-  if (drag) {
-    // A drag shows the preview tier only; releasing the handle regenerates.
-    std::lock_guard lock(mutex_);
-    running_ = 0;
-    return;
-  }
-  // 2. the full evaluation. Cancelled already, it returns at once with
-  // every volume as it was (Stale), which is still worth showing when no
-  // newer request replaced it.
+  // A drag shows the preview tier only; releasing the handle regenerates.
+  if (drag) return;
+  // 2. the full evaluation. Cancelled by cancel(), it returns at once with
+  // every volume as it was (Stale), which is still worth showing; cancelled
+  // because a newer request replaced it, it isn't.
   {
     const auto t0 = std::chrono::steady_clock::now();
     auto s = std::make_shared<Snapshot>();
@@ -404,23 +485,26 @@ void Session::evaluate_job(std::uint64_t generation, std::shared_ptr<const model
     s->project = project;
     eval::EvaluateOptions options;
     options.cancel = cancel;
-    options.progress = [this](const eval::ProgressEvent& e) {
+    options.progress = [this, generation](const eval::ProgressEvent& e) {
       if (e.kind != eval::ProgressEvent::Kind::VolumeFinished &&
           e.kind != eval::ProgressEvent::Kind::VolumeStarted) {
         return;
       }
       const int done = static_cast<int>(e.done), total = static_cast<int>(e.total);
-      QMetaObject::invokeMethod(this, [this, done, total] { emit progressed(done, total); },
-                                Qt::QueuedConnection);
+      QMetaObject::invokeMethod(
+          this,
+          [this, generation, done, total] {
+            // Only the newest request's progress: a drag or a later
+            // regeneration may have replaced this one since.
+            if (generation == requested_) emit progressed(done, total);
+          },
+          Qt::QueuedConnection);
     };
     s->evaluation = engine_.evaluate(*project, options);
-    // A cancelled evaluation still describes a consistent model (vs_eval),
-    // but a newer request is coming; show it only if nothing replaced it.
+    if (superseded(generation, drag)) return;
     finish_snapshot(s, t0);
     deliver(s);
   }
-  std::lock_guard lock(mutex_);
-  running_ = 0;
 }
 
 }  // namespace vs::app

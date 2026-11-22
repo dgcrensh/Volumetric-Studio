@@ -11,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QCloseEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
@@ -332,7 +333,9 @@ MainWindow::~MainWindow() {
 
 void MainWindow::build_menus() {
   QMenu* file = menuBar()->addMenu(tr("&File"));
-  file->addAction(tr("&New"), QKeySequence::New, this, [this] { new_project(); });
+  file->addAction(tr("&New"), QKeySequence::New, this, [this] {
+    if (confirm_discard()) new_project();
+  });
   file->addAction(tr("&Open…"), QKeySequence::Open, this, &MainWindow::open_dialog_box);
   recent_menu_ = file->addMenu(tr("Open &Recent"));
   rebuild_recent_menu();
@@ -426,7 +429,7 @@ void MainWindow::build_menus() {
   model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, [this] { validate(); });
 
   QMenu* view = menuBar()->addMenu(tr("V&iew"));
-  view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
+  fit_action_ = view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
   view->addSeparator();
   const std::pair<const char*, StandardView> views[] = {
       {"&Isometric", StandardView::Iso}, {"&Top", StandardView::Top},   {"&Bottom", StandardView::Bottom},
@@ -767,7 +770,13 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   fitted_ = fitted_ || fit;
   if (snapshot->drag) {
     // A dimension drag's preview: the viewport only; the panels follow
-    // when the drag ends.
+    // when the drag ends. A regeneration the drag replaced never reports
+    // again, so its progress and Cancel go (H7).
+    state_timer_->stop();
+    last_states_.clear();
+    cancel_action_->setEnabled(false);
+    progress_->setVisible(false);
+    cancel_button_->setVisible(false);
     if (drag_) {
       status_label_->setText(tr("Dragging %1: %2 mm (preview: %3 ms)")
                                  .arg(qstr(drag_->handle.label))
@@ -1323,9 +1332,14 @@ void MainWindow::start_dialog(EditDialog* d, std::function<Command()> make, std:
     }
     preview_timer_->stop();
     if (commit_override) {
+      // The override may open another mode (sketch mode, for a new
+      // sketch), which closes the dialog shown: not this one, which is
+      // being accepted (H7: it was rejected, then accepted).
+      dialog_ = nullptr;
       if (commit_override()) {
-        dialog_ = nullptr;
         d->accept();
+      } else {
+        dialog_ = d;
       }
       return;
     }
@@ -1693,6 +1707,7 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
   const QString title = qstr(sk.name().empty() ? std::string("Sketch") : sk.name()) +
                         (where.isEmpty() ? QString() : tr(" on %1").arg(where));
   auto editor = std::make_unique<SketchEditor>(sk, session_->settings(), lookup);
+  suspend_window_shortcuts(true);
   sketch_mode_ = new SketchMode(std::move(editor), title);
   central_->addWidget(sketch_mode_);
   central_->setCurrentWidget(sketch_mode_);
@@ -1721,6 +1736,7 @@ void MainWindow::finish_sketch(bool accept) {
   central_->removeWidget(sketch_mode_);
   sketch_mode_->deleteLater();
   sketch_mode_ = nullptr;
+  suspend_window_shortcuts(false);
   sketch_session_.reset();
   refresh_edit_actions();
 }
@@ -1886,12 +1902,15 @@ void MainWindow::rebuild_recent_menu() {
   QSettings settings(QStringLiteral("Volumetric Studio"), QStringLiteral("vs_app"));
   const QStringList list = settings.value(QStringLiteral("recent")).toStringList();
   for (const QString& p : list) {
-    recent_menu_->addAction(p, this, [this, p] { open_project(fspath(p)); });
+    recent_menu_->addAction(p, this, [this, p] {
+      if (confirm_discard()) open_project(fspath(p));
+    });
   }
   recent_menu_->setEnabled(!list.isEmpty());
 }
 
 void MainWindow::open_dialog_box() {
+  if (!confirm_discard()) return;
   // A project is a folder or a zip file, so offer both.
   QFileDialog dialog(this, tr("Open project"));
   dialog.setNameFilters({tr("Projects (*.vsproj project.json)"), tr("All files (*)")});
@@ -1903,6 +1922,50 @@ void MainWindow::open_dialog_box() {
   open_project(fspath(path));
 }
 
+
+bool MainWindow::confirm_discard() {
+  if (!history_.dirty()) return true;
+  UnsavedChoice choice = UnsavedChoice::Cancel;
+  if (unsaved_prompt_) {
+    choice = unsaved_prompt_();
+  } else {
+    const auto button = QMessageBox::question(
+        this, tr("Unsaved changes"),
+        tr("%1 has changes that aren't saved. Save them first?").arg(qstr(history_.project().document.name)),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    choice = button == QMessageBox::Save      ? UnsavedChoice::Save
+             : button == QMessageBox::Discard ? UnsavedChoice::Discard
+                                              : UnsavedChoice::Cancel;
+  }
+  switch (choice) {
+    case UnsavedChoice::Discard: return true;
+    case UnsavedChoice::Cancel: return false;
+    case UnsavedChoice::Save: save(); return !history_.dirty();  // false when Save As was cancelled or failed
+  }
+  return false;
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+  if (!confirm_discard()) {
+    event->ignore();
+    return;
+  }
+  QMainWindow::closeEvent(event);
+}
+
+void MainWindow::suspend_window_shortcuts(bool suspend) {
+  if (suspend) {
+    if (!suspended_shortcuts_.empty()) return;
+    for (QAction* a : {undo_action_, redo_action_, cancel_action_, fit_action_}) {
+      if (a == nullptr) continue;
+      suspended_shortcuts_.emplace_back(a, a->shortcut());
+      a->setShortcut({});
+    }
+  } else {
+    for (auto& [a, key] : suspended_shortcuts_) a->setShortcut(key);
+    suspended_shortcuts_.clear();
+  }
+}
 bool MainWindow::save_caches() const { return save_caches_action_ != nullptr && save_caches_action_->isChecked(); }
 
 void MainWindow::set_save_caches(bool on) {

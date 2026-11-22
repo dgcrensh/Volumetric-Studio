@@ -23,6 +23,7 @@
 #include <Graphic3d_ArrayOfTriangles.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
+#include <Graphic3d_Camera.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Graphic3d_MaterialAspect.hxx>
 #include <Graphic3d_TransformPers.hxx>
@@ -57,9 +58,14 @@ struct PreparedItem {
   bool vertex_colors = false;  // per-vertex colours, drawn unlit
   occ::handle<Graphic3d_ArrayOfTriangles> triangles;  // null when there are none
   occ::handle<Graphic3d_ArrayOfSegments> edges;       // null when there are none
-  // Pickable parts (M16), for items drawn in one part only: each face's
-  // triangles (first, count) and each edge's polyline.
-  std::vector<std::pair<std::uint32_t, std::uint32_t>> face_ranges;
+  // Pickable parts (M16): the triangles of each face in this part (the
+  // face's index in the item, then first and count within this part:
+  // a face of a big B-rep may span parts, H7), and on the first part each
+  // edge's polyline.
+  struct FaceRange {
+    std::uint32_t face = 0, first = 0, count = 0;
+  };
+  std::vector<FaceRange> face_ranges;
   std::vector<std::vector<fvec3>> edge_lines;
 };
 
@@ -119,16 +125,24 @@ std::vector<PreparedItem> prepare_item(const SceneItem& item) {
   const DisplayMesh& m = item.mesh;
   out.vertex_colors = !m.colors.empty() && m.colors.size() == m.positions.size();
   for (std::size_t first = 0; first < m.triangle_count(); first += kChunkTriangles) {
+    const std::size_t last = std::min(m.triangle_count(), first + kChunkTriangles);
     PreparedItem chunk = out;
     chunk.first_chunk = first == 0;
-    chunk.triangles = triangle_chunk(m, first, std::min(m.triangle_count(), first + kChunkTriangles));
+    chunk.triangles = triangle_chunk(m, first, last);
+    // The part of each face in this chunk, numbered from the chunk's first
+    // triangle (triangle_chunk() keeps their order).
+    for (std::size_t f = 0; f < m.faces.size(); ++f) {
+      const std::size_t lo = std::max<std::size_t>(first, m.faces[f].first);
+      const std::size_t hi = std::min<std::size_t>(last, std::size_t{m.faces[f].first} + m.faces[f].count);
+      if (lo < hi) {
+        chunk.face_ranges.push_back({static_cast<std::uint32_t>(f), static_cast<std::uint32_t>(lo - first),
+                                     static_cast<std::uint32_t>(hi - lo)});
+      }
+    }
     chunks.push_back(std::move(chunk));
   }
   if (chunks.empty()) chunks.push_back(out);
-  if (chunks.size() == 1) {
-    for (const auto& f : m.faces) chunks.front().face_ranges.emplace_back(f.first, f.count);
-    if (m.edge_faces.size() == m.edges.size()) chunks.front().edge_lines = m.edges;
-  }
+  if (m.edge_faces.size() == m.edges.size()) chunks.front().edge_lines = m.edges;
   std::size_t segments = 0;
   for (const auto& line : m.edges) segments += line.size() > 1 ? line.size() - 1 : 0;
   if (segments > 0) {
@@ -228,8 +242,7 @@ class MeshObject : public AIS_InteractiveObject {
     } else if (mode == kModeFaces) {
       // Each face its own part. The triangles were added face by face, so
       // a face is a range of the index buffer.
-      for (std::size_t f = 0; f < item_.face_ranges.size(); ++f) {
-        const auto [first, count] = item_.face_ranges[f];
+      for (const auto& [f, first, count] : item_.face_ranges) {
         if (count == 0) continue;
         occ::handle<SelectMgr_EntityOwner> owner = new PartOwner(this, PickedPart::Kind::Face, f, priority());
         occ::handle<Select3D_SensitivePrimitiveArray> sensitive = new Select3D_SensitivePrimitiveArray(owner);
@@ -250,9 +263,10 @@ class MeshObject : public AIS_InteractiveObject {
   }
 
   [[nodiscard]] bool has_parts(PickMode mode) const {
-    if (!item_.first_chunk) return false;
     if (mode == PickMode::Face) return !item_.face_ranges.empty();
-    if (mode == PickMode::Edge) return !item_.edge_lines.empty() && item_.role != ItemRole::ConnectionSurface;
+    if (mode == PickMode::Edge) {
+      return item_.first_chunk && !item_.edge_lines.empty() && item_.role != ItemRole::ConnectionSurface;
+    }
     return false;
   }
 
@@ -543,6 +557,10 @@ struct Viewport::Impl : public AIS_ViewController {
   // it (1 = nearest).
   QPointF last_pick_at;
   bool last_pick_valid = false;
+  // The next paint redraws everything (refresh_all()), not only the
+  // immediate layer; how many paints did (tests).
+  bool full = true;
+  std::size_t full_redraws = 0;
   int pick_rank = 1;
   std::vector<ViewHandle> handles;
   std::vector<occ::handle<HandleObject>> handle_objects;
@@ -571,13 +589,20 @@ Viewport::Viewport(QWidget* parent) : QWidget(parent), impl_(std::make_unique<Im
     if (!impl_->pending.empty()) {
       impl_->display(*impl_->pending.front());
       impl_->pending.pop_front();
-      update();
+      refresh_all();
     }
     if (impl_->pending.empty()) impl_->chunk_timer->stop();
   });
 }
 
 bool Viewport::loading() const { return !impl_->pending.empty(); }
+
+void Viewport::refresh_all() {
+  impl_->full = true;
+  update();
+}
+
+std::size_t Viewport::full_redraws() const { return impl_->full_redraws; }
 
 Viewport::~Viewport() {
   if (!impl_->context.IsNull()) impl_->context->RemoveAll(false);
@@ -599,11 +624,14 @@ void Viewport::show_scene(const Scene& scene, std::shared_ptr<const PreparedScen
     return;
   }
   impl_->prepared = std::move(prepared);
+  // Picking again in place cycles through what lay under the last pick;
+  // in a new scene that list means nothing (H7).
+  impl_->last_pick_valid = false;
   // Every item's first part now; the rest of big meshes one part per frame.
   impl_->redisplay();
   set_highlight(impl_->highlight);
   if (fit) fit_all();
-  update();
+  refresh_all();
 }
 
 void Viewport::clear() {
@@ -631,7 +659,7 @@ void Viewport::set_highlight(const std::vector<core::Id>& subjects) {
   auto& ctx = impl_->context;
   // In pick mode the selection shows the picked face or edge.
   if (impl_->pick_mode != PickMode::None) {
-    update();
+    refresh_all();
     return;
   }
   ctx->ClearSelected(false);
@@ -640,7 +668,7 @@ void Viewport::set_highlight(const std::vector<core::Id>& subjects) {
     if (item.role == ItemRole::Contents || item.role == ItemRole::Sketch || impl_->dimmed(item)) continue;
     if (impl_->highlighted(item.subject)) ctx->AddOrRemoveSelected(obj, false);
   }
-  update();
+  refresh_all();
 }
 
 void Viewport::set_context(const core::Id& volume, const std::vector<core::Id>& inputs,
@@ -667,7 +695,7 @@ void Viewport::set_overlay(const Scene& scene, std::shared_ptr<const PreparedSce
     set_highlight(impl_->highlight);
   }
   impl_->redisplay_overlay();
-  update();
+  refresh_all();
 }
 
 void Viewport::clear_overlay() {
@@ -678,7 +706,7 @@ void Viewport::clear_overlay() {
   impl_->redisplay_overlay();
   impl_->redisplay();
   set_highlight(impl_->highlight);
-  update();
+  refresh_all();
 }
 
 std::size_t Viewport::overlay_items() const { return impl_->overlay_objects.size(); }
@@ -701,7 +729,7 @@ void Viewport::fit_all() {
   if (!impl_->ensure()) return;
   impl_->view->FitAll(0.08, false);
   impl_->view->ZFitAll();
-  update();
+  refresh_all();
 }
 
 void Viewport::set_view(StandardView v) {
@@ -743,7 +771,7 @@ void Viewport::set_pick_mode(PickMode mode, std::vector<std::pair<core::Id, Item
   impl_->redisplay();
   set_highlight(impl_->highlight);
   setCursor(mode == PickMode::None ? Qt::ArrowCursor : Qt::PointingHandCursor);
-  update();
+  refresh_all();
 }
 
 PickMode Viewport::pick_mode() const { return impl_->pick_mode; }
@@ -759,7 +787,7 @@ std::optional<PickedPart> Viewport::pick_at(QPointF position) {
       ctx->ClearSelected(false);
       emit picked({});
     }
-    update();
+    refresh_all();
     return std::nullopt;
   }
   std::optional<PickedPart> part;
@@ -778,7 +806,7 @@ std::optional<PickedPart> Viewport::pick_at(QPointF position) {
     if (!owner.IsNull()) ctx->AddOrRemoveSelected(owner, false);
     part = Impl::part_of(owner);
     if (part) emit partPicked(*part);
-    update();
+    refresh_all();
     return part;
   }
   ctx->SelectDetected(AIS_SelectionScheme_Replace);
@@ -788,12 +816,16 @@ std::optional<PickedPart> Viewport::pick_at(QPointF position) {
   } else if (auto obj = occ::handle<MeshObject>::DownCast(ctx->DetectedInteractive()); !obj.IsNull()) {
     emit picked(obj->item().subject);
   }
-  update();
+  refresh_all();
   return part;
 }
 
 std::optional<QPointF> Viewport::project(const core::dvec3& point) const {
   if (impl_->view.IsNull()) return std::nullopt;
+  // Outside the camera's depth range (behind it, say), a point has no
+  // place on screen; Convert() would mirror it into view (H7).
+  const gp_Pnt ndc = impl_->view->Camera()->Project(gp_Pnt(point.x, point.y, point.z));
+  if (!std::isfinite(ndc.Z()) || ndc.Z() < -1.0 || ndc.Z() > 1.0) return std::nullopt;
   int x = 0, y = 0;
   impl_->view->Convert(point.x, point.y, point.z, x, y);
   const double r = devicePixelRatioF();
@@ -807,7 +839,7 @@ void Viewport::set_handles(std::vector<ViewHandle> handles) {
   dragging_handle_.reset();
   if (!impl_->ensure()) return;
   impl_->redisplay_handles();
-  update();
+  refresh_all();
 }
 
 std::size_t Viewport::handle_count() const { return impl_->handles.size(); }
@@ -876,9 +908,14 @@ void Viewport::paintEvent(QPaintEvent*) {
   QElapsedTimer timer;
   timer.start();
   // Objects shown or highlighted since the last frame don't invalidate the
-  // view by themselves; a full redraw each paint keeps the screen honest
-  // (and the frame time measured here is the real one).
-  impl_->view->Invalidate();
+  // view by themselves, so whatever changes what is shown asks for a full
+  // redraw (refresh_all()); a hover repaint draws only the immediate layer
+  // over the last full frame (H7).
+  if (impl_->full) {
+    impl_->view->Invalidate();
+    impl_->full = false;
+    ++impl_->full_redraws;
+  }
   impl_->view->InvalidateImmediate();
   impl_->FlushViewEvents(impl_->context, impl_->view, true);
   last_frame_ms_ = static_cast<double>(timer.nsecsElapsed()) / 1e6;
@@ -888,7 +925,7 @@ void Viewport::paintEvent(QPaintEvent*) {
 void Viewport::resizeEvent(QResizeEvent*) {
   if (!impl_->view.IsNull()) {
     impl_->view->MustBeResized();
-    update();
+    refresh_all();
   }
 }
 
@@ -906,7 +943,7 @@ void Viewport::mousePressEvent(QMouseEvent* event) {
   }
   if (impl_->UpdateMouseButtons(impl_->pixel(event->position()), to_vkeys(event->buttons()),
                                 to_vflags(event->modifiers()), false)) {
-    update();
+    refresh_all();
   }
 }
 
@@ -928,7 +965,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* event) {
   }
   if (impl_->UpdateMouseButtons(impl_->pixel(event->position()), to_vkeys(event->buttons()),
                                 to_vflags(event->modifiers()), false)) {
-    update();
+    refresh_all();
   }
 }
 
@@ -942,7 +979,13 @@ void Viewport::mouseMoveEvent(QMouseEvent* event) {
   if (event->buttons() != Qt::NoButton) impl_->last_pick_valid = false;  // orbiting or panning
   if (impl_->UpdateMousePosition(impl_->pixel(event->position()), to_vkeys(event->buttons()),
                                  to_vflags(event->modifiers()), false)) {
-    update();
+    // Hovering only moves the highlight, which OCCT draws in its immediate
+    // layer: no full redraw (H7). Orbiting and panning redraw it all.
+    if (event->buttons() != Qt::NoButton) {
+      refresh_all();
+    } else {
+      update();
+    }
   }
 }
 
@@ -951,7 +994,7 @@ void Viewport::wheelEvent(QWheelEvent* event) {
   impl_->last_pick_valid = false;
   if (impl_->UpdateZoom(Aspect_ScrollDelta(impl_->pixel(event->position()),
                                            static_cast<double>(event->angleDelta().y()) / 8.0))) {
-    update();
+    refresh_all();
   }
 }
 
