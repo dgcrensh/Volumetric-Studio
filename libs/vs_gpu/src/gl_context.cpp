@@ -27,12 +27,7 @@ constexpr wchar_t kClassName[] = L"vs_gpu_hidden";
 class WglContext final : public Context {
  public:
   ~WglContext() override {
-    if (rc_ != nullptr) {
-      wglMakeCurrent(nullptr, nullptr);
-      wglDeleteContext(rc_);
-    }
-    if (dc_ != nullptr) ReleaseDC(window_, dc_);
-    if (window_ != nullptr) DestroyWindow(window_);
+    close();
     if (opengl32_ != nullptr) FreeLibrary(opengl32_);
   }
 
@@ -44,10 +39,35 @@ class WglContext final : public Context {
     wc.hInstance = instance;
     wc.lpszClassName = kClassName;
     RegisterClassW(&wc);  // fails harmlessly when already registered
-    window_ = CreateWindowExW(0, kClassName, L"vs_gpu", WS_OVERLAPPEDWINDOW, 0, 0, 16, 16, nullptr,
-                              nullptr, instance, nullptr);
-    if (window_ == nullptr) return fail(why, "can't create a hidden window");
+    // A message-only window: never shown, and left out of broadcasts, which
+    // the device thread (it pumps no messages) would otherwise hold up.
+    // Some drivers give such a window no pixel format; then a hidden
+    // top-level one.
+    if (!open_on(CreateWindowExW(0, kClassName, L"vs_gpu", 0, 0, 0, 16, 16, HWND_MESSAGE, nullptr,
+                                 instance, nullptr))) {
+      close();
+      if (!open_on(CreateWindowExW(0, kClassName, L"vs_gpu", WS_OVERLAPPEDWINDOW, 0, 0, 16, 16, nullptr,
+                                   nullptr, instance, nullptr))) {
+        return fail(why, window_ == nullptr ? "can't create a hidden window"
+                         : rc_ == nullptr   ? "can't create an OpenGL context"
+                                            : "no OpenGL pixel format");
+      }
+    }
+    opengl32_ = LoadLibraryW(L"opengl32.dll");
+    upgrade();
+    return load(why);
+  }
+
+  [[nodiscard]] const Functions& gl() const override { return f_; }
+
+ private:
+  // A legacy context current on `window`; false (state kept for close())
+  // when any step fails.
+  bool open_on(HWND window) {
+    window_ = window;
+    if (window_ == nullptr) return false;
     dc_ = GetDC(window_);
+    if (dc_ == nullptr) return false;
     PIXELFORMATDESCRIPTOR pfd{};
     pfd.nSize = sizeof(pfd);
     pfd.nVersion = 1;
@@ -55,17 +75,44 @@ class WglContext final : public Context {
     pfd.iPixelType = PFD_TYPE_RGBA;
     pfd.cColorBits = 32;
     const int format = ChoosePixelFormat(dc_, &pfd);
-    if (format == 0 || !SetPixelFormat(dc_, format, &pfd)) return fail(why, "no OpenGL pixel format");
+    if (format == 0 || !SetPixelFormat(dc_, format, &pfd)) return false;
     rc_ = wglCreateContext(dc_);
-    if (rc_ == nullptr || !wglMakeCurrent(dc_, rc_)) return fail(why, "can't create an OpenGL context");
-    opengl32_ = LoadLibraryW(L"opengl32.dll");
-    if (!load(why)) return false;
-    return true;
+    return rc_ != nullptr && wglMakeCurrent(dc_, rc_);
   }
 
-  [[nodiscard]] const Functions& gl() const override { return f_; }
+  void close() {
+    if (rc_ != nullptr) {
+      wglMakeCurrent(nullptr, nullptr);
+      wglDeleteContext(rc_);
+      rc_ = nullptr;
+    }
+    if (dc_ != nullptr) ReleaseDC(window_, dc_);
+    dc_ = nullptr;
+    if (window_ != nullptr) DestroyWindow(window_);
+    window_ = nullptr;
+  }
 
- private:
+  // Swaps the legacy context for a 4.3 core one through
+  // wglCreateContextAttribsARB when the driver has it, so a driver whose
+  // legacy context stops short of 4.3 still gives compute shaders. Keeps
+  // the legacy context otherwise.
+  void upgrade() {
+    using CreateContextAttribs = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
+    const auto create = reinterpret_cast<CreateContextAttribs>(proc("wglCreateContextAttribsARB"));
+    if (create == nullptr) return;
+    constexpr int kMajor = 0x2091, kMinor = 0x2092, kProfileMask = 0x9126, kCoreProfile = 0x0001;
+    const int attribs[] = {kMajor, 4, kMinor, 3, kProfileMask, kCoreProfile, 0};
+    const HGLRC rc = create(dc_, nullptr, attribs);
+    if (rc == nullptr) return;
+    if (!wglMakeCurrent(dc_, rc)) {
+      wglDeleteContext(rc);
+      wglMakeCurrent(dc_, rc_);
+      return;
+    }
+    wglDeleteContext(rc_);
+    rc_ = rc;
+  }
+
   bool fail(std::string& why, const char* what) {
     why = what;
     return false;

@@ -723,6 +723,17 @@ so they are registered. A new library must also be added to
   or `--gpu=force <command>`, installed only for `rebuild`, `inspect`,
   `bake` and `bench-gyroid` (H4). `vstudio-cli selftest` says whether it
   is available.
+- **Threads and shutdown (H6, decision 0035).** `Device::run()` shares a
+  heap waiter with its job, rethrows the job's exceptions and returns
+  false once the device stops; programs are capped at 64 (LRU).
+  `shared_device()` hands out a `shared_ptr` held per call;
+  `gpu::shutdown()` drops the process's reference (the last caller closes
+  it), and the app and the CLI call it before exiting. The state is never
+  destroyed, so nothing GL runs in static destructors. Every GL error
+  fails the call (`gl_errors()`), so the CPU takes over; buffers respect
+  `GL_MAX_SHADER_STORAGE_BLOCK_SIZE`; field shaders are dispatched in 2D
+  (`dispatch_2d()`); the context is a 4.3 core one on a message-only
+  window where the driver allows it.
 
 ## vs_app essentials
 

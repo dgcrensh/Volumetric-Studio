@@ -53,10 +53,14 @@ int main(int argc, char** argv) {
   if (!QApplication::arguments().contains(QStringLiteral("--cpu"))) {
     gpu_check = std::thread([] { vs::gpu::install(); });
   }
+  // Last out (after the window and its session): the check finishes, then
+  // the GPU device closes while the process is whole, never in static
+  // destructors (H6).
   struct Join {
     std::thread& t;
     ~Join() {
       if (t.joinable()) t.join();
+      vs::gpu::shutdown();
     }
   } join{gpu_check};
 
