@@ -308,7 +308,10 @@ so they are registered. A new library must also be added to
   measures outputs. Status (`VolumeStatus`) is on the result, never saved.
   It is `build_layout()` (layout, boundaries, patches, parameters) then
   `build_contents()` per volume, which only reads the layout and may run
-  on several threads; vs_eval calls the halves itself.
+  on several threads; vs_eval calls the halves itself. A layout reads
+  only `layout_inputs(doc)` (leaf contents, outputs and seeds left out);
+  `layout_shape()` also leaves out leaf parameter values, which
+  `refresh_parameters()` redoes on a kept layout (decision 0029).
 - **Files.** `.vsproj` is a folder or a zip of `project.json` plus
   `blobs/<hash>.<ext>` (`project.hpp`, decision 0005), and optional
   `cache/` files (`save_project(..., &cache)`, `load_project_cache()`;
@@ -472,7 +475,12 @@ so they are registered. A new library must also be added to
   containment (on the calling thread), outputs published through links,
   optional weld. Volumes downstream of others through links run in later
   waves, the layout rebuilt with the link values. `preview()` is the same
-  without generating. The engine keeps each volume's last valid contents.
+  without generating. The engine builds layouts from `layout_inputs()`
+  and keeps the last four (with their layout checks and lazily computed
+  shape hashes, `LayoutShapeHashes`), reusing an equal one or refreshing
+  leaf parameters of one equal in shape, and keeps its last check
+  (`EngineOptions::reuse_layouts`, on by default; decision 0029,
+  `stats.layouts_reused`). The engine keeps each volume's last valid contents.
   A composite (L3) is never generated or cached: after its children (they
   are upstream of it) it takes the worst of their statuses, a key hashing
   its definition and their keys, and outputs adding their measures up.
@@ -523,7 +531,7 @@ so they are registered. A new library must also be added to
   volume boxed by its bounds, or `import_contents()` into an existing one
   (then containment matters). `eval.*` codes on a volume route to its
   contents. Decision 0009.
-- **Phases** (decision 0029): `ProgressEvent::Kind::PhaseFinished` names
+- **Phases** (decision 0030): `ProgressEvent::Kind::PhaseFinished` names
   each step of an evaluation as it ends (`cancel.hpp`), on the calling
   thread; `vstudio-cli bench-rack [--cells N,...] [--cell mm] [--threads N]
   [--csv out]` uses it to time `preview()` on the rack fixture's shape at
@@ -532,7 +540,8 @@ so they are registered. A new library must also be added to
   boxes; a chain A → B by a link, plus C) and reuse the bracket.
   `vstudio-cli rebuild <project> [--threads N] [--check-determinism]
   [--weld] [--stl out] [--3mf out [--per-volume]] [--cache]
-  [--set vol.param=value] [--twice]`.
+  [--set vol.param=value] [--twice]`; `bench-edit [--volumes N]
+  [--no-reuse] [--project p]` times edits outside generation (0029).
 
 ## vs_proc essentials
 
@@ -712,7 +721,8 @@ so they are registered. A new library must also be added to
 - **Authoring** (M14, decision 0014): every edit is a `Command`
   (`authoring.hpp`) applied through `History` (`history.hpp`), which keeps
   whole project snapshots (blobs shared, at most 200 undo steps, H5), so undo restores identical hashes and refuses
-  changes that add a `model::check()` error. `reference_choices.hpp` lists
+  changes that add a `model::check()` error; the current snapshot's
+  findings are kept, so an edit checks only the new document (0029). `reference_choices.hpp` lists
   what a feature may refer to (inside a volume: only its boundary faces,
   connection surfaces and own features). `sketch_editor.*` is sketch mode's
   rules (no Qt); `sketch_mode.*` its canvas and panel, replacing the

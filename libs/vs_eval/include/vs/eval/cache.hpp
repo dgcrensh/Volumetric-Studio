@@ -69,6 +69,29 @@ std::optional<Hash256> cache_key(const model::Document& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings);
 
+// kernel::shape_hash() of a layout build's boundaries and patches, each
+// worked out the first time it is asked for and kept: what cache_key()
+// spends most of its time on. The engine keeps one with each layout it
+// keeps (decision 0029). Not thread-safe; the layout must not change.
+class LayoutShapeHashes {
+ public:
+  explicit LayoutShapeHashes(std::shared_ptr<const model::DocumentBuild> layout);
+  [[nodiscard]] Hash256 boundary(std::size_t volume) const;
+  [[nodiscard]] Hash256 patch(std::size_t connection) const;
+
+ private:
+  std::shared_ptr<const model::DocumentBuild> layout_;
+  mutable std::vector<std::optional<Hash256>> boundaries_;
+  mutable std::vector<std::optional<Hash256>> patches_;
+};
+
+// cache_key() with the shape hashes of the same `layout` (or of an equal
+// one) given: the same key.
+std::optional<Hash256> cache_key(const model::Document& document,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings,
+                                 const LayoutShapeHashes& hashes);
+
 // Contents made by a generator outside vs_eval (generator.hpp), such as a
 // procedural graph's sampled field (vs_proc, M10). Opaque here: the engine
 // only shares it and hashes it. Immutable once made.

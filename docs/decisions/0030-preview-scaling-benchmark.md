@@ -1,6 +1,6 @@
-# 0029: A preview scaling benchmark on the rack fixture
+# 0030: A preview scaling benchmark on the rack fixture
 
-Nov 22, 2026 · a baseline for making document edits leaner
+Nov 22, 2026 · a baseline for making document edits leaner (decision 0029)
 
 ## Context
 
@@ -54,5 +54,11 @@ after expansion, inside `DependencyGraph::build()`
 volume), then the engine's own `DependencyGraph::build()` and its
 pairwise `depends_on()` loop. The run was stopped at 27 minutes.
 
-A preview again on the same engine costs the same: only the generator
-run is cached, and it was never the cost.
+A preview again on the same engine cost the same: only the generator
+run was cached, and it was never the cost.
+
+The table above predates decision 0029 (layouts and checks reused across
+edits), which landed first; since then `layout` and `layout checks` are
+one phase, `layout and checks`. With 0029 on the same machine the first
+preview is unchanged (61 ms, 681 ms, 9,931 ms at 10, 100 and 1,000
+cells) and the preview again drops to 3 ms, 26 ms and 2,850 ms.

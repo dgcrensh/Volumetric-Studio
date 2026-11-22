@@ -48,13 +48,14 @@ struct ProgressEvent {
   // wave), so the time between two such events is that phase's, for
   // vstudio-cli bench-rack. The names are:
   //   check                       model::check() of the authored document
-  //   children: layout            L4: the layout built for the generators
+  //   children: layout            L4: the layout for the generators (built or reused)
   //   children: keys              L4: a generating composite's cache key
   //   children: generate          L4: its generator run (or a cached outcome)
   //   children: expand and check  L4: model::expand(), then check() again
   //   dependencies                the dependency graph and who waits for whom
-  //   layout                      model::build_layout() (once per link change)
-  //   layout checks               validate::validate_layout() and its routing
+  //   layout and checks           model::build_layout() and
+  //                               validate::validate_layout(), or the kept
+  //                               layout reused (once per link change)
   //   keys and cache              each ready volume's key, cache lookups and
   //                               composites finished (once per wave)
   //   generate                    the wave's jobs prepared and run

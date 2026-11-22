@@ -683,6 +683,23 @@ class DocumentBuilder {
 
   // --- parameters and contents ------------------------------------------------------
 
+  // The values of a volume's parameters at its level, from a finished
+  // layout (refresh_parameters()); nullopt if any has a diagnostic.
+ public:
+  std::optional<std::map<std::string, double, std::less<>>> parameter_values(std::size_t i) {
+    const Volume& v = doc_.volumes[i];
+    level_ = v.parent;
+    std::map<std::string, double, std::less<>> values;
+    for (const auto& p : v.parameters) {
+      const SubjectRef ps{SubjectKind::Parameter, p.id, fmt::format("{}.{}", v.name, p.name)};
+      auto value = eval(p.value, ps, "value");
+      if (!value) return std::nullopt;
+      values[p.name] = *value;
+    }
+    return values;
+  }
+
+ private:
   void parameters(std::size_t i) {
     const Volume& v = doc_.volumes[i];
     VolumeBuild& vb = out_->volumes[i];
@@ -883,6 +900,46 @@ DocumentBuild build_layout(const Document& document, const ProductSettings& sett
   builder.run_layout();
   builder.collect_diagnostics();
   return out;
+}
+
+Document layout_inputs(const Document& document) {
+  Document out = document;
+  for (auto& v : out.volumes) {
+    if (v.composite()) continue;
+    std::visit([](auto& c) { c = std::decay_t<decltype(c)>{}; }, v.contents);
+    v.outputs.clear();
+    v.seed = 0;
+  }
+  return out;
+}
+
+Document layout_shape(const Document& document) {
+  Document out = layout_inputs(document);
+  for (auto& v : out.volumes) {
+    if (v.composite()) continue;
+    for (auto& p : v.parameters) p.value = Param{};
+  }
+  return out;
+}
+
+bool refresh_parameters(const Document& document, DocumentBuild& layout, std::size_t index,
+                        const ProductSettings& settings) {
+  if (index >= document.volumes.size() || index >= layout.volumes.size()) return false;
+  const Volume& v = document.volumes[index];
+  VolumeBuild& vb = layout.volumes[index];
+  if (v.composite() || vb.status == VolumeStatus::Failed || vb.volume != v.id) return false;
+  // A parameter with a diagnostic now would add it; one in `layout` would
+  // have to go. Either way, build the layout instead.
+  for (const auto& d : vb.diagnostics) {
+    for (const auto& s : d.subjects) {
+      if (s.kind == SubjectKind::Parameter) return false;
+    }
+  }
+  DocumentBuilder builder(document, settings, nullptr, layout);
+  auto values = builder.parameter_values(index);
+  if (!values) return false;
+  vb.parameters = std::move(*values);
+  return true;
 }
 
 ContentsBuild build_contents(const Document& document, const DocumentBuild& layout,

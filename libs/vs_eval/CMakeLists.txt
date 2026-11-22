@@ -32,6 +32,7 @@ vs_add_library_tests(vs_eval
     tests/test_cache.cpp
     tests/test_engine.cpp
     tests/test_import.cpp
+    tests/test_layout_reuse.cpp
     tests/test_module.cpp
     tests/test_nested.cpp
     tests/test_hardening.cpp

@@ -45,11 +45,49 @@ void add_optional(Hasher& h, const std::optional<double>& v) {
   if (v) h.add(*v);
 }
 
+std::optional<Hash256> cache_key_impl(const model::Document& document,
+                                      const model::DocumentBuild& layout, std::size_t index,
+                                      const core::ProductSettings& settings,
+                                      const LayoutShapeHashes* hashes);
+
 }  // namespace
+
+LayoutShapeHashes::LayoutShapeHashes(std::shared_ptr<const model::DocumentBuild> layout)
+    : layout_(std::move(layout)),
+      boundaries_(layout_->volumes.size()),
+      patches_(layout_->connections.size()) {}
+
+Hash256 LayoutShapeHashes::boundary(std::size_t volume) const {
+  auto& h = boundaries_.at(volume);
+  if (!h) h = kernel::shape_hash(layout_->volumes[volume].boundary);
+  return *h;
+}
+
+Hash256 LayoutShapeHashes::patch(std::size_t connection) const {
+  auto& h = patches_.at(connection);
+  if (!h) h = kernel::shape_hash(layout_->connections[connection].patch);
+  return *h;
+}
 
 std::optional<Hash256> cache_key(const model::Document& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings) {
+  return cache_key_impl(document, layout, index, settings, nullptr);
+}
+
+std::optional<Hash256> cache_key(const model::Document& document,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings,
+                                 const LayoutShapeHashes& hashes) {
+  return cache_key_impl(document, layout, index, settings, &hashes);
+}
+
+namespace {
+
+std::optional<Hash256> cache_key_impl(const model::Document& document,
+                                      const model::DocumentBuild& layout, std::size_t index,
+                                      const core::ProductSettings& settings,
+                                      const LayoutShapeHashes* hashes) {
   const model::Volume& v = document.volumes[index];
   const model::VolumeBuild& vb = layout.volumes[index];
   if (vb.boundary.is_empty() || vb.status == VolumeStatus::Failed) return std::nullopt;
@@ -98,7 +136,7 @@ std::optional<Hash256> cache_key(const model::Document& document,
   }
 
   // The boundary.
-  h.add(kernel::shape_hash(vb.boundary));
+  h.add(hashes != nullptr ? hashes->boundary(index) : kernel::shape_hash(vb.boundary));
   add_named_faces(h, vb.boundary_faces);
 
   // The connection surfaces joining it.
@@ -108,7 +146,7 @@ std::optional<Hash256> cache_key(const model::Document& document,
     const model::ConnectionBuild& cb = layout.connections[k];
     h.add(c.id).add(c.type()).add(cb.ok);
     if (!cb.ok) continue;
-    h.add(kernel::shape_hash(cb.patch));
+    h.add(hashes != nullptr ? hashes->patch(k) : kernel::shape_hash(cb.patch));
     h.add(cb.frame.origin).add(cb.frame.x_axis).add(cb.frame.y_axis);
     add_optional(h, cb.gap);
     add_optional(h, cb.min_wall);
@@ -130,6 +168,8 @@ std::optional<Hash256> cache_key(const model::Document& document,
   for (const auto& o : v.outputs) h.add(o.id).add(o.quantity).add(o.density);
   return h.finalize();
 }
+
+}  // namespace
 
 Hash256 output_hash(VolumeStatus status, const kernel::Solid& solid, const mesh::Mesh* mesh,
                     const std::vector<model::OutputResult>& outputs, const ExtraContents* extra) {
