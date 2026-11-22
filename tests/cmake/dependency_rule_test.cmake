@@ -16,12 +16,14 @@ expect(vs_kernel vs_core TRUE)
 expect(vs_proc vs_eval TRUE)
 expect(vs_proc vs_core TRUE)
 expect(vs_mesh vs_model TRUE)
+expect(vs_draw vs_proc TRUE)
 
 # Upward and self links are forbidden.
 expect(vs_core vs_kernel FALSE)
 expect(vs_model vs_validate FALSE)
 expect(vs_kernel vs_kernel FALSE)
 expect(vs_eval vs_proc FALSE)
+expect(vs_proc vs_draw FALSE)
 
 # Applications may use any library, but not each other, and libraries may
 # never link an application.

@@ -1,5 +1,7 @@
 // JSON form of documents and project manifests (project.hpp).
 
+#include <array>
+
 #include <nlohmann/json.hpp>
 
 #include <fmt/format.h>
@@ -200,6 +202,47 @@ ojson connection_json(const ConnectionSurface& c) {
   return j;
 }
 
+// L6.
+ojson anchor_json(const Anchor& a) {
+  ojson j{{"on", to_string(a.on)}};
+  if (!a.target.is_null()) j["target"] = a.target.to_string();
+  j["part"] = to_string(a.part);
+  if (!a.face.empty()) j["face"] = a.face;
+  if (a.part == AnchorPart::Hole) j["hole"] = a.hole;
+  return j;
+}
+
+ojson drawing_json(const Drawing& d) {
+  ojson views = ojson::array();
+  for (const auto& v : d.views) {
+    views.push_back(ojson{{"id", v.id.to_string()},
+                          {"name", v.name},
+                          {"direction", to_string(v.direction)},
+                          {"volumes", ids_json(v.volumes)},
+                          {"boundaries", v.boundaries},
+                          {"contents", v.contents},
+                          {"hidden", v.hidden},
+                          {"surfaces", v.surfaces},
+                          {"x", v.x},
+                          {"y", v.y},
+                          {"scale", v.scale}});
+  }
+  ojson dimensions = ojson::array();
+  for (const auto& m : d.dimensions) {
+    ojson j{{"id", m.id.to_string()},
+            {"view", m.view.to_string()},
+            {"kind", to_string(m.kind)},
+            {"from", anchor_json(m.from)}};
+    if (m.kind != DimensionKind::Diameter) j["to"] = anchor_json(m.to);
+    j["offset"] = m.offset;
+    dimensions.push_back(std::move(j));
+  }
+  return ojson{{"id", d.id.to_string()},     {"name", d.name},
+               {"width", d.width},           {"height", d.height},
+               {"decimals", d.decimals},     {"views", std::move(views)},
+               {"dimensions", std::move(dimensions)}};
+}
+
 ojson document_json(const Document& d) {
   ojson j;
   j["id"] = d.id.to_string();
@@ -242,6 +285,12 @@ ojson document_json(const Document& d) {
   }
   if (!d.active_configuration.is_null()) {
     j["active_configuration"] = d.active_configuration.to_string();
+  }
+  // L6: likewise.
+  if (!d.drawings.empty()) {
+    ojson drawings = ojson::array();
+    for (const auto& dr : d.drawings) drawings.push_back(drawing_json(dr));
+    j["drawings"] = std::move(drawings);
   }
   return j;
 }
@@ -587,6 +636,100 @@ ConnectionSurface read_connection(const json& j, const std::string& where) {
   return c;
 }
 
+// L6.
+template <typename E, std::size_t N>
+E read_enum(const json& j, std::string_view where, const std::array<E, N>& values) {
+  const std::string text = read_string(j, where);
+  for (E e : values) {
+    if (to_string(e) == text) return e;
+  }
+  fail(where, fmt::format("unknown value '{}'", text));
+}
+
+bool read_bool_or(const json& j, std::string_view key, std::string_view where, bool fallback) {
+  const json* m = optional_member(j, key);
+  if (!m) return fallback;
+  if (!m->is_boolean()) fail(fmt::format("{}.{}", where, key), "expected true or false");
+  return m->get<bool>();
+}
+
+double read_number_or(const json& j, std::string_view key, std::string_view where,
+                      double fallback) {
+  const json* m = optional_member(j, key);
+  return m ? read_number(*m, fmt::format("{}.{}", where, key)) : fallback;
+}
+
+Anchor read_anchor(const json& j, const std::string& where) {
+  Anchor a;
+  a.on = read_enum(member(j, "on", where), where + ".on",
+                   std::array{AnchorOn::Origin, AnchorOn::VolumeBoundary, AnchorOn::Surface,
+                              AnchorOn::VolumeContents});
+  if (const json* t = optional_member(j, "target")) a.target = read_id(*t, where + ".target");
+  a.part = read_enum(member(j, "part", where), where + ".part",
+                     std::array{AnchorPart::Min, AnchorPart::Max, AnchorPart::Centre,
+                                AnchorPart::Face, AnchorPart::Hole});
+  a.face = read_optional_string(j, "face", where);
+  if (const json* h = optional_member(j, "hole")) {
+    if (!h->is_number_unsigned()) fail(where + ".hole", "expected a whole number");
+    a.hole = h->get<std::uint32_t>();
+  }
+  return a;
+}
+
+Drawing read_drawing(const json& j, const std::string& where) {
+  Drawing d;
+  d.id = read_own_id(member(j, "id", where), where + ".id");
+  d.name = read_optional_string(j, "name", where);
+  d.width = read_number_or(j, "width", where, d.width);
+  d.height = read_number_or(j, "height", where, d.height);
+  if (const json* m = optional_member(j, "decimals")) {
+    if (!m->is_number_integer()) fail(where + ".decimals", "expected a whole number");
+    d.decimals = m->get<int>();
+  }
+  if (const json* vs = optional_member(j, "views")) {
+    if (!vs->is_array()) fail(where + ".views", "expected an array");
+    for (std::size_t i = 0; i < vs->size(); ++i) {
+      const std::string vw = fmt::format("{}.views[{}]", where, i);
+      const json& v = (*vs)[i];
+      DrawingView view;
+      view.id = read_own_id(member(v, "id", vw), vw + ".id");
+      view.name = read_optional_string(v, "name", vw);
+      view.direction = read_enum(member(v, "direction", vw), vw + ".direction",
+                                 std::array{ViewDirection::Front, ViewDirection::Back,
+                                            ViewDirection::Top, ViewDirection::Bottom,
+                                            ViewDirection::Left, ViewDirection::Right,
+                                            ViewDirection::Isometric});
+      if (optional_member(v, "volumes")) view.volumes = read_ids(v, "volumes", vw);
+      view.boundaries = read_bool_or(v, "boundaries", vw, view.boundaries);
+      view.contents = read_bool_or(v, "contents", vw, view.contents);
+      view.hidden = read_bool_or(v, "hidden", vw, view.hidden);
+      view.surfaces = read_bool_or(v, "surfaces", vw, view.surfaces);
+      view.x = read_number_or(v, "x", vw, view.x);
+      view.y = read_number_or(v, "y", vw, view.y);
+      view.scale = read_number_or(v, "scale", vw, view.scale);
+      d.views.push_back(std::move(view));
+    }
+  }
+  if (const json* ms = optional_member(j, "dimensions")) {
+    if (!ms->is_array()) fail(where + ".dimensions", "expected an array");
+    for (std::size_t i = 0; i < ms->size(); ++i) {
+      const std::string mw = fmt::format("{}.dimensions[{}]", where, i);
+      const json& m = (*ms)[i];
+      DrawingDimension dim;
+      dim.id = read_own_id(member(m, "id", mw), mw + ".id");
+      dim.view = read_id(member(m, "view", mw), mw + ".view");
+      dim.kind = read_enum(member(m, "kind", mw), mw + ".kind",
+                           std::array{DimensionKind::Horizontal, DimensionKind::Vertical,
+                                      DimensionKind::Diameter});
+      dim.from = read_anchor(member(m, "from", mw), mw + ".from");
+      if (const json* t = optional_member(m, "to")) dim.to = read_anchor(*t, mw + ".to");
+      dim.offset = read_number_or(m, "offset", mw, dim.offset);
+      d.dimensions.push_back(std::move(dim));
+    }
+  }
+  return d;
+}
+
 Document read_document(const json& j) {
   const std::string where = "document";
   Document d;
@@ -649,6 +792,11 @@ Document read_document(const json& j) {
   }
   if (const json* a = optional_member(j, "active_configuration")) {
     d.active_configuration = read_id(*a, "document.active_configuration");
+  }
+  if (const json* ds = array("drawings")) {
+    for (std::size_t i = 0; i < ds->size(); ++i) {
+      d.drawings.push_back(read_drawing((*ds)[i], fmt::format("document.drawings[{}]", i)));
+    }
   }
   return d;
 }

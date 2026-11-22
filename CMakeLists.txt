@@ -56,6 +56,7 @@ add_subdirectory(libs/vs_validate)
 add_subdirectory(libs/vs_mesh)
 add_subdirectory(libs/vs_eval)
 add_subdirectory(libs/vs_proc)
+add_subdirectory(libs/vs_draw)
 add_subdirectory(libs/vs_gpu)
 
 # vs_app_core (the app's Qt-free rules) and its tests build everywhere; the

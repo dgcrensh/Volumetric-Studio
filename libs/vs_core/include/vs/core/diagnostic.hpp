@@ -51,6 +51,7 @@ enum class SubjectKind {
   Parameter,  // a volume's parameter (vs_model)
   Link,       // a published output feeding a variable or parameter (vs_model)
   Configuration,  // a named set of driven values (vs_model, L5)
+  Drawing,        // a drawing, or one of its views or dimensions (vs_model, L6)
 };
 
 std::string_view to_string(SubjectKind kind);

@@ -20,6 +20,7 @@ set(VS_LIBRARY_ORDER
   vs_mesh
   vs_eval
   vs_proc
+  vs_draw
   vs_gpu)
 
 set(VS_APPLICATIONS

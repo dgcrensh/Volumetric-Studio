@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "vs/core/box.hpp"
@@ -36,6 +37,13 @@ double length(const Edge& edge);
 // The tight axis-aligned box around the shape's exact geometry (not its
 // control points or tolerances). Empty for an empty shape.
 dbox3 bounding_box(const Shape& shape);
+
+// The least and greatest of dot(direction, p) over the shape's exact
+// geometry, as bounding_box() measures it (L6: a drawing's dimension to
+// a shape's extreme). `direction` needn't be unit length; along a
+// principal axis this is exactly bounding_box()'s range. nullopt for an
+// empty shape or a direction that is zero or not finite.
+std::optional<std::pair<double, double>> extent(const Shape& shape, const dvec3& direction);
 
 struct DistanceResult {
   double distance = 0.0;

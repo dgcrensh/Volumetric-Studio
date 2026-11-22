@@ -438,6 +438,100 @@ struct Configuration {
   friend bool operator==(const Configuration&, const Configuration&) = default;
 };
 
+// --- drawings (L6) ---------------------------------------------------------------------
+
+// Where a view looks from. Front looks along +y (x right, z up), Top down
+// -z (x right, y up), Right along -x (y right, z up); Back, Bottom and Left
+// are their opposites; Isometric looks from (+x, -y, +z) towards the origin.
+enum class ViewDirection { Front, Back, Top, Bottom, Left, Right, Isometric };
+std::string_view to_string(ViewDirection direction);
+std::optional<ViewDirection> view_direction_from_string(std::string_view text);
+
+// One view on a drawing's sheet. It shows `volumes` (empty: every volume;
+// a composite stands for everything inside it, generated children
+// included) as they evaluate.
+struct DrawingView {
+  Id id;
+  std::string name;
+  ViewDirection direction = ViewDirection::Front;
+  std::vector<Id> volumes;
+  bool boundaries = true;  // boundaries, as phantom lines
+  bool contents = true;    // contents, hidden lines removed
+  bool hidden = false;     // contents' hidden edges, dashed
+  bool surfaces = true;    // connection surfaces' outlines
+  // Where the centre of the shown boundaries' box sits on the sheet, mm
+  // from its lower left corner, and sheet mm per model mm.
+  double x = 0.0;
+  double y = 0.0;
+  double scale = 1.0;
+  friend bool operator==(const DrawingView&, const DrawingView&) = default;
+};
+
+// What a dimension measures from (vs_draw resolves it against an
+// evaluation). On the origin, a boundary or a connection surface it is
+// stable: those are built from the layout, so it means the same thing
+// after any regeneration. On contents it is disposable: measured again
+// from every evaluation, and dropped with a warning when it's gone.
+enum class AnchorOn { Origin, VolumeBoundary, Surface, VolumeContents };
+enum class AnchorPart {
+  Min,     // the extreme along the dimension's direction, lowest
+  Max,     // ... highest
+  Centre,  // a box's or patch's centre; a cylindrical patch's axis
+  Face,    // a named face: a boundary's ("+x", "<layout feature id>:end") or
+           // parametric contents' ("<feature id>:<name>")
+  Hole,    // a bolted flange's `hole`-th bolt hole
+};
+std::string_view to_string(AnchorOn on);
+std::string_view to_string(AnchorPart part);
+
+struct Anchor {
+  AnchorOn on = AnchorOn::Origin;
+  Id target;  // the volume (VolumeBoundary, VolumeContents) or connection surface
+  AnchorPart part = AnchorPart::Centre;
+  std::string face;        // Face
+  std::uint32_t hole = 0;  // Hole
+  [[nodiscard]] bool disposable() const { return on == AnchorOn::VolumeContents; }
+  friend bool operator==(const Anchor&, const Anchor&) = default;
+};
+
+// Horizontal and vertical are along the view's x and y axes, between two
+// anchors; a diameter is of one anchor (`from`), a circle facing the
+// viewer. No dimension drives anything: they only report.
+enum class DimensionKind { Horizontal, Vertical, Diameter };
+std::string_view to_string(DimensionKind kind);
+
+struct DrawingDimension {
+  Id id;
+  Id view;
+  DimensionKind kind = DimensionKind::Horizontal;
+  Anchor from;
+  Anchor to;  // unused by a diameter
+  // Sheet mm from the anchors to the dimension line: above them (positive)
+  // or below (negative) for a horizontal one, right or left for a vertical
+  // one, along the leader for a diameter.
+  double offset = 10.0;
+  // Disposable when either anchor is on contents.
+  [[nodiscard]] bool disposable() const {
+    return from.disposable() || (kind != DimensionKind::Diameter && to.disposable());
+  }
+  friend bool operator==(const DrawingDimension&, const DrawingDimension&) = default;
+};
+
+// A sheet of views and dimensions (spec, "Drawings"). Only its definition
+// is saved; what it shows is computed from each evaluation (vs_draw).
+struct Drawing {
+  Id id;
+  std::string name;
+  double width = 420.0;   // sheet mm; A3 landscape by default
+  double height = 297.0;
+  int decimals = 2;       // at most, trailing zeros dropped
+  std::vector<DrawingView> views;
+  std::vector<DrawingDimension> dimensions;
+  [[nodiscard]] const DrawingView* find_view(const Id& id) const;
+  [[nodiscard]] const DrawingDimension* find_dimension(const Id& id) const;
+  friend bool operator==(const Drawing&, const Drawing&) = default;
+};
+
 // --- the document --------------------------------------------------------------------
 
 struct Document {
@@ -452,6 +546,9 @@ struct Document {
   // authored values). Both written to JSON only when set.
   std::vector<Configuration> configurations;
   Id active_configuration;
+  // L6: drawings, written to JSON only when set. Nothing that builds reads
+  // them.
+  std::vector<Drawing> drawings;
 
   [[nodiscard]] const Volume* find_volume(const Id& id) const;
   [[nodiscard]] Volume* find_volume(const Id& id);
@@ -462,6 +559,9 @@ struct Document {
   [[nodiscard]] const Link* find_link(const Id& id) const;
   [[nodiscard]] const Configuration* find_configuration(const Id& id) const;
   [[nodiscard]] const Configuration* find_configuration(std::string_view name) const;
+  [[nodiscard]] const Drawing* find_drawing(const Id& id) const;
+  [[nodiscard]] const Drawing* find_drawing(std::string_view name) const;
+  [[nodiscard]] Drawing* find_drawing(const Id& id);
 
   // The volume whose contents hold `id` (a feature, variable or sketch
   // entity of a parametric volume's tree), if any.
@@ -475,6 +575,8 @@ struct Document {
   [[nodiscard]] SubjectRef output_subject(const PublishedOutputRef& output) const;
   [[nodiscard]] SubjectRef link_subject(const Id& link) const;
   [[nodiscard]] SubjectRef configuration_subject(const Id& configuration) const;
+  // A drawing, or one of its views or dimensions (L6).
+  [[nodiscard]] SubjectRef drawing_subject(const Id& id) const;
 
   friend bool operator==(const Document&, const Document&) = default;
 };

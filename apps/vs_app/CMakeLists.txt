@@ -20,6 +20,8 @@ add_library(vs_app_core STATIC
   src/authoring.hpp
   src/configurations.cpp
   src/configurations.hpp
+  src/drawings.cpp
+  src/drawings.hpp
   src/dimension_drag.cpp
   src/dimension_drag.hpp
   src/exporter.cpp
@@ -56,7 +58,8 @@ target_link_libraries(vs_app_core
     vs::vs_validate
     vs::vs_mesh
     vs::vs_eval
-    vs::vs_proc)
+    vs::vs_proc
+    vs::vs_draw)
 vs_set_compile_options(vs_app_core)
 vs_register_module_target(vs_app_core vs_app)
 
@@ -67,6 +70,7 @@ if(VS_BUILD_TESTS)
     tests/samples.hpp
     tests/test_authoring.cpp
     tests/test_configurations.cpp
+    tests/test_drawings.cpp
     tests/test_export.cpp
     tests/test_history.cpp
     tests/test_interactive.cpp

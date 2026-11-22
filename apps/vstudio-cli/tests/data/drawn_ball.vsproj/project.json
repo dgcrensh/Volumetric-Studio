@@ -1,0 +1,132 @@
+{
+  "format": "vstudio.project",
+  "version": 1,
+  "engine": 1,
+  "document": {
+    "id": "35713e2f4864eeb4d6534528f9c4c9eb",
+    "name": "Drawn ball",
+    "layout": {
+      "format": "vstudio.features",
+      "version": 1,
+      "variables": [],
+      "features": [
+        {
+          "id": "7d9dc1e8341d738a1fbf3907f3026164",
+          "name": "P0 min",
+          "type": "datum_point",
+          "at": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        {
+          "id": "8a81eb340f50386ffda761e071fc6927",
+          "name": "P0 max",
+          "type": "datum_point",
+          "at": {
+            "x": 40.0,
+            "y": 30.0,
+            "z": 20.0
+          }
+        }
+      ]
+    },
+    "volumes": [
+      {
+        "id": "c066912aecdaf750a535d502acd9beb0",
+        "name": "Shelled",
+        "boundary": {
+          "box": {
+            "min": {
+              "feature": "7d9dc1e8341d738a1fbf3907f3026164"
+            },
+            "max": {
+              "feature": "8a81eb340f50386ffda761e071fc6927"
+            }
+          }
+        },
+        "contents": {
+          "kind": "procedural",
+          "graph": "{\n  \"format\": \"vstudio.graph\",\n  \"version\": 1,\n  \"parameters\": [\n    {\n      \"name\": \"wall\",\n      \"value\": 2.0\n    }\n  ],\n  \"nodes\": [\n    {\n      \"id\": \"e9709ef019fe60f63c58565d695b6e0f\",\n      \"type\": \"input.boundary\",\n      \"name\": \"Boundary\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"cb66c61d84a9208946547d88c91f4d39\",\n      \"type\": \"input.parameter\",\n      \"name\": \"Wall\",\n      \"settings\": {\n        \"name\": \"wall\"\n      }\n    },\n    {\n      \"id\": \"acaba5e688ad07102bfb10c756cf23ae\",\n      \"type\": \"field.shell\",\n      \"name\": \"Shell\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"527129fcca7502b47e7427c52e33a538\",\n      \"type\": \"field.sphere\",\n      \"name\": \"Ball\",\n      \"settings\": {\n        \"centre\": [\n          20.0,\n          15.0,\n          10.0\n        ],\n        \"radius\": 6.0\n      }\n    },\n    {\n      \"id\": \"31699a7d175cb353769bc43a0ba8f3f7\",\n      \"type\": \"field.union\",\n      \"name\": \"Join\",\n      \"settings\": {}\n    },\n    {\n      \"id\": \"388cf95a639abb3dbd2b08e33fb36ec3\",\n      \"type\": \"output\",\n      \"name\": \"Output\",\n      \"settings\": {\n        \"cell_size\": 1.0\n      }\n    }\n  ],\n  \"edges\": [\n    {\n      \"from\": {\n        \"node\": \"e9709ef019fe60f63c58565d695b6e0f\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"acaba5e688ad07102bfb10c756cf23ae\",\n        \"port\": \"field\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"cb66c61d84a9208946547d88c91f4d39\",\n        \"port\": \"value\"\n      },\n      \"to\": {\n        \"node\": \"acaba5e688ad07102bfb10c756cf23ae\",\n        \"port\": \"thickness\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"acaba5e688ad07102bfb10c756cf23ae\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"31699a7d175cb353769bc43a0ba8f3f7\",\n        \"port\": \"a\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"527129fcca7502b47e7427c52e33a538\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"31699a7d175cb353769bc43a0ba8f3f7\",\n        \"port\": \"b\"\n      }\n    },\n    {\n      \"from\": {\n        \"node\": \"31699a7d175cb353769bc43a0ba8f3f7\",\n        \"port\": \"field\"\n      },\n      \"to\": {\n        \"node\": \"388cf95a639abb3dbd2b08e33fb36ec3\",\n        \"port\": \"contents\"\n      }\n    }\n  ]\n}"
+        },
+        "parameters": [
+          {
+            "id": "2b4d195c5b0f82a28348948b506204ad",
+            "name": "wall",
+            "value": 2.0
+          }
+        ],
+        "outputs": [
+          {
+            "id": "57b4f6b06847f07eea9613783394f403",
+            "name": "volume",
+            "quantity": "volume"
+          }
+        ]
+      }
+    ],
+    "connections": [],
+    "keep_outs": [],
+    "links": [],
+    "drawings": [
+      {
+        "id": "0d1a0000000000000000000000000000",
+        "name": "Sheet 1",
+        "width": 297.0,
+        "height": 210.0,
+        "decimals": 2,
+        "views": [
+          {
+            "id": "0d1a0000000000000000000000000001",
+            "name": "Front",
+            "direction": "front",
+            "volumes": [],
+            "boundaries": true,
+            "contents": true,
+            "hidden": true,
+            "surfaces": true,
+            "x": 150.0,
+            "y": 150.0,
+            "scale": 2.0
+          }
+        ],
+        "dimensions": [
+          {
+            "id": "0d1a0000000000000000000000000002",
+            "view": "0d1a0000000000000000000000000001",
+            "kind": "horizontal",
+            "from": {
+              "on": "boundary",
+              "target": "c066912aecdaf750a535d502acd9beb0",
+              "part": "min"
+            },
+            "to": {
+              "on": "boundary",
+              "target": "c066912aecdaf750a535d502acd9beb0",
+              "part": "max"
+            },
+            "offset": -10.0
+          },
+          {
+            "id": "0d1a0000000000000000000000000003",
+            "view": "0d1a0000000000000000000000000001",
+            "kind": "horizontal",
+            "from": {
+              "on": "contents",
+              "target": "c066912aecdaf750a535d502acd9beb0",
+              "part": "min"
+            },
+            "to": {
+              "on": "contents",
+              "target": "c066912aecdaf750a535d502acd9beb0",
+              "part": "max"
+            },
+            "offset": 10.0
+          }
+        ]
+      }
+    ]
+  },
+  "blobs": []
+}

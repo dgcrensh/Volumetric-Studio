@@ -7,6 +7,7 @@
 
 #include "bench_commands.hpp"
 #include "config_commands.hpp"
+#include "draw_commands.hpp"
 #include "eval_commands.hpp"
 #include "proc_commands.hpp"
 #include "feature_commands.hpp"
@@ -72,6 +73,13 @@ Commands:
                     Write the configurations as a CSV design table (--all: a column for
                     every variable and parameter that can be driven), or make a table
                     the project's configurations and save it
+  drawing <project.vsproj> [<name>] [--standard [<name>]] [--save]
+          [--svg <out>] [--pdf <out>] [--dxf <out>] [--config <name>] [--threads N]
+                    Evaluate a project and draw one of its drawings (or a standard one:
+                    front, top, right and isometric views with the overall sizes);
+                    print each dimension, stable or disposable (on generated contents),
+                    and write the sheet as SVG, PDF or DXF. --save keeps a standard
+                    drawing in the project. Exits 1 on errors
   nodes             List the procedural node library: types, ports and properties
   graph <graph.json>
                     Check a procedural graph (types, loops, settings) and print its
@@ -233,6 +241,9 @@ int main(int argc, char** argv) {
   }
   if (command == "design-table") {
     return vs::cli::run_design_table(rest, std::cout, std::cerr);
+  }
+  if (command == "drawing") {
+    return vs::cli::run_drawing(rest, std::cout, std::cerr);
   }
   if (command == "rebuild") {
     return vs::cli::run_rebuild(rest, std::cout, std::cerr);
