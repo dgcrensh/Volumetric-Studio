@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "vs/model/check.hpp"
+#include "vs/model/configuration.hpp"
 
 namespace vs::app {
 
@@ -85,6 +86,8 @@ std::shared_ptr<const model::Project> History::attempt(const Command& command,
       return nullptr;
     }
   }
+  // L5: values whose target the change removed go with it, as links do.
+  if (!next->document.configurations.empty()) model::prune_configurations(next->document);
   core::Diagnostics after = model::check(next->document);
   core::Diagnostics added = new_errors(current_check(), after);
   if (!added.empty()) {

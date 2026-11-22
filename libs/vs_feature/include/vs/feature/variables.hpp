@@ -92,6 +92,10 @@ class VariableTable {
 
   // Adds without any checks (used by deserialisation; call check() after).
   void add_unchecked(Variable variable) { variables_.push_back(std::move(variable)); }
+  // Replaces an expression without any checks (vs_model's configurations,
+  // L5, which set several at once and check() the result). False when no
+  // variable has the id.
+  bool set_expression_unchecked(const Id& id, std::string expression);
 
   friend bool operator==(const VariableTable&, const VariableTable&) = default;
 

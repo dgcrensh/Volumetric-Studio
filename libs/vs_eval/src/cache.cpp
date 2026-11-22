@@ -443,7 +443,9 @@ ContentsPtr read_entry(const Fetch& fetch, const Hash256& key) {
       for (const auto& js : jd.at("subjects")) {
         core::SubjectRef s;
         const auto kind = js.at("kind").get<std::int64_t>();
-        if (kind < 0 || kind > static_cast<std::int64_t>(core::SubjectKind::Link)) return nullptr;
+        if (kind < 0 || kind > static_cast<std::int64_t>(core::SubjectKind::Configuration)) {
+          return nullptr;
+        }
         s.kind = static_cast<core::SubjectKind>(kind);
         s.id = core::Id::parse(js.at("id").get<std::string>()).value_or(core::Id::null());
         s.label = js.at("label").get<std::string>();

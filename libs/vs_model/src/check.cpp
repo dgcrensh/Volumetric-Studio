@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include "vs/feature/expression.hpp"
+#include "vs/model/configuration.hpp"
 #include "vs/model/dependency.hpp"
 #include "vs/model/hierarchy.hpp"
 #include "vs/model/index.hpp"
@@ -44,8 +45,10 @@ class Checker {
     structure();
     references();
     const DependencyGraph graph = DependencyGraph::build(ix_);
-    out_.append(graph.check());
+    const Diagnostics loops = graph.check();
+    out_.append(loops);
     generated_links(graph);
+    configurations(loops.has_errors());
     return std::move(out_);
   }
 
@@ -114,6 +117,7 @@ class Checker {
     for (const auto& c : doc_.connections) note(c.id, ix_.connection_subject(c.id));
     for (const auto& k : doc_.keep_outs) note(k.id, ix_.keep_out_subject(k.id));
     for (const auto& l : doc_.links) note(l.id, doc_.link_subject(l.id));
+    for (const auto& c : doc_.configurations) note(c.id, doc_.configuration_subject(c.id));
   }
 
   // A composite's delegations (L3): each passes a surface joining the
@@ -204,6 +208,137 @@ class Checker {
                           "before links carry values; drive it with a parameter instead",
                           v.name),
               {ix_.volume_subject(v.id)});
+      }
+    }
+  }
+
+  // Configurations (L5, configuration.hpp): each must build. `base_loops`:
+  // the authored document already has a dependency loop (reported once).
+  void configurations(bool base_loops) {
+    if (!doc_.active_configuration.is_null() &&
+        doc_.find_configuration(doc_.active_configuration) == nullptr) {
+      error("model.configuration.active",
+            {SubjectKind::Configuration, doc_.active_configuration, "active configuration"},
+            "the active configuration no longer exists; choose another, or the authored values");
+    }
+    if (doc_.configurations.empty()) return;
+    std::unordered_map<Id, Drivable> targets;
+    for (auto& d : drivable_targets(doc_)) targets.emplace(d.target, std::move(d));
+    std::unordered_map<Id, Id> linked;  // target -> link
+    for (const auto& l : doc_.links) linked.emplace(l.target, l.id);
+    std::set<std::string> names;
+    // The variable tables' own findings as authored, so that only what a
+    // configuration adds is reported.
+    std::optional<std::set<std::string>> base_root;
+    std::unordered_map<Id, std::set<std::string>> base_composite;
+    const auto messages = [](const Diagnostics& ds) {
+      std::set<std::string> out;
+      for (const auto& d : ds) {
+        if (d.is_error()) out.insert(d.message);
+      }
+      return out;
+    };
+
+    for (const auto& c : doc_.configurations) {
+      const SubjectRef self = doc_.configuration_subject(c.id);
+      if (c.name.empty()) {
+        error("model.configuration.name", self, "it has no name; name it");
+      } else if (!names.insert(c.name).second) {
+        error("model.configuration.name", self,
+              "another configuration has the same name; configurations need distinct names");
+      }
+      std::set<Id> seen;
+      bool expressions = false;
+      bool root_variables = false;
+      std::set<Id> composites;  // whose layout variables it drives
+      for (const auto& value : c.values) {
+        const auto it = targets.find(value.target);
+        if (it == targets.end()) {
+          error("model.configuration.target", self,
+                "one of its values drives something that isn't a layout variable or a volume's "
+                "parameter (removed, or inside a volume's contents); remove the value");
+          continue;
+        }
+        const Drivable& d = it->second;
+        const SubjectRef target{d.kind == DrivableKind::Parameter ? SubjectKind::Parameter
+                                                                  : SubjectKind::Variable,
+                                d.target, d.label};
+        if (!seen.insert(value.target).second) {
+          error("model.configuration.target", self,
+                fmt::format("it drives '{}' twice; keep one value", d.label), {target});
+          continue;
+        }
+        if (linked.contains(value.target)) {
+          out_.add(Diagnostic::warning(
+              "model.configuration.linked",
+              fmt::format("'{}': a link also drives '{}'; the link's value replaces this one "
+                          "once its source has generated",
+                          self.label, d.label),
+              {self, target, doc_.link_subject(linked.at(value.target))}));
+        }
+        if (d.kind == DrivableKind::Variable) root_variables = true;
+        if (d.kind == DrivableKind::CompositeVariable) composites.insert(d.owner);
+        if (plain_number(value.expression)) continue;
+        if (value.expression.find_first_not_of(" \t") == std::string::npos) {
+          error("model.configuration.expression", self,
+                fmt::format("'{}' has an empty value; remove it to keep the authored value",
+                            d.label),
+                {target});
+          continue;
+        }
+        auto parsed = feature::Expression::parse(value.expression);
+        if (!parsed) {
+          error("model.configuration.expression", self,
+                fmt::format("'{}' = '{}' doesn't parse: {}", d.label, value.expression,
+                            parsed.error().message),
+                {target});
+          continue;
+        }
+        expressions = true;
+        if (d.kind != DrivableKind::Parameter) continue;  // the tables' check, below
+        const Volume* v = ix_.volume(d.owner);
+        for (const auto& name : parsed->references()) {
+          for (const auto& problem :
+               check_variable_name(ix_, Scope{v != nullptr ? v->parent : Id{}}, name, self)) {
+            if (!problem.is_error()) continue;
+            error("model.configuration.expression", self,
+                  fmt::format("'{}' = '{}': {}", d.label, value.expression, problem.message),
+                  {target});
+          }
+        }
+      }
+      if (!root_variables && composites.empty() && !expressions) continue;
+
+      const Document applied = apply_configuration(doc_, c.id);
+      const auto report_tables = [&](const Diagnostics& now, const std::set<std::string>& before) {
+        for (const auto& d : now) {
+          if (!d.is_error() || before.contains(d.message)) continue;
+          std::vector<SubjectRef> more(d.subjects.begin(), d.subjects.end());
+          error("model.configuration.expression", self, fmt::format("{} ({})", d.message, d.code),
+                std::move(more));
+        }
+      };
+      if (root_variables) {
+        if (!base_root) base_root = messages(doc_.layout.variables().check());
+        report_tables(applied.layout.variables().check(), *base_root);
+      }
+      for (const Id& id : composites) {
+        const auto* before = std::get_if<CompositeContents>(&ix_.volume(id)->contents);
+        const Volume* after = applied.find_volume(id);
+        if (before == nullptr || after == nullptr || after->tree() == nullptr) continue;
+        if (!base_composite.contains(id)) {
+          base_composite.emplace(id, messages(before->layout.variables().check()));
+        }
+        report_tables(after->tree()->variables().check(), base_composite.at(id));
+      }
+      if (expressions && !base_loops) {
+        const Diagnostics loops = DependencyGraph::build(applied).check();
+        for (const auto& d : loops) {
+          if (!d.is_error()) continue;
+          error("model.configuration.loop", self,
+                fmt::format("its values close a dependency loop: {}", d.message), d.subjects);
+          break;
+        }
       }
     }
   }

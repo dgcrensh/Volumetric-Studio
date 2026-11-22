@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "bench_commands.hpp"
+#include "config_commands.hpp"
 #include "eval_commands.hpp"
 #include "proc_commands.hpp"
 #include "feature_commands.hpp"
@@ -61,6 +62,16 @@ Commands:
                     ones as mesh bodies, or their boundary). --cache uses the project's
                     cache/ (a zip project's is read, then saved back into the zip).
                     Exits 1 on errors
+  configs <project.vsproj> [--build] [--threads N] [--activate <name>|-]
+                    List a project's configurations and their values; --build evaluates
+                    each (sharing one cache) and prints statuses and published outputs;
+                    --activate makes one the active configuration ("-": the authored
+                    values) and saves the project. Exits 1 on errors
+  design-table <project.vsproj> [--all] [--out <table.csv>]
+  design-table <project.vsproj> --import <table.csv> [--out <project>]
+                    Write the configurations as a CSV design table (--all: a column for
+                    every variable and parameter that can be driven), or make a table
+                    the project's configurations and save it
   nodes             List the procedural node library: types, ports and properties
   graph <graph.json>
                     Check a procedural graph (types, loops, settings) and print its
@@ -216,6 +227,12 @@ int main(int argc, char** argv) {
   }
   if (command == "import") {
     return vs::cli::run_import(rest, std::cout, std::cerr);
+  }
+  if (command == "configs") {
+    return vs::cli::run_configs(rest, std::cout, std::cerr);
+  }
+  if (command == "design-table") {
+    return vs::cli::run_design_table(rest, std::cout, std::cerr);
   }
   if (command == "rebuild") {
     return vs::cli::run_rebuild(rest, std::cout, std::cerr);

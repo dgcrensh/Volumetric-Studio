@@ -376,6 +376,21 @@ so they are registered. A new library must also be added to
   generating composite's inputs. Tests: `tests/rack.*` (Base and a Rack
   with a Cell template and a Seat), shared by the suites.
 
+- **Configurations** (L5, decision 0037, `configuration.hpp`,
+  `design_table.hpp`): `Document::configurations` give values
+  (expressions) to the numbers a link may drive (root and composite
+  layout variables, volume parameters; labels `width`,
+  `Housing/width`, `Base.thickness`), and `active_configuration` is
+  saved; both are written to JSON only when set. `configured(doc)` is
+  the document as it builds (active values written in, configurations
+  stripped): `build()`, `validate()`, the engine and the CLI build it;
+  `build_layout()` / `build_contents()` build what they're given.
+  `check()` refuses any configuration that wouldn't build
+  (`model.configuration.*`), so switching never fails; the app's
+  history prunes values whose target an edit removed
+  (`prune_configurations()`). Design tables are the configurations as
+  CSV (rows by name keep their ids; importing replaces them all).
+
 ## vs_validate essentials
 
 - **Layout checks** (`layout.hpp`): `validate_layout(doc, build, settings)`
@@ -553,6 +568,10 @@ so they are registered. A new library must also be added to
   `WorkerPriority::Low` (`EngineOptions::worker_priority`) runs workers
   below normal priority; the app does, so generation never starves the UI
   (H7, decision 0036). It changes no result.
+- **Configurations** (L5): `evaluate()` checks the authored document,
+  then evaluates `model::configured()` (`Evaluation::configuration`,
+  `configuration_name`); keys see values only, so switching back to a
+  configuration regenerates nothing.
 - **Generators** (`generator.hpp`): a library above vs_eval plugs a
   content kind in with `Engine::set_generator(kind, g)`: `prepare()` on
   the calling thread, then a job on the pool that fills
@@ -571,7 +590,9 @@ so they are registered. A new library must also be added to
   boxes; a chain A → B by a link, plus C) and reuse the bracket.
   `vstudio-cli rebuild <project> [--threads N] [--check-determinism]
   [--weld] [--stl out] [--3mf out [--per-volume]] [--cache]
-  [--set vol.param=value] [--twice]`; `bench-edit [--volumes N]
+  [--set vol.param=value] [--config name] [--twice]`; `configs <project>
+  [--build] [--activate name|-]` and `design-table <project> [--all]
+  [--out t.csv] | --import t.csv` (L5); `bench-edit [--volumes N]
   [--no-reuse] [--project p]` times edits outside generation (0029).
 
 ## vs_proc essentials
@@ -743,7 +764,7 @@ so they are registered. A new library must also be added to
 - **Build** with the `windows-msvc-app` preset only (Qt 6 from the vcpkg
   `app` feature; its first build compiles qtbase twice, for the host tools
   and the target). CI doesn't build the app. The Qt-free files
-  (`authoring`, `dimension_drag`, `exporter`, `graph_edit`, `guidance`,
+  (`authoring`, `configurations`, `dimension_drag`, `exporter`, `graph_edit`, `guidance`,
   `history`, `node_preview`, `outline`, `picking`, `reference_choices`,
   `scene`, `ship`, `sketch_editor`) are `vs_app_core`, built on every
   platform and tested by `vs_app_core_tests` on every CI job (plan H1);
@@ -846,6 +867,11 @@ so they are registered. A new library must also be added to
   Ctrl+Y, Esc and F. GDI screen grabs can't see the OpenGL viewport on the
   desktop's NVIDIA driver, so `[gui]` tests compare off-screen renders
   and say when a grab saw nothing.
+- **Configurations** (L5, decision 0037): `configurations.*` (no Qt)
+  holds the commands (add, copy, rename, remove, set a value, show one,
+  set the design table) and what the toolbar, the design table dialog
+  and the inspector show (`configuration_choices()`, `active_value()`,
+  `table_for_editing()`, `addable_columns()`).
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

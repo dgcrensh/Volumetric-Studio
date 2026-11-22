@@ -1,8 +1,10 @@
 #include "model_commands.hpp"
 #include "files.hpp"
+#include "config_commands.hpp"
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -115,16 +117,20 @@ std::string value_text(const OutputValue& v) {
 
 int run_info(std::span<const std::string_view> args, std::ostream& out, std::ostream& err) {
   bool do_build = false;
+  std::optional<std::string_view> config;
   std::vector<std::string_view> paths;
-  for (const auto a : args) {
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const std::string_view a = args[i];
     if (a == "--build") {
       do_build = true;
+    } else if (a == "--config" && i + 1 < args.size()) {
+      config = args[++i];
     } else {
       paths.push_back(a);
     }
   }
   if (paths.size() != 1) {
-    err << "usage: vstudio-cli info <project.vsproj> [--build]\n";
+    err << "usage: vstudio-cli info <project.vsproj> [--build] [--config <name>]\n";
     return 2;
   }
   const auto path = to_path(paths[0]);
@@ -133,6 +139,7 @@ int run_info(std::span<const std::string_view> args, std::ostream& out, std::ost
     err << loaded.error().to_string() << "\n";
     return 1;
   }
+  if (config && !use_configuration(*loaded, *config, err)) return 1;
   const Project& project = *loaded;
   const Document& doc = project.document;
 
@@ -202,6 +209,15 @@ int run_info(std::span<const std::string_view> args, std::ostream& out, std::ost
   out << fmt::format("links ({})\n", doc.links.size());
   for (const auto& l : doc.links) out << "  " << doc.link_subject(l.id).label << "\n";
 
+  if (!doc.configurations.empty()) {
+    out << fmt::format("configurations ({})\n", doc.configurations.size());
+    for (const auto& c : doc.configurations) {
+      out << fmt::format("  {:<14} {} value{}{}\n", c.name, c.values.size(),
+                         c.values.size() == 1 ? "" : "s",
+                         c.id == doc.active_configuration ? ", active" : "");
+    }
+  }
+
   // Dependencies of everything but the layout's own features and variables,
   // whose order the feature tree already shows.
   const auto graph = DependencyGraph::build(doc);
@@ -216,6 +232,7 @@ int run_info(std::span<const std::string_view> args, std::ostream& out, std::ost
   }
 
   if (!do_build) return 0;
+  // build() builds the active configuration (L5).
   const auto result = build(doc, core::ProductSettings::defaults(), &project.blobs);
   out << "build\n";
   for (std::size_t i = 0; i < doc.volumes.size(); ++i) {

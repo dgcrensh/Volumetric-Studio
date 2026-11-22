@@ -31,6 +31,7 @@ std::string_view to_string(SubjectKind kind) {
     case SubjectKind::KeepOut: return "KeepOut";
     case SubjectKind::Parameter: return "Parameter";
     case SubjectKind::Link: return "Link";
+    case SubjectKind::Configuration: return "Configuration";
   }
   return "Unknown";
 }

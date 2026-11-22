@@ -18,6 +18,8 @@
 add_library(vs_app_core STATIC
   src/authoring.cpp
   src/authoring.hpp
+  src/configurations.cpp
+  src/configurations.hpp
   src/dimension_drag.cpp
   src/dimension_drag.hpp
   src/exporter.cpp
@@ -64,6 +66,7 @@ if(VS_BUILD_TESTS)
     tests/samples.cpp
     tests/samples.hpp
     tests/test_authoring.cpp
+    tests/test_configurations.cpp
     tests/test_export.cpp
     tests/test_history.cpp
     tests/test_interactive.cpp

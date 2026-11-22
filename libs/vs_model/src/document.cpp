@@ -189,6 +189,23 @@ ConnectionSurface* Document::find_connection(const Id& sid) {
 const KeepOut* Document::find_keep_out(const Id& kid) const { return find_by_id(keep_outs, kid); }
 const Link* Document::find_link(const Id& lid) const { return find_by_id(links, lid); }
 
+const Configuration* Document::find_configuration(const Id& cid) const {
+  if (cid.is_null()) return nullptr;
+  return find_by_id(configurations, cid);
+}
+
+const Configuration* Document::find_configuration(std::string_view cname) const {
+  const auto it = std::find_if(configurations.begin(), configurations.end(),
+                               [&](const Configuration& c) { return c.name == cname; });
+  return it == configurations.end() ? nullptr : &*it;
+}
+
+const ConfigurationValue* Configuration::find(const Id& target) const {
+  const auto it = std::find_if(values.begin(), values.end(),
+                               [&](const ConfigurationValue& v) { return v.target == target; });
+  return it == values.end() ? nullptr : &*it;
+}
+
 const Volume* Document::contents_owner(const Id& item) const {
   if (item.is_null()) return nullptr;
   for (const auto& v : volumes) {
@@ -238,6 +255,13 @@ SubjectRef Document::link_subject(const Id& lid) const {
   }
   return {SubjectKind::Link, lid,
           fmt::format("{} \xE2\x86\x92 {}", output_subject(l->source).label, target)};
+}
+
+SubjectRef Document::configuration_subject(const Id& cid) const {
+  const Configuration* c = find_configuration(cid);
+  if (!c) return {SubjectKind::Configuration, cid, "(missing configuration)"};
+  return {SubjectKind::Configuration, cid,
+          fmt::format("configuration '{}'", c->name.empty() ? std::string("(unnamed)") : c->name)};
 }
 
 Document make_document(std::string name) {
