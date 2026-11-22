@@ -90,5 +90,6 @@ is one source of truth and no sync.
 - `SubjectKind::Configuration` is appended to vs_core's subject kinds;
   the disk cache's reader accepts it.
 - The Qt part (a configuration combo box, the design table dialog, the
-  inspector's marks) is built on the Windows desktop; everything it calls
+  inspector's marks) is built on the Windows desktop (`vs_app_ui`,
+  `design_table_dialog.*`, `MainWindow`); everything it calls
   is in `vs_app_core` (`configurations.hpp`) and tested on every CI job.

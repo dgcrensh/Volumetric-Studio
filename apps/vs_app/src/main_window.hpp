@@ -52,6 +52,11 @@
 //     inline explanation with the right action (guidance.hpp).
 //   - Pick in view: feature dialogs' Pick buttons let the viewport pick a
 //     face or edge (picking.hpp), within edit-in-context's rules.
+//
+// Configurations (L5): the Configuration box on the toolbar shows the
+// authored values or one configuration; Model > Design Table… edits them
+// all as a grid (design_table_dialog.hpp); the inspector marks a parameter
+// or variable the shown configuration drives (configurations.hpp).
 
 #include <QMainWindow>
 #include <QKeySequence>
@@ -78,6 +83,7 @@
 
 class QAction;
 class QCloseEvent;
+class QComboBox;
 class QDockWidget;
 class QLabel;
 class QMenu;
@@ -93,6 +99,7 @@ class QTreeWidgetItem;
 namespace vs::app {
 
 class ConnectionDialog;
+class DesignTableDialog;
 class FeatureDialog;
 class KeepOutDialog;
 class LinkDialog;
@@ -270,6 +277,17 @@ class MainWindow : public QMainWindow {
   void act_on_guidance();
   void dismiss_guidance();
 
+  // --- configurations and design tables (L5, decision 0037)
+  // The toolbar's Configuration box: "Authored values", then each
+  // configuration of the project; choosing one shows it (one undoable
+  // step) and re-evaluates. It follows the history (edits, undo, redo).
+  [[nodiscard]] QComboBox& configuration_box() { return *configuration_box_; }
+  // Shows `configuration` (null: the authored values), as the box does.
+  core::Diagnostics show_configuration(const Id& configuration);
+  // Model > Design Table…: every configuration as a grid; OK applies it as
+  // one undoable step (set_design_table()).
+  DesignTableDialog* open_design_table();
+
   // Pick in view: the last pick a feature dialog was given.
   [[nodiscard]] const std::optional<PickResolution>& last_pick() const { return last_pick_; }
 
@@ -406,6 +424,11 @@ class MainWindow : public QMainWindow {
   std::optional<Guidance> guidance_;
   Id dialog_tree_;  // the tree the open feature dialog edits
   std::optional<PickResolution> last_pick_;
+
+  // L5.
+  void refresh_configurations();
+  QToolBar* configuration_bar_ = nullptr;
+  QComboBox* configuration_box_ = nullptr;
 
   SketchMode* sketch_mode_ = nullptr;
   struct SketchSession {

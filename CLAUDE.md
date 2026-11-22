@@ -871,7 +871,15 @@ so they are registered. A new library must also be added to
   holds the commands (add, copy, rename, remove, set a value, show one,
   set the design table) and what the toolbar, the design table dialog
   and the inspector show (`configuration_choices()`, `active_value()`,
-  `table_for_editing()`, `addable_columns()`).
+  `table_for_editing()`, `addable_columns()`). In the window: the
+  toolbar's Configuration box (`MainWindow::configuration_box()`,
+  `show_configuration()`; one undo step, follows the history), Model >
+  Design Table… (`design_table_dialog.*`, `open_design_table()`: a grid
+  of configurations by driven numbers, add / copy / remove rows, add
+  columns, CSV import and export; OK is one `set_design_table()` step, a
+  refused table keeps the dialog open with the reason), and the
+  inspector and Variables panel showing a driven number as `<value>
+  (configuration: <expr>)`. Tests: `test_configurations_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

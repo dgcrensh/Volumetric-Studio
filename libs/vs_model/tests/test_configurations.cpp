@@ -4,6 +4,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <stdexcept>
+
 #include "bracket.hpp"
 #include "nested.hpp"
 #include "rack.hpp"
@@ -33,9 +35,8 @@ const VolumeParameter& parameter(const Document& d, const Id& id) {
   for (const auto& v : d.volumes) {
     if (const auto* p = v.find_parameter(id)) return *p;
   }
-  FAIL("no parameter");
-  static VolumeParameter none;
-  return none;
+  // Not FAIL(): MSVC flags the code after it as unreachable (C4702).
+  throw std::runtime_error("no parameter");
 }
 
 // Nested with a variable in Housing's layout (Housing/inset).

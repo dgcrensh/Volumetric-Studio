@@ -3,6 +3,10 @@
 Nov 22, 2026 · follows H (hardening) · decision record:
 `docs/decisions/0037-configurations-and-design-tables.md`
 
+Status: done. Every part is built: the document, design tables, the
+engine, the CLI, the app core, and on the Windows desktop the Qt
+toolbar, design table dialog and inspector marks.
+
 ## Goal
 
 One project, several variants. The spec's "Later" list has
@@ -178,3 +182,5 @@ names the configuration evaluated.
    or variable prunes values; the inspector's overrides.
 8. App (Windows, `[gui]` where it renders): the combo box switches the
    shown configuration; the design table dialog edits and imports.
+   Built: `apps/vs_app/tests/test_configurations_ui.cpp` (the dialog on
+   its own, then the box and Model > Design Table… in the window, `[gui]`).
