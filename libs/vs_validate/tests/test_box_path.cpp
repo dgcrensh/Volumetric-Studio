@@ -5,8 +5,11 @@
 // the tolerance; an edge or corner touch may be placed anywhere along where
 // the boxes meet.
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <thread>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -343,4 +346,124 @@ TEST_CASE("The box path and OCCT agree on the shared models", "[validate][box]")
     CHECK(fast.overlaps.size() == occt.overlaps.size());
     CHECK(fast.contacts.size() == occt.contacts.size());
   }
+}
+
+namespace {
+
+// Everything a report says, numbers to the last bit.
+std::string exact(const vs::validate::LayoutReport& r) {
+  const auto g = [](double v) {
+    char t[32];
+    std::snprintf(t, sizeof t, "%.17g", v);
+    return std::string(t);
+  };
+  const auto gb = [&](const dbox3& b) {
+    return g(b.min.x) + "," + g(b.min.y) + "," + g(b.min.z) + "," + g(b.max.x) + "," +
+           g(b.max.y) + "," + g(b.max.z);
+  };
+  std::string out = std::to_string(r.pairs_tested) + "\n";
+  for (const auto& d : r.diagnostics) {
+    out += d.code + " | " + d.message;
+    for (const auto& s : d.subjects) out += " | " + s.id.to_string() + " " + s.label;
+    out += "\n";
+  }
+  for (const auto& o : r.overlaps) {
+    out += o.a.to_string() + o.b.to_string() + gb(o.region) + g(o.volume) + g(o.depth) + "\n";
+  }
+  for (const auto& c : r.contacts) {
+    out += c.a.to_string() + c.b.to_string() + c.face_a + "/" + c.face_b + g(c.area) +
+           gb(c.region) + "\n";
+  }
+  return out;
+}
+
+// A ParallelFor on four plain threads, taking tasks in turn.
+void four_threads(std::size_t n, const std::function<void(std::size_t)>& task) {
+  std::atomic<std::size_t> next{0};
+  std::vector<std::thread> pool;
+  for (int t = 0; t < 4; ++t) {
+    pool.emplace_back([&] {
+      for (std::size_t k = next++; k < n; k = next++) task(k);
+    });
+  }
+  for (auto& t : pool) t.join();
+}
+
+}  // namespace
+
+// Decision 0034: a rectangular patch within the tolerance of a side of a
+// box isn't sampled, since no point of it can lie deeper inside than the
+// tolerance. Sampling it anyway must give the same report, to the bit, on
+// one thread or four. Patches are nudged off their side by amounts around
+// the tolerance and the sampling slack, and grids of 900 boxes (several
+// chunks of every parallel step) jitter by the same amounts.
+TEST_CASE("Unsampled patches on box sides change nothing", "[validate][box]") {
+  const auto settings = vs::core::ProductSettings::defaults();
+  const vs::validate::ParallelFor parallel = four_threads;
+  int compared = 0, off_boundary = 0;
+  const auto compare = [&](const Document& doc) {
+    const DocumentBuild build = build_layout(doc, settings);
+    const auto skipped = vs::validate::validate_layout(doc, build, settings);
+    const auto sampled = vs::validate::validate_layout(doc, build, settings, {}, {true, true});
+    const auto skipped4 = vs::validate::validate_layout(doc, build, settings, parallel);
+    const auto sampled4 =
+        vs::validate::validate_layout(doc, build, settings, parallel, {true, true});
+    const std::string expected = exact(sampled);
+    CHECK(exact(skipped) == expected);
+    CHECK(exact(skipped4) == expected);
+    CHECK(exact(sampled4) == expected);
+    off_boundary += static_cast<int>(skipped.diagnostics.with_code("validate.connection.off_boundary").size());
+    ++compared;
+  };
+
+  static const std::vector<double> fine{0.0,     0.0,      5e-7,      -5e-7, 9.99e-7, -9.99e-7,
+                                        1e-6,    -1e-6,    1.0005e-6, -1.0005e-6, 1.001e-6,
+                                        -1.001e-6, 2e-6,   -2e-6,     1e-5,  0.1,     -0.3};
+  Random rnd{0x0034};
+  for (int trial = 0; trial < 200; ++trial) {
+    INFO("trial " << trial);
+    const double width = rnd.pick(std::vector<double>{3.0, 5.0, 8.0});
+    std::vector<dbox3> boxes{dbox3::from_min_max({40, 40, 3}, {40 + width, 47, 6.5})};
+    const std::size_t count = 2 + rnd.next() % 3;
+    while (boxes.size() < count) boxes.push_back(neighbour(rnd.pick(boxes), rnd));
+    GeneratedSurface s = surface_on(boxes, rnd);
+    if (rnd.next() % 2 == 0) {
+      const bool high = rnd.next() % 2 == 0;
+      s.offset = (high ? at(boxes[0].max, s.axis) : at(boxes[0].min, s.axis)) + rnd.pick(fine);
+    }
+    compare(rack_of(boxes, {s}));
+  }
+
+  static const std::vector<double> jitter{0.0, 0.0, 0.0, 5e-7, -5e-7, 1e-5, -1e-5, 0.01, -0.01};
+  for (int grid = 0; grid < 2; ++grid) {
+    std::vector<dbox3> boxes;
+    for (int y = 0; y < 30; ++y) {
+      for (int x = 0; x < 30; ++x) {
+        const double x0 = 3.0 * x + rnd.pick(jitter);
+        const double y0 = 3.0 * y + rnd.pick(jitter);
+        boxes.push_back(dbox3::from_min_max(
+            {x0, y0, 1}, {x0 + 3 + rnd.pick(jitter), y0 + 3 + rnd.pick(jitter), 5}));
+      }
+    }
+    std::vector<GeneratedSurface> surfaces;
+    for (std::size_t k = 0; k + 1 < boxes.size(); k += 7) {
+      GeneratedSurface s;
+      s.key = Id::derive(Id{}, "join " + std::to_string(k));
+      s.name = "Join";
+      s.a = k;
+      s.b = k + 1;
+      s.axis = 0;
+      s.offset = boxes[k].max.x + rnd.pick(jitter);
+      s.lo = {boxes[k].min.y + 0.5, 1.5};
+      s.hi = {boxes[k].max.y - 0.5, 4.5};
+      if (k % 3 == 0) {
+        s.type = ConnectionType::Clearance;
+        s.gap = 0.2;
+      }
+      surfaces.push_back(s);
+    }
+    compare(rack_of(boxes, surfaces));
+  }
+  CHECK(compared == 202);
+  CHECK(off_boundary > 100);
 }

@@ -100,8 +100,14 @@ struct LayoutReport {
 // tolerance of OCCT's, and an edge touch reported at the middle of where
 // the boxes meet. `box_fast_path = false` sends every pair through OCCT
 // (tests compare the two).
+//
+// A rectangular patch lying within the tolerance of a side of a box
+// boundary can't reach inside it farther than the tolerance, so it isn't
+// sampled for that (decision 0034); `sample_every_patch = true` samples it
+// anyway, which gives the same report (tests compare the two).
 struct LayoutOptions {
   bool box_fast_path = true;
+  bool sample_every_patch = false;
 };
 
 // The checks above. `build` must come from model::build(document, ...).
