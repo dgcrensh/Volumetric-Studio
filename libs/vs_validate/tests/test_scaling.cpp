@@ -1,5 +1,5 @@
 // Scaling of the layout half of an evaluation with the number of generated
-// children (decision 0029): a Rack of n x n cells expanded by hand, as a
+// children (decision 0031): a Rack of n x n cells expanded by hand, as a
 // generator would, then check(), build_layout() and validate_layout()
 // timed on their own. Hidden ([.scaling]); run
 //

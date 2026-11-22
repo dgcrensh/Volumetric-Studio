@@ -1,7 +1,7 @@
 #pragma once
 
 // The hierarchy walks and subject labels written once over a lookup
-// (decision 0029). hierarchy.cpp and references.cpp run them over `Scan`,
+// (decision 0031). hierarchy.cpp and references.cpp run them over `Scan`,
 // which searches the document's lists as it always did; DocumentIndex runs
 // the same code over its maps. A lookup `L` provides:
 //

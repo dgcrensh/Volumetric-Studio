@@ -1,6 +1,6 @@
 #pragma once
 
-// A read-only index of one document (decision 0029): what the finders,
+// A read-only index of one document (decision 0031): what the finders,
 // hierarchy walks and reference resolution answer, by hash lookups instead
 // of searches through the document's lists.
 //
