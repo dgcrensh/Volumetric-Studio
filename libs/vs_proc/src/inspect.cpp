@@ -63,7 +63,8 @@ NodeInspection inspect_volume_node(const model::Document& document,
   return inspect_node(*graph, *inputs, node, options, registry);
 }
 
-Preview preview(const Value& value, const GraphInputs& inputs, double cell, eval::ThreadPool* pool) {
+Preview preview(const Value& value, const GraphInputs& inputs, double cell, eval::ThreadPool* pool,
+                const eval::CancellationToken* cancel) {
   Preview p;
   p.type = type_of(value);
   p.text = describe(value);
@@ -74,8 +75,18 @@ Preview preview(const Value& value, const GraphInputs& inputs, double cell, eval
     }
     auto grid = grid_covering(inputs.bounds, cell);
     if (!grid) return p;
-    SampledField samples = sample(**f, *grid, pool);
-    p.mesh = to_mesh(surface_nets(samples, pool), inputs.volume);
+    bool stopped = false;
+    SampledField samples = sample(**f, *grid, pool, cancel, &stopped);
+    if (stopped || (cancel != nullptr && cancel->cancelled())) {
+      p.cancelled = true;
+      return p;
+    }
+    FieldMesh meshed = surface_nets(samples, pool, cancel);
+    if (cancel != nullptr && cancel->cancelled()) {
+      p.cancelled = true;
+      return p;
+    }
+    p.mesh = to_mesh(meshed, inputs.volume);
     p.samples = std::move(samples);
   } else if (const auto* m = std::get_if<MeshValue>(&value); m != nullptr && *m) {
     p.mesh = **m;

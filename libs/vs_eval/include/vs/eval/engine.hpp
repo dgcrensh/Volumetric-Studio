@@ -118,6 +118,9 @@ using model::VolumeStatus;
 
 struct EngineOptions {
   std::size_t threads = 0;  // the pool's size; 0: one per hardware thread
+  // The pool's workers' scheduling priority (thread_pool.hpp); the app runs
+  // them Low so generation never starves the UI (H7).
+  WorkerPriority worker_priority = WorkerPriority::Normal;
   // Generate every regenerating volume twice and compare (debug).
   bool check_determinism = false;
   // Where to keep the on-disk cache; empty: memory only.

@@ -168,7 +168,7 @@ struct Generated {
 Engine::Engine(ProductSettings settings, EngineOptions options)
     : settings_(settings),
       options_(std::move(options)),
-      pool_(options_.threads),
+      pool_(options_.threads, options_.worker_priority),
       cache_(options_.disk_cache, options_.memory_cache_bytes) {}
 
 Engine::~Engine() = default;

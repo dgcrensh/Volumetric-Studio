@@ -48,11 +48,21 @@ inline constexpr std::size_t kMaxThreads = 1024;
 // and 16 threads that way, plan H3), else one per hardware thread.
 std::size_t default_thread_count();
 
+// How a pool's workers are scheduled against the rest of the process.
+// Low (below normal on Windows, nice 10 on Linux) is for an interactive
+// app: generation running on every core otherwise starves the UI thread
+// and the graphics driver's threads, and frames stall for 100 ms (H7,
+// decision 0036). It never changes a result, only who waits.
+enum class WorkerPriority : std::uint8_t { Normal, Low };
+
+// Sets the calling thread's scheduling priority (best effort).
+void set_current_thread_priority(WorkerPriority priority);
+
 class ThreadPool {
  public:
   // `threads` counts the calling thread: 1 starts no workers. 0 means
   // default_thread_count().
-  explicit ThreadPool(std::size_t threads = 0);
+  explicit ThreadPool(std::size_t threads = 0, WorkerPriority priority = WorkerPriority::Normal);
   ~ThreadPool();
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;

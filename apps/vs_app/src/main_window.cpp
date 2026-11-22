@@ -767,7 +767,13 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
   fitted_ = fitted_ || fit;
   if (snapshot->drag) {
     // A dimension drag's preview: the viewport only; the panels follow
-    // when the drag ends.
+    // when the drag ends. A regeneration the drag replaced never reports
+    // again, so its progress and Cancel go (H7).
+    state_timer_->stop();
+    last_states_.clear();
+    cancel_action_->setEnabled(false);
+    progress_->setVisible(false);
+    cancel_button_->setVisible(false);
     if (drag_) {
       status_label_->setText(tr("Dragging %1: %2 mm (preview: %3 ms)")
                                  .arg(qstr(drag_->handle.label))

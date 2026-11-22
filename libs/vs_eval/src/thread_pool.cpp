@@ -5,6 +5,20 @@
 #include <cstdlib>
 #include <string>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#elif defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 namespace vs::eval {
 
 namespace {
@@ -58,10 +72,28 @@ struct ThreadPool::Batch {
   std::exception_ptr error;
 };
 
-ThreadPool::ThreadPool(std::size_t threads) {
+void set_current_thread_priority(WorkerPriority priority) {
+#if defined(_WIN32)
+  SetThreadPriority(GetCurrentThread(),
+                    priority == WorkerPriority::Low ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_NORMAL);
+#elif defined(__linux__)
+  // Per thread on Linux; an unprivileged thread may only raise its nice
+  // value, so Normal after Low stays low.
+  (void)setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), priority == WorkerPriority::Low ? 10 : 0);
+#else
+  (void)priority;
+#endif
+}
+
+ThreadPool::ThreadPool(std::size_t threads, WorkerPriority priority) {
   if (threads == 0) threads = default_thread_count();
   workers_.reserve(threads - 1);
-  for (std::size_t i = 1; i < threads; ++i) workers_.emplace_back([this] { worker_loop(); });
+  for (std::size_t i = 1; i < threads; ++i) {
+    workers_.emplace_back([this, priority] {
+      if (priority != WorkerPriority::Normal) set_current_thread_priority(priority);
+      worker_loop();
+    });
+  }
 }
 
 ThreadPool::~ThreadPool() {
