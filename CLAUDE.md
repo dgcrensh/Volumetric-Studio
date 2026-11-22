@@ -523,6 +523,11 @@ so they are registered. A new library must also be added to
   volume boxed by its bounds, or `import_contents()` into an existing one
   (then containment matters). `eval.*` codes on a volume route to its
   contents. Decision 0009.
+- **Phases** (decision 0029): `ProgressEvent::Kind::PhaseFinished` names
+  each step of an evaluation as it ends (`cancel.hpp`), on the calling
+  thread; `vstudio-cli bench-rack [--cells N,...] [--cell mm] [--threads N]
+  [--csv out]` uses it to time `preview()` on the rack fixture's shape at
+  10 to 10,000 generated cells, phase by phase with peak RSS (Linux).
 - **Tests** build scenes in code (`tests/scenes.*`: a row of parametric
   boxes; a chain A → B by a link, plus C) and reuse the bracket.
   `vstudio-cli rebuild <project> [--threads N] [--check-determinism]
