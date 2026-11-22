@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "bench_commands.hpp"
 #include "eval_commands.hpp"
 #include "proc_commands.hpp"
 #include "feature_commands.hpp"
@@ -84,6 +85,11 @@ Commands:
                     parametric boxes (default 20) with two links, or how long a
                     project's check, layout and re-evaluation take. --no-reuse
                     builds and checks everything every time, as before 0029
+  bench-rack [--cells N[,N...]] [--cell <mm>] [--threads N] [--csv <file>]
+                    Time Engine::preview() on the rack fixture (a composite whose
+                    generator makes a grid of cells) at 10, 100, 1,000 and 10,000
+                    cells, phase by phase with peak memory (Linux): how the preview
+                    tier scales
   version           Print the version (same as --version)
   help              Print this message
 
@@ -220,6 +226,9 @@ int main(int argc, char** argv) {
   }
   if (command == "bench-edit") {
     return vs::cli::run_bench_edit(rest, std::cout, std::cerr);
+  }
+  if (command == "bench-rack") {
+    return vs::cli::run_bench_rack(rest, std::cout, std::cerr);
   }
   if (command == "bench-gyroid") {
     return vs::cli::run_bench_gyroid(rest, std::cout, std::cerr);
