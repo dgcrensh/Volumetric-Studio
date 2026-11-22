@@ -94,12 +94,23 @@ struct LayoutReport {
   std::size_t pairs_tested = 0;
 };
 
+// How the pair checks run. Two boundaries that are each exactly their
+// bounding box are checked by arithmetic rather than OCCT (decision 0032):
+// the same codes, subjects and face names, numbers within the linear
+// tolerance of OCCT's, and an edge touch reported at the middle of where
+// the boxes meet. `box_fast_path = false` sends every pair through OCCT
+// (tests compare the two).
+struct LayoutOptions {
+  bool box_fast_path = true;
+};
+
 // The checks above. `build` must come from model::build(document, ...).
 // `parallel` (optional) runs the pairs of boundaries and the connection
 // surfaces in fixed chunks on several threads, each chunk on its own deep
 // copies of the boundaries it reads; the report is the same either way.
 LayoutReport validate_layout(const model::Document& document, const model::DocumentBuild& build,
-                             const ProductSettings& settings, const ParallelFor& parallel = {});
+                             const ProductSettings& settings, const ParallelFor& parallel = {},
+                             const LayoutOptions& options = {});
 
 // The connection type rules alone.
 Diagnostics check_connections(const model::Document& document, const model::DocumentBuild& build,

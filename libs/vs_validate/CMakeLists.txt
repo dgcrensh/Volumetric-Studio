@@ -28,7 +28,8 @@ vs_add_library_tests(vs_validate
     tests/test_module.cpp
     tests/test_performance.cpp
     tests/test_registry.cpp
-    tests/test_scaling.cpp)
+    tests/test_scaling.cpp
+  tests/test_box_path.cpp)
 
 if(VS_BUILD_TESTS)
   target_link_libraries(vs_validate_tests PRIVATE vs_model_test_fixtures)
