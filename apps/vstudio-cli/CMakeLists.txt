@@ -4,11 +4,13 @@
 
 vs_add_application(vstudio-cli
   SOURCES
+    src/bench_commands.cpp
     src/bench_edit.cpp
     src/eval_commands.cpp
     src/feature_commands.cpp
     src/kernel_commands.cpp
     src/main.cpp
+    src/memory.cpp
     src/mesh_commands.cpp
     src/model_commands.cpp
     src/proc_commands.cpp
@@ -312,4 +314,15 @@ if(VS_BUILD_TESTS)
             --3mf "${CMAKE_CURRENT_BINARY_DIR}/no-such-folder/gyroid.3mf")
   set_tests_properties("vstudio-cli: bench-gyroid fails when it can't write its 3MF" PROPERTIES
     WILL_FAIL TRUE)
+endif()
+
+if(VS_BUILD_TESTS)
+  # The preview scaling benchmark, at sizes small enough for CI.
+  add_test(NAME "vstudio-cli: bench-rack profiles the preview phase by phase"
+    COMMAND vstudio-cli bench-rack --cells 6,24 --threads 2)
+  set_tests_properties("vstudio-cli: bench-rack profiles the preview phase by phase" PROPERTIES
+    PASS_REGULAR_EXPRESSION "cells 6 \\(3 x 2\\): 8 volumes.*check.*children: generate.*layout and checks.*keys and cache.*cells 24 \\(6 x 4\\).*summary.*growth +6 -> 24 cells.*result +ok")
+  add_test(NAME "vstudio-cli: bench-rack takes at most 10000 cells"
+    COMMAND vstudio-cli bench-rack --cells 10001)
+  set_tests_properties("vstudio-cli: bench-rack takes at most 10000 cells" PROPERTIES WILL_FAIL TRUE)
 endif()

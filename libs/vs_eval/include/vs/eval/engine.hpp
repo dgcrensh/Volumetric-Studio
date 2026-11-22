@@ -263,7 +263,7 @@ class Engine {
 
   struct Expansion;
   Expansion expand_generated(const model::Document& document, const CancellationToken& cancel,
-                             EvaluationStats& stats);
+                             const ProgressCallback& progress, EvaluationStats& stats);
 };
 
 // A project's caches (M17, model::CacheFiles): the files of every volume's

@@ -133,6 +133,16 @@ model::ContentsMeasure measure_contents(const model::Volume& v, const GeneratedC
 
 // The composite whose generator made `id` (a volume, or a surface joining
 // generated volumes); null for anything authored (L4).
+// Tells `progress` that `phase` ended (ProgressEvent::phase). Only on the
+// calling thread, while no job reports progress.
+void phase_finished(const ProgressCallback& progress, const char* phase) {
+  if (!progress) return;
+  ProgressEvent e;
+  e.kind = ProgressEvent::Kind::PhaseFinished;
+  e.phase = phase;
+  progress(e);
+}
+
 Id generated_owner(const model::Document& document, const Id& id) {
   if (const model::Volume* v = document.find_volume(id)) return v->generated ? v->parent : Id{};
   if (const model::ConnectionSurface* c = document.find_connection(id)) {
@@ -279,11 +289,13 @@ struct Engine::Expansion {
 
 Engine::Expansion Engine::expand_generated(const model::Document& document,
                                            const CancellationToken& cancel,
+                                           const ProgressCallback& progress,
                                            EvaluationStats& stats) {
   Expansion out;
   out.document = document;
   const Layout built = layout_of(document, false, stats);
   const model::DocumentBuild& layout = built.build;
+  phase_finished(progress, "children: layout");
   for (const std::size_t i : model::level_order(document)) {
     const model::Volume& v = document.volumes[i];
     const auto* comp = std::get_if<model::CompositeContents>(&v.contents);
@@ -300,6 +312,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
     }
     // A boundary that failed fails the composite already (finish_composite).
     const std::optional<Hash256> key = key_of(document, layout, i, built.hashes.get());
+    phase_finished(progress, "children: keys");
     if (!key) continue;
     std::shared_ptr<const LayoutOutcome> outcome;
     if (const auto it = layouts_.find(*key); it != layouts_.end()) {
@@ -311,6 +324,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
       if (layouts_.size() >= 256) layouts_.clear();
       layouts_.emplace(*key, outcome);
     }
+    phase_finished(progress, "children: generate");
     if (!outcome->layout) {
       out.failed[v.id] = outcome->diagnostics;
       if (!out.failed[v.id].has_errors()) {
@@ -333,6 +347,7 @@ Engine::Expansion Engine::expand_generated(const model::Document& document,
         problems.add(std::move(d));
       }
     }
+    phase_finished(progress, "children: expand and check");
     if (problems.has_errors()) {
       out.failed[v.id] = std::move(problems);
       continue;
@@ -359,6 +374,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     checked = model::check(project.document);
     if (options_.reuse_layouts) last_check_.emplace(project.document, checked);
   }
+  phase_finished(options.progress, "check");
   EvaluationStats early_stats;
   Expansion expansion;
   const bool generates = std::any_of(
@@ -368,7 +384,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         return c != nullptr && c->generates();
       });
   if (generates && !checked.has_errors()) {
-    expansion = expand_generated(project.document, options.cancel, early_stats);
+    expansion = expand_generated(project.document, options.cancel, options.progress, early_stats);
   }
   const model::Document& doc = generates && !checked.has_errors() ? expansion.document
                                                                   : project.document;
@@ -524,6 +540,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       }
     }
   }
+  phase_finished(options.progress, "dependencies");
 
   std::map<Id, double> link_values;
   bool values_changed = true;
@@ -558,6 +575,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
         }
       }
       values_changed = false;
+      phase_finished(options.progress, "layout and checks");
       notify(ProgressEvent::Kind::LayoutBuilt, {}, VolumeStatus::Stale);
     }
     if (ready.empty()) break;
@@ -616,6 +634,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       }
       to_run.push_back(i);
     }
+    phase_finished(options.progress, "keys and cache");
 
     {
       const std::lock_guard lock(progress_mutex);
@@ -697,6 +716,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       }
       generated[k].ran = true;
     });
+    if (!to_run.empty()) phase_finished(options.progress, "generate");
 
     // 4. containment (on this thread), cache, publish
     for (std::size_t k = 0; k < to_run.size(); ++k) {
@@ -756,6 +776,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
       notify(ProgressEvent::Kind::VolumeFinished, r.volume, r.status);
     }
 
+    if (!to_run.empty()) phase_finished(options.progress, "containment");
     for (const std::size_t i : ready) done[i] = true;
 
     // Publish: each link whose source just became current carries its value.
@@ -800,6 +821,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
                                         "The evaluation was cancelled; unfinished volumes are "
                                         "stale"));
   }
+  phase_finished(options.progress, "result");
 
   // 5. weld
   if (options.weld && options.generate && !ev.cancelled) {
@@ -815,6 +837,7 @@ Evaluation Engine::evaluate(const model::Project& project, const EvaluateOptions
     ev.combined = mesh::combine(ev.document, ev.build, &project.blobs, settings_, options.combine,
                                 generated);
     ev.diagnostics.append(ev.combined->diagnostics);
+    phase_finished(options.progress, "weld");
   }
 
   for (const auto& r : ev.volumes) set_state(r.volume, r.status);
