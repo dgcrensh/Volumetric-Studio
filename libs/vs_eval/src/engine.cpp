@@ -207,7 +207,7 @@ Engine::Layout Engine::layout_of(const model::Document& document, bool validated
   Layout out;
   if (!options_.reuse_layouts) {
     // As before decision 0029: from the document itself, every time.
-    out.build = model::build_layout(document, settings_);
+    out.build = model::build_layout(document, settings_, parallel_for());
     ++stats.layout_builds;
     if (validated) {
       out.report = std::make_shared<const validate::LayoutReport>(
@@ -259,7 +259,8 @@ Engine::Layout Engine::layout_of(const model::Document& document, bool validated
     use({std::move(inputs), std::move(shape), std::move(build), e.report, e.hashes});
     return out;
   }
-  auto build = std::make_shared<const model::DocumentBuild>(model::build_layout(inputs, settings_));
+  auto build = std::make_shared<const model::DocumentBuild>(
+      model::build_layout(inputs, settings_, parallel_for()));
   ++stats.layout_builds;
   use({std::move(inputs), std::move(shape), std::move(build), nullptr, nullptr});
   return out;

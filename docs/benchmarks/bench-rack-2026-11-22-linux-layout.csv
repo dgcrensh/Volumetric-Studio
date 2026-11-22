@@ -1,0 +1,81 @@
+cells,run,phase,runs,ms,peak_mb,grown_mb
+10,cold,check,1,0.130,10.4,0.6
+10,cold,children: layout,1,0.943,14.7,4.3
+10,cold,children: keys,1,0.657,15.2,0.5
+10,cold,children: generate,1,2.918,18.8,3.7
+10,cold,children: expand and check,1,2.295,18.9,0.1
+10,cold,dependencies,1,0.247,18.9,0.0
+10,cold,layout and checks,1,13.666,19.6,0.7
+10,cold,keys and cache,2,5.173,19.6,0.0
+10,cold,result,1,0.010,19.6,0.0
+10,cold,total,1,26.533,19.6,
+10,warm,check,1,0.005,19.6,0.0
+10,warm,children: layout,1,0.011,19.6,0.0
+10,warm,children: keys,1,0.097,19.6,0.0
+10,warm,children: generate,1,0.000,19.6,0.0
+10,warm,children: expand and check,1,1.378,19.6,0.0
+10,warm,dependencies,1,0.139,19.6,0.0
+10,warm,layout and checks,1,0.132,19.7,0.1
+10,warm,keys and cache,2,0.984,19.7,0.0
+10,warm,result,1,0.005,19.7,0.0
+10,warm,total,1,2.965,19.7,
+100,cold,check,1,0.051,19.8,0.0
+100,cold,children: layout,1,0.329,19.8,0.0
+100,cold,children: keys,1,0.305,19.8,0.0
+100,cold,children: generate,1,2.031,19.9,0.1
+100,cold,children: expand and check,1,12.397,20.4,0.5
+100,cold,dependencies,1,1.450,20.8,0.4
+100,cold,layout and checks,1,74.887,25.5,4.8
+100,cold,keys and cache,2,29.407,25.9,0.4
+100,cold,result,1,0.084,25.9,0.0
+100,cold,total,1,121.786,25.9,
+100,warm,check,1,0.006,25.9,0.0
+100,warm,children: layout,1,0.018,25.9,0.0
+100,warm,children: keys,1,0.114,25.9,0.0
+100,warm,children: generate,1,0.000,25.9,0.0
+100,warm,children: expand and check,1,12.696,26.0,0.0
+100,warm,dependencies,1,1.437,26.1,0.2
+100,warm,layout and checks,1,1.028,26.7,0.6
+100,warm,keys and cache,2,7.839,27.2,0.5
+100,warm,result,1,0.061,27.2,0.0
+100,warm,total,1,23.788,27.2,
+1000,cold,check,1,0.067,27.2,0.0
+1000,cold,children: layout,1,0.426,27.2,0.0
+1000,cold,children: keys,1,0.472,27.2,0.0
+1000,cold,children: generate,1,7.025,27.1,0.0
+1000,cold,children: expand and check,1,153.800,32.0,4.9
+1000,cold,dependencies,1,30.424,37.0,5.9
+1000,cold,layout and checks,1,716.156,75.4,38.4
+1000,cold,keys and cache,2,311.130,80.6,5.3
+1000,cold,result,1,0.880,80.6,0.0
+1000,cold,total,1,1225.613,80.6,
+1000,warm,check,1,0.008,79.4,0.0
+1000,warm,children: layout,1,0.020,79.4,0.0
+1000,warm,children: keys,1,0.134,79.4,0.0
+1000,warm,children: generate,1,0.000,79.4,0.0
+1000,warm,children: expand and check,1,132.066,80.1,0.6
+1000,warm,dependencies,1,25.821,81.9,1.8
+1000,warm,layout and checks,1,15.534,88.4,6.5
+1000,warm,keys and cache,2,89.190,94.0,5.5
+1000,warm,result,1,0.889,94.0,0.0
+1000,warm,total,1,269.042,94.0,
+10000,cold,check,1,0.115,82.8,0.0
+10000,cold,children: layout,1,0.381,82.8,0.0
+10000,cold,children: keys,1,0.349,82.8,0.0
+10000,cold,children: generate,1,39.907,83.4,0.6
+10000,cold,children: expand and check,1,1552.463,136.5,53.1
+10000,cold,dependencies,1,1519.179,184.0,47.5
+10000,cold,layout and checks,1,6596.373,576.4,392.4
+10000,cold,keys and cache,2,3281.377,636.4,60.0
+10000,cold,result,1,8.957,636.4,0.0
+10000,cold,total,1,13071.999,636.4,
+10000,warm,check,1,0.009,613.1,0.0
+10000,warm,children: layout,1,1.736,613.1,0.0
+10000,warm,children: keys,1,0.190,613.1,0.0
+10000,warm,children: generate,1,0.001,613.1,0.0
+10000,warm,children: expand and check,1,1780.663,625.9,12.9
+10000,warm,dependencies,1,1505.463,639.6,13.6
+10000,warm,layout and checks,1,200.901,709.4,69.8
+10000,warm,keys and cache,2,860.006,771.2,61.8
+10000,warm,result,1,8.716,771.2,0.0
+10000,warm,total,1,4441.579,771.2,

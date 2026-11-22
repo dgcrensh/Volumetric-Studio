@@ -65,6 +65,7 @@
 // Published outputs are measured on the contents when there are any.
 
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -171,6 +172,17 @@ struct ContentsBuild {
 // no outputs, and its status is Failed when its boundary or a parameter
 // failed and Stale otherwise. `diagnostics` collects what was built.
 DocumentBuild build_layout(const Document& document, const ProductSettings& settings);
+
+// Runs task(0) .. task(n - 1), on any threads, returning when all are done
+// (vs_eval's thread pool; validate::ParallelFor is the same type).
+using ParallelFor = std::function<void(std::size_t n, const std::function<void(std::size_t)>& task)>;
+
+// build_layout(), with each level's boundaries and connection surfaces
+// built through `parallel` (decision 0033). Each is built alone into its
+// own slot, so the result is the same as build_layout()'s on any thread
+// count; an empty `parallel` builds on the calling thread.
+DocumentBuild build_layout(const Document& document, const ProductSettings& settings,
+                           const ParallelFor& parallel);
 
 // The document as build_layout() and validate::validate_layout() read it
 // (decision 0029): every volume but a composite has empty contents of its

@@ -6,6 +6,7 @@
 #include <limits>
 #include <numbers>
 #include <span>
+#include <unordered_map>
 
 #include <fmt/format.h>
 
@@ -117,18 +118,45 @@ dvec3 tangent(const kernel::ProfileSegment& s, bool at_end) {
   return normalize(cross(n, p - centre));
 }
 
+// What every feature's build looks up in the tree, made once per rebuild:
+// FeatureTree::subject() and index_of() search the list, which made a
+// rebuild quadratic in its features (tens of thousands of datum points in
+// a generating composite's layout, L4).
+struct TreeLookup {
+  explicit TreeLookup(const FeatureTree& t) : tree(t), subjects(t.subjects()) {
+    const auto& features = tree.features();
+    positions.reserve(features.size());
+    for (std::size_t i = 0; i < features.size(); ++i) positions.emplace(features[i].id, i);
+  }
+  // As tree.index_of(id): the first feature with the id.
+  std::optional<std::size_t> index_of(const Id& id) const {
+    const auto it = positions.find(id);
+    return it != positions.end() ? std::optional<std::size_t>(it->second) : std::nullopt;
+  }
+  // As tree.subject(id).
+  SubjectRef subject(const Id& id) const {
+    const auto at = index_of(id);
+    return at ? subjects[*at] : tree.subject(id);
+  }
+
+  const FeatureTree& tree;
+  std::vector<SubjectRef> subjects;
+  std::unordered_map<Id, std::size_t> positions;
+};
+
 // Builds one feature's result. Holds the context every feature needs.
 class Builder {
  public:
-  Builder(const FeatureTree& tree, const ProductSettings& settings, RebuildResult& out,
-          std::size_t index, const ExternalInputs* inputs)
+  Builder(const FeatureTree& tree, const TreeLookup& lookup, const ProductSettings& settings,
+          RebuildResult& out, std::size_t index, const ExternalInputs* inputs)
       : tree_(tree),
+        lookup_(lookup),
         inputs_(inputs),
         settings_(settings),
         out_(out),
         index_(index),
         feature_(tree.features()[index]),
-        self_(tree.subject(feature_.id)),
+        self_(lookup.subjects[index]),
         body_(index == 0 ? Solid{} : out.features[index - 1].body) {}
 
   FeatureResult run() {
@@ -158,6 +186,7 @@ class Builder {
 
  private:
   const FeatureTree& tree_;
+  const TreeLookup& lookup_;
   const ExternalInputs* inputs_;
   const ProductSettings& settings_;
   RebuildResult& out_;
@@ -227,18 +256,18 @@ class Builder {
 
   // An input from outside the tree, when `id` names one and no feature.
   const ExternalInput* external(const Id& id) const {
-    if (!inputs_ || tree_.index_of(id)) return nullptr;
+    if (!inputs_ || lookup_.index_of(id)) return nullptr;
     return inputs_->find(id);
   }
 
   SubjectRef subject_of(const Id& id) const {
     if (const ExternalInput* in = external(id)) return in->subject;
-    return tree_.subject(id);
+    return lookup_.subject(id);
   }
 
   Result<const FeatureResult*> use(const Id& id, std::string_view what) {
     if (const ExternalInput* in = external(id)) return &in->result;
-    const auto at = tree_.index_of(id);
+    const auto at = lookup_.index_of(id);
     if (!at) {
       return error("feature.reference.broken",
                    fmt::format("the {} it uses no longer exists", what));
@@ -1579,8 +1608,9 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
     }
   }
 
+  const TreeLookup lookup(tree);
   for (std::size_t i = first; i < features.size(); ++i) {
-    Builder builder(tree, settings, out, i, options.inputs);
+    Builder builder(tree, lookup, settings, out, i, options.inputs);
     out.features.push_back(builder.run());
   }
   for (const auto& r : out.features) out.diagnostics.append(r.diagnostics);

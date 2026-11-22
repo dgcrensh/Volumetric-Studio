@@ -1,4 +1,5 @@
 #include "vs/model/build.hpp"
+#include "vs/model/index.hpp"
 
 #include <algorithm>
 #include <array>
@@ -86,8 +87,15 @@ Diagnostic error(const SubjectRef& subject, std::string code, std::string messag
 class DocumentBuilder {
  public:
   // Builds the layout into `out`.
-  DocumentBuilder(const Document& doc, const ProductSettings& settings, DocumentBuild& out)
-      : doc_(doc), settings_(settings), blobs_(nullptr), in_(out), out_(&out) {}
+  DocumentBuilder(const Document& doc, const ProductSettings& settings, DocumentBuild& out,
+                  const ParallelFor* parallel = nullptr)
+      : doc_(doc), settings_(settings), blobs_(nullptr), in_(out), out_(&out),
+        parallel_(parallel != nullptr && *parallel ? parallel : nullptr) {
+    index_.emplace(doc);
+    for (std::size_t i = 0; i < doc_.volumes.size(); ++i) {
+      volume_index_.emplace(doc_.volumes[i].id, i);
+    }
+  }
   // Builds contents from a finished layout, which it only reads.
   DocumentBuilder(const Document& doc, const ProductSettings& settings, const BlobStore* blobs,
                   const DocumentBuild& layout)
@@ -132,6 +140,41 @@ class DocumentBuilder {
   Id level_;
   std::map<Id, feature::ExternalInputs> level_inputs_;
   mutable std::unordered_map<Id, std::size_t> volume_index_;
+  // The document's index while building a layout, which looks up every
+  // volume and surface (one list search each was quadratic in generated
+  // children). Building contents, one volume at a time, goes without.
+  std::optional<DocumentIndex> index_;
+  // Builds a level's boundaries and surfaces on several threads when set.
+  // Everything those builds read is made before they start, and each
+  // writes only its own slot.
+  const ParallelFor* parallel_ = nullptr;
+
+  void for_each(std::size_t n, const std::function<void(std::size_t)>& task) const {
+    if (parallel_ != nullptr && n > 1) {
+      (*parallel_)(n, task);
+    } else {
+      for (std::size_t i = 0; i < n; ++i) task(i);
+    }
+  }
+
+  SubjectRef volume_subject(const Id& id) const {
+    return index_ ? index_->volume_subject(id) : doc_.volume_subject(id);
+  }
+  SubjectRef boundary_subject(const Id& id) const {
+    return index_ ? index_->boundary_subject(id) : doc_.boundary_subject(id);
+  }
+  SubjectRef connection_subject(const Id& id) const {
+    return index_ ? index_->connection_subject(id) : doc_.connection_subject(id);
+  }
+  SubjectRef keep_out_subject(const Id& id) const {
+    return index_ ? index_->keep_out_subject(id) : doc_.keep_out_subject(id);
+  }
+  const Volume* find_volume(const Id& id) const {
+    return index_ ? index_->volume(id) : doc_.find_volume(id);
+  }
+  bool joins_volume(const ConnectionSurface& c, const Id& volume) const {
+    return index_ ? index_->joins(c, volume) : joins(doc_, c, volume);
+  }
   struct ResultIndex {
     std::unordered_map<Id, std::size_t> positions;
     std::size_t size = 0;
@@ -154,6 +197,19 @@ class DocumentBuilder {
   // r.find(id) through an index of r's features (first wins, as find()),
   // made again when r has changed; a miss is confirmed by find() itself.
   const FeatureResult* find_result(const feature::RebuildResult& r, const Id& id) const {
+    if (parallel_ != nullptr) {
+      // Several threads may ask at once: only read the index prime_results()
+      // made, falling back to find() itself.
+      const auto it = result_index_.find(&r);
+      if (it != result_index_.end() && it->second.size == r.features.size()) {
+        const auto at = it->second.positions.find(id);
+        if (at != it->second.positions.end() && at->second < r.features.size() &&
+            r.features[at->second].feature == id) {
+          return &r.features[at->second];
+        }
+      }
+      return r.find(id);
+    }
     auto& index = result_index_[&r];
     const auto look = [&]() -> const FeatureResult* {
       const auto it = index.positions.find(id);
@@ -171,26 +227,58 @@ class DocumentBuilder {
     return r.find(id);
   }
 
+  // Indexes the level's rebuilt layout before builds read it in parallel.
+  void prime_results() const {
+    const feature::RebuildResult* r = level_rebuild();
+    if (r == nullptr) return;
+    auto& index = result_index_[r];
+    index.positions.clear();
+    for (std::size_t k = 0; k < r->features.size(); ++k) {
+      index.positions.emplace(r->features[k].feature, k);
+    }
+    index.size = r->features.size();
+  }
+
   // --- levels (L3) ------------------------------------------------------------------
 
   void build_level(const Id& level) {
     level_ = level;
-    const std::vector<std::size_t> kids = children(doc_, level);
-    for (const std::size_t i : kids) {
+    const std::vector<std::size_t> kids = index_->children(level);
+    // Boundaries that unite several layout tools run a boolean, which may
+    // fill caches on the tools it reads (H2): those stay on this thread,
+    // after the rest, which only read plain data or make a box.
+    prime_results();
+    const auto unites = [&](std::size_t i) {
+      const auto* fb = std::get_if<FeatureBoundary>(&doc_.volumes[i].boundary);
+      return fb != nullptr && fb->features.size() > 1;
+    };
+    for_each(kids.size(), [&](std::size_t n) {
+      const std::size_t i = kids[n];
+      if (parallel_ != nullptr && unites(i)) return;
       raw_[i] = raw_boundary(doc_.volumes[i], out_->volumes[i].diagnostics);
+    });
+    if (parallel_ != nullptr) {
+      for (const std::size_t i : kids) {
+        if (unites(i)) raw_[i] = raw_boundary(doc_.volumes[i], out_->volumes[i].diagnostics);
+      }
     }
     for (const std::size_t i : kids) {
       cut_keep_outs(i);
       VolumeBuild& vb = out_->volumes[i];
       if (!vb.boundary.is_empty()) vb.boundary_faces = boundary_faces(doc_.volumes[i], vb.boundary);
     }
+    std::vector<std::size_t> surfaces;
     for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
       const ConnectionSurface& c = doc_.connections[k];
-      if (!c.volumes.empty() && doc_.find_volume(c.volumes.front()) != nullptr &&
-          level_of(doc_, c) == level) {
-        out_->connections[k] = connection(c);
+      if (!c.volumes.empty() && find_volume(c.volumes.front()) != nullptr &&
+          index_->level_of(c) == level) {
+        surfaces.push_back(k);
       }
     }
+    for_each(surfaces.size(), [&](std::size_t n) {
+      const std::size_t k = surfaces[n];
+      out_->connections[k] = connection(doc_.connections[k]);
+    });
     for (const std::size_t i : kids) parameters(i);
 
     for (const std::size_t i : kids) {
@@ -215,7 +303,7 @@ class DocumentBuilder {
         feature::rebuild(std::get<CompositeContents>(v.contents).layout, settings_, options);
     const auto& r = *vb.contents_rebuild;
     if (!r.ok()) {
-      vb.diagnostics.add(error(doc_.volume_subject(v.id), "model.contents.failed",
+      vb.diagnostics.add(error(volume_subject(v.id), "model.contents.failed",
                                "its layout didn't rebuild cleanly"));
       vb.status = VolumeStatus::Failed;
     }
@@ -228,16 +316,16 @@ class DocumentBuilder {
     feature::ExternalInputs inputs;
     {
       feature::ExternalInput boundary;
-      boundary.subject = doc_.boundary_subject(v.id);
+      boundary.subject = boundary_subject(v.id);
       boundary.result.faces = layout.boundary_faces;
       inputs.references.push_back(std::move(boundary));
     }
     for (std::size_t k = 0; k < doc_.connections.size(); ++k) {
       const ConnectionSurface& c = doc_.connections[k];
-      if (!joins(doc_, c, v.id) || !in_.connections[k].ok) continue;
+      if (!joins_volume(c, v.id) || !in_.connections[k].ok) continue;
       const ConnectionBuild& cb = in_.connections[k];
       feature::ExternalInput in;
-      in.subject = doc_.connection_subject(c.id);
+      in.subject = connection_subject(c.id);
       if (cb.cylinder) {
         const kernel::Axis axis{cb.frame.origin, cb.frame.normal()};
         in.result.axis = axis;
@@ -263,7 +351,8 @@ class DocumentBuilder {
   }
   const feature::FeatureTree& level_tree() const {
     static const feature::FeatureTree kEmpty;
-    const feature::FeatureTree* t = level_layout(doc_, level_);
+    const feature::FeatureTree* t =
+        index_ ? index_->level_layout(level_) : level_layout(doc_, level_);
     return t != nullptr ? *t : kEmpty;
   }
 
@@ -416,7 +505,7 @@ class DocumentBuilder {
   // --- boundaries ------------------------------------------------------------------
 
   Solid raw_boundary(const Volume& v, Diagnostics& diags) const {
-    const SubjectRef by = doc_.boundary_subject(v.id);
+    const SubjectRef by = boundary_subject(v.id);
     if (const auto* fb = std::get_if<FeatureBoundary>(&v.boundary)) {
       std::vector<Solid> tools;
       for (const auto& id : fb->features) {
@@ -470,13 +559,13 @@ class DocumentBuilder {
     VolumeBuild& vb = out_->volumes[i];
     vb.boundary = raw_[i];
     if (vb.boundary.is_empty()) return;
-    const SubjectRef by = doc_.boundary_subject(v.id);
+    const SubjectRef by = boundary_subject(v.id);
     std::vector<Solid> cutters;
     for (const auto& k : doc_.keep_outs) {
       if (std::find(k.volumes.begin(), k.volumes.end(), v.id) == k.volumes.end()) continue;
-      const SubjectRef ks = doc_.keep_out_subject(k.id);
+      const SubjectRef ks = keep_out_subject(k.id);
       for (const auto& id : k.cutters) {
-        if (const Volume* cutter = doc_.find_volume(id)) {
+        if (const Volume* cutter = find_volume(id)) {
           // A keep-out volume whose boundary failed cuts nothing it should:
           // the target fails rather than keep the space it reserves.
           bool found = false;
@@ -489,8 +578,8 @@ class DocumentBuilder {
           if (!found) {
             vb.diagnostics.add(error(ks, "model.boundary.feature_failed",
                                      fmt::format("its cutter '{}' has no boundary",
-                                                 doc_.volume_subject(cutter->id).label),
-                                     {doc_.boundary_subject(cutter->id), by}));
+                                                 volume_subject(cutter->id).label),
+                                     {boundary_subject(cutter->id), by}));
             vb.boundary = Solid{};
             return;
           }
@@ -560,7 +649,7 @@ class DocumentBuilder {
   ConnectionBuild connection(const ConnectionSurface& c) const {
     ConnectionBuild cb;
     cb.surface = c.id;
-    const SubjectRef by = doc_.connection_subject(c.id);
+    const SubjectRef by = connection_subject(c.id);
     auto fail = [&](Diagnostic d) {
       cb.diagnostics.add(std::move(d));
       cb.ok = false;
@@ -751,7 +840,7 @@ class DocumentBuilder {
   ContentsBuild contents(std::size_t i) const {
     const Volume& v = doc_.volumes[i];
     const VolumeBuild& vb = in_.volumes[i];
-    const SubjectRef self = doc_.volume_subject(v.id);
+    const SubjectRef self = volume_subject(v.id);
     ContentsBuild cb;
     // A composite's layout was rebuilt with the layout half; keep it even
     // when the composite fails, since its children were built from it.
@@ -796,7 +885,7 @@ class DocumentBuilder {
 
  private:
   void import_static(const Volume& v, const StaticContents& sc, ContentsBuild& vb) const {
-    const SubjectRef self = doc_.volume_subject(v.id);
+    const SubjectRef self = volume_subject(v.id);
     if (!blobs_ || (sc.format != "step" && sc.format != "iges")) {
       vb.status = VolumeStatus::Stale;  // not given the files, or a mesh (M8)
       return;
@@ -843,7 +932,7 @@ class DocumentBuilder {
 
   void parametric(const Volume& v, const feature::FeatureTree& tree, const VolumeBuild& layout,
                   ContentsBuild& vb) const {
-    const SubjectRef self = doc_.volume_subject(v.id);
+    const SubjectRef self = volume_subject(v.id);
     feature::ExternalInputs inputs = inputs_for(v, layout);
     // A template's copy (L4): rebuilt where the template was authored, then
     // moved into place.
@@ -925,8 +1014,13 @@ class DocumentBuilder {
 }  // namespace
 
 DocumentBuild build_layout(const Document& document, const ProductSettings& settings) {
+  return build_layout(document, settings, ParallelFor{});
+}
+
+DocumentBuild build_layout(const Document& document, const ProductSettings& settings,
+                           const ParallelFor& parallel) {
   DocumentBuild out;
-  DocumentBuilder builder(document, settings, out);
+  DocumentBuilder builder(document, settings, out, &parallel);
   builder.run_layout();
   builder.collect_diagnostics();
   return out;

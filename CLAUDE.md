@@ -185,7 +185,9 @@ so they are registered. A new library must also be added to
   header without it and scans them for `.hxx` includes.
 - **Never throws.** Every operation returns `Result<T>` or `Diagnostics` with a
   `kernel.*` code. Results of booleans, transforms and fillets have already
-  passed `check_validity`.
+  passed `check_validity`; boxes and faces bounded by a strictly convex
+  polygon without holes are valid by construction and skip it (decision
+  0033, guarded by random shapes in `test_primitives.cpp`).
 - **Settings in, not constants.** Builders take `ProductSettings` and reject
   sizes under the minimum feature size and shapes outside the working space.
   `audit_tolerances()` compares OCCT's per-entity tolerances with the
@@ -316,7 +318,11 @@ so they are registered. A new library must also be added to
   measures outputs. Status (`VolumeStatus`) is on the result, never saved.
   It is `build_layout()` (layout, boundaries, patches, parameters) then
   `build_contents()` per volume, which only reads the layout and may run
-  on several threads; vs_eval calls the halves itself. A layout reads
+  on several threads; vs_eval calls the halves itself, passing its pool
+  to `build_layout(doc, settings, parallel)`, which builds each level's
+  boundaries and surfaces on every thread into their own slots (the same
+  build as on one thread; boundaries uniting several tools stay on the
+  calling thread; `test_parallel_layout.cpp`, decision 0033). A layout reads
   only `layout_inputs(doc)` (leaf contents, outputs and seeds left out);
   `layout_shape()` also leaves out leaf parameter values, which
   `refresh_parameters()` redoes on a kept layout (decision 0029).

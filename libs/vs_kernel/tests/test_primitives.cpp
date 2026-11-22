@@ -1,5 +1,9 @@
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <numbers>
+#include <random>
+#include <vector>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -209,4 +213,55 @@ TEST_CASE("face_plane reports planar faces with outward normals", "[kernel][quer
     if (!face_plane(f)) ++curved;
   }
   CHECK(curved == 1);
+}
+
+// Decision 0033: make_box() and make_face() of a strictly convex polygon
+// without holes skip check_validity(), since their shapes are valid by
+// construction. This guards that claim on random inputs, and that shapes
+// which aren't (a self-crossing loop) still get the check.
+TEST_CASE("boxes and convex polygons are valid without the check", "[kernel][primitives]") {
+  std::mt19937_64 rng(33);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  const double min = kSettings.min_feature_size_mm();
+  // Sizes from the minimum feature size to hundreds of millimetres.
+  const auto size = [&] { return min * std::pow(10.0, unit(rng) * 5.0); };
+  const auto coordinate = [&] { return (unit(rng) - 0.5) * 1000.0; };
+
+  for (int k = 0; k < 300; ++k) {
+    const dvec3 lo{coordinate(), coordinate(), coordinate()};
+    const dvec3 hi = lo + dvec3{size(), size(), size()};
+    const auto box = make_box(dbox3::from_min_max(lo, hi), kSettings);
+    REQUIRE(box.ok());
+    CHECK_FALSE(check_validity(*box).has_errors());
+  }
+
+  for (int k = 0; k < 300; ++k) {
+    // Corners at increasing angles on an ellipse, in a random plane.
+    const int n = 3 + static_cast<int>(unit(rng) * 10.0);
+    std::vector<double> angles;
+    for (int i = 0; i < n; ++i) angles.push_back(unit(rng) * 2.0 * kPi);
+    std::sort(angles.begin(), angles.end());
+    const double rx = size() * 10.0;
+    const double ry = rx * (0.2 + unit(rng));
+    const dvec3 normal = vs::core::normalize(dvec3{unit(rng) - 0.5, unit(rng) - 0.5, unit(rng) - 0.5});
+    const dvec3 helper = std::abs(normal.x) < 0.9 ? dvec3{1, 0, 0} : dvec3{0, 1, 0};
+    const dvec3 u = vs::core::normalize(vs::core::cross(normal, helper));
+    const dvec3 v = vs::core::cross(normal, u);
+    const dvec3 centre{coordinate() / 2, coordinate() / 2, coordinate() / 2};
+    std::vector<dvec3> points;
+    for (const double a : angles) points.push_back(centre + u * (rx * std::cos(a)) + v * (ry * std::sin(a)));
+    if (unit(rng) < 0.5) std::reverse(points.begin(), points.end());
+    const auto face = make_face(Loop::polygon(points), kSettings);
+    if (!face.ok()) {
+      // Corners closer than the minimum feature size are refused as before.
+      CHECK(face.error().code == "kernel.profile.degenerate_segment");
+      continue;
+    }
+    CHECK_FALSE(check_validity(*face).has_errors());
+  }
+
+  // A bow tie crosses itself: not convex, so it is still checked.
+  const std::array<dvec3, 4> bow_tie{dvec3{0, 0, 0}, {10, 10, 0}, {10, 0, 0}, {0, 10, 0}};
+  const auto crossed = make_face(Loop::polygon(bow_tie), kSettings);
+  CHECK_FALSE(crossed.ok());
 }
