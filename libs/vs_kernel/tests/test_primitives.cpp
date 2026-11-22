@@ -265,3 +265,50 @@ TEST_CASE("boxes and convex polygons are valid without the check", "[kernel][pri
   const auto crossed = make_face(Loop::polygon(bow_tie), kSettings);
   CHECK_FALSE(crossed.ok());
 }
+
+// Decision 0034: the layout checks find which boundaries are boxes, and
+// which patches are rectangles, from face_surface_plane()'s normal, which
+// skips face_plane()'s area integration. The two must give the same
+// normal, to the bit, or the checks would sort boundaries differently.
+TEST_CASE("face_surface_plane() has face_plane()'s normal", "[kernel][primitives]") {
+  std::mt19937_64 rng(34);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  const auto coordinate = [&] { return (unit(rng) - 0.5) * 1000.0; };
+  const auto same = [](const Face& f) {
+    const auto full = face_plane(f);
+    const auto surface = face_surface_plane(f);
+    REQUIRE(full.has_value() == surface.has_value());
+    if (!full) return 0;
+    CHECK(full->normal.x == surface->normal.x);
+    CHECK(full->normal.y == surface->normal.y);
+    CHECK(full->normal.z == surface->normal.z);
+    return 1;
+  };
+  int planar = 0;
+  for (int k = 0; k < 100; ++k) {
+    const dvec3 lo{coordinate(), coordinate(), coordinate()};
+    const dvec3 hi = lo + dvec3{1 + unit(rng) * 50, 1 + unit(rng) * 50, 1 + unit(rng) * 50};
+    auto box = make_box(dbox3::from_min_max(lo, hi), kSettings);
+    REQUIRE(box.ok());
+    // Half of them turned about a random axis: slanted faces, some reversed.
+    if (k % 2 == 1) {
+      const dvec3 axis = vs::core::normalize(dvec3{unit(rng) - 0.5, unit(rng) - 0.5, unit(rng) - 0.5});
+      auto turned = transformed(*box, vs::core::dtransform::rotate(axis, unit(rng) * 2.0 * kPi));
+      REQUIRE(turned.ok());
+      box = std::move(turned);
+    }
+    for (const Face& f : faces(*box)) planar += same(f);
+    // A rectangle on an axis-aligned plane, either way round, as layouts make patches.
+    const double z = coordinate();
+    std::vector<dvec3> corners{{lo.x, lo.y, z}, {hi.x, lo.y, z}, {hi.x, hi.y, z}, {lo.x, hi.y, z}};
+    if (unit(rng) < 0.5) std::reverse(corners.begin(), corners.end());
+    const auto rect = make_face(Loop::polygon(corners), kSettings);
+    REQUIRE(rect.ok());
+    planar += same(*rect);
+  }
+  // A cylinder's side is not a plane to either.
+  const auto cylinder = make_cylinder({{0, 0, 0}, {0, 0, 1}}, 5.0, 10.0, kSettings);
+  REQUIRE(cylinder.ok());
+  for (const Face& f : faces(*cylinder)) planar += same(f);
+  CHECK(planar == 100 * 7 + 2);
+}

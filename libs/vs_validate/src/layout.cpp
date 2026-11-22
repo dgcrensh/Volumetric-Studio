@@ -61,19 +61,31 @@ struct Prepared {
   dbox3 box;
   // The boundary is exactly `box` (one solid, six axis-aligned planar faces
   // each spanning a side): pairs of boxes are checked by arithmetic
-  // (decision 0032). `side_names` are those faces' names, by BoxSide.
+  // (decision 0032).
   bool is_box = false;
-  std::array<std::string, 6> side_names;
+  // The index in kernel::faces() of the face on each side, by BoxSide.
+  // Named only when a contact is reported (side_name()).
+  std::array<std::size_t, 6> side_faces{};
 };
 
-// A volume as one chunk of pairs sees it: its boundary (a deep copy when
-// chunks run on several threads, since OCCT's distance tools may fill
-// caches on the shapes they read) and, once needed, its faces.
+// A volume as one chunk of pairs sees it: once a pair needs OCCT, its
+// boundary (a deep copy when chunks run on several threads, since OCCT's
+// distance tools may fill caches on the shapes they read; pairs of boxes
+// never need one, decision 0034) and its faces.
 struct Side {
   const Prepared* p = nullptr;
-  kernel::Solid boundary;
+  std::optional<kernel::Solid> boundary;
+  bool copied = false;  // `boundary` was made, or copying it failed
   std::vector<BoundaryFace> faces;
   bool faces_ready = false;
+};
+
+// A face contact the box path found, named on the calling thread.
+struct BoxFaceContact {
+  std::size_t a, b;            // prepared volumes
+  std::size_t side_a, side_b;  // BoxSide
+  double area;
+  dbox3 region;
 };
 
 // What checking one pair found, folded into the report in pair order.
@@ -83,6 +95,7 @@ struct PairOutcome {
   Diagnostics contacts;  // contact warnings, reported after every pair's `found`
   std::vector<Overlap> overlaps;
   std::vector<Contact> touching;
+  std::vector<BoxFaceContact> box_faces;  // named in the fold, before `contacts`
 };
 
 // Marks the side of `box` that a face (its box and outward normal) covers
@@ -126,7 +139,8 @@ std::optional<std::array<std::size_t, 6>> box_sides(const Solid& solid, const db
   std::array<bool, 6> taken{};
   std::array<std::size_t, 6> face_at{};
   for (std::size_t i = 0; i < faces.size(); ++i) {
-    const auto plane = kernel::face_plane(faces[i]);
+    // Only the normal is read: no area integration (decision 0034).
+    const auto plane = kernel::face_surface_plane(faces[i]);
     const std::array<bool, 6> before = taken;
     if (!plane ||
         !side_of(box, kernel::bounding_box(faces[i]), normalize(plane->normal), tol, taken)) {
@@ -145,10 +159,12 @@ using BoxBoundaries = std::unordered_map<const VolumeBuild*, dbox3>;
 
 // Pairs per chunk: enough to reuse each chunk's copies of its boundaries.
 constexpr std::size_t kPairsPerChunk = 32;
+// Volumes per chunk when finding which boundaries are boxes.
+constexpr std::size_t kVolumesPerChunk = 64;
 
 Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBuild& build,
                              const ProductSettings& settings, const ParallelFor& parallel,
-                             const BoxBoundaries& boxes);
+                             const BoxBoundaries& boxes, bool sample_every_patch);
 
 class LayoutChecker {
  public:
@@ -174,11 +190,29 @@ class LayoutChecker {
       Prepared p;
       p.volume = &doc_.volumes[i];
       p.build = &vb;
-      p.box = kernel::bounding_box(vb.boundary);
-      classify_box(p);
       vols.push_back(std::move(p));
     }
+    // Each volume's box and whether it is exactly its box, in fixed chunks
+    // on every thread (decision 0034). A task reads only its own volumes'
+    // boundaries, and only their geometry (bounding boxes, planes): no
+    // classifier or distance tool, so nothing fills caches on them.
+    {
+      const std::size_t pchunks = (vols.size() + kVolumesPerChunk - 1) / kVolumesPerChunk;
+      const auto prepare = [&](std::size_t k) {
+        const std::size_t end = std::min(vols.size(), (k + 1) * kVolumesPerChunk);
+        for (std::size_t n = k * kVolumesPerChunk; n < end; ++n) {
+          vols[n].box = kernel::bounding_box(vols[n].build->boundary);
+          classify_box(vols[n]);
+        }
+      };
+      if (parallel_ && pchunks > 1) {
+        parallel_(pchunks, prepare);
+      } else {
+        for (std::size_t k = 0; k < pchunks; ++k) prepare(k);
+      }
+    }
 
+    vols_base_ = vols.data();
     // Only siblings are checked against each other (L3): a child is inside
     // its parent, and meets its parent's neighbours only through surfaces
     // delegated to it.
@@ -191,32 +225,38 @@ class LayoutChecker {
     const bool threads = static_cast<bool>(parallel_) && chunks > 1;
     const auto chunk = [&](std::size_t k) {
       std::unordered_map<std::size_t, Side> sides;  // this chunk's view of each volume
-      const auto side = [&](std::size_t i) -> Side* {
-        auto it = sides.find(i);
-        if (it != sides.end()) return &it->second;
-        Side s;
+      const auto side = [&](std::size_t i) -> Side& {
+        Side& s = sides[i];
         s.p = &vols[i];
-        if (threads) {
-          auto copy = kernel::deep_copy(vols[i].build->boundary);
-          if (!copy) return nullptr;
-          s.boundary = std::move(*copy);
-        } else {
-          s.boundary = vols[i].build->boundary;
+        return s;
+      };
+      // The boundary a pair going through OCCT reads: a deep copy on
+      // several threads, made the first time this chunk needs it.
+      const auto solid = [&](Side& s) -> bool {
+        if (!s.copied) {
+          s.copied = true;
+          if (threads) {
+            auto copy = kernel::deep_copy(s.p->build->boundary);
+            if (copy) s.boundary = std::move(*copy);
+          } else {
+            s.boundary = s.p->build->boundary;
+          }
         }
-        return &sides.emplace(i, std::move(s)).first->second;
+        return s.boundary.has_value();
       };
       const std::size_t end = std::min(pairs.size(), (k + 1) * kPairsPerChunk);
       for (std::size_t n = k * kPairsPerChunk; n < end; ++n) {
         PairOutcome& out = outcomes[n];
-        Side* a = side(pairs[n].first);
-        Side* b = side(pairs[n].second);
+        Side& a = side(pairs[n].first);
+        Side& b = side(pairs[n].second);
         out.tested = true;
-        if (a == nullptr || b == nullptr) {
+        const bool boxes = options_.box_fast_path && a.p->is_box && b.p->is_box;
+        if (!boxes && !(solid(a) && solid(b))) {
           undecided(vols[pairs[n].first], vols[pairs[n].second], "overlap",
                     Diagnostic::error("kernel.copy.failed", "copying a boundary failed"), out);
           continue;
         }
-        check_pair(*a, *b, out);
+        check_pair(a, b, out);
       }
     };
     if (threads) {
@@ -226,6 +266,10 @@ class LayoutChecker {
     }
     Diagnostics contacts;
     for (auto& out : outcomes) {
+      for (const auto& c : out.box_faces) {
+        report_contact(vols[c.a], vols[c.b], side_name(vols[c.a], c.side_a),
+                       side_name(vols[c.b], c.side_b), c.area, c.region, out);
+      }
       if (out.tested) ++report_.pairs_tested;
       report_.diagnostics.append(out.found);
       contacts.append(out.contacts);
@@ -244,7 +288,8 @@ class LayoutChecker {
         if (p.is_box) boxes.emplace(p.build, p.box);
       }
     }
-    report_.diagnostics.append(connection_rules(ix_, build_, settings_, parallel_, boxes));
+    report_.diagnostics.append(connection_rules(ix_, build_, settings_, parallel_, boxes,
+                                                options_.sample_every_patch));
     return std::move(report_);
   }
 
@@ -256,6 +301,7 @@ class LayoutChecker {
   const ParallelFor& parallel_;
   const LayoutOptions& options_;
   double tol_;
+  const Prepared* vols_base_ = nullptr;
   LayoutReport report_;
   // Feature labels of each level's layout, for face names (readable()).
   mutable std::mutex labels_mutex_;
@@ -322,7 +368,7 @@ class LayoutChecker {
     const dbox3 meet = core::intersection(a.box, b.box);
     if (meet.is_empty() || smallest_side(meet) <= tol_) return false;
 
-    auto common = kernel::common(sa.boundary, sb.boundary, {tol_});
+    auto common = kernel::common(*sa.boundary, *sb.boundary, {tol_});
     if (!common) {
       undecided(a, b, "overlap", common.error(), out);
       return true;
@@ -400,11 +446,15 @@ class LayoutChecker {
     const auto sides = box_sides(p.build->boundary, p.box, tol_);
     if (!sides) return;
     p.is_box = true;
-    // Named as faces_of() names them, so either path reports the same names.
-    const auto faces = kernel::faces(p.build->boundary);
-    for (std::size_t k = 0; k < 6; ++k) {
-      p.side_names[k] = face_label(p, faces[(*sides)[k]], (*sides)[k]);
-    }
+    p.side_faces = *sides;
+  }
+
+  // The name of a box's face on `side`, as faces_of() names it, so either
+  // path reports the same names. On the calling thread, for the contacts
+  // the box path found.
+  std::string side_name(const Prepared& p, std::size_t side) const {
+    const std::size_t index = p.side_faces[side];
+    return face_label(p, kernel::faces(p.build->boundary)[index], index);
   }
 
   // --- contact --------------------------------------------------------------------
@@ -458,7 +508,7 @@ class LayoutChecker {
 
   const std::vector<BoundaryFace>& faces_of(Side& s) const {
     if (!s.faces_ready) {
-      const auto list = kernel::faces(s.boundary);
+      const auto list = kernel::faces(*s.boundary);
       for (std::size_t k = 0; k < list.size(); ++k) {
         s.faces.push_back({list[k], kernel::bounding_box(list[k]), kernel::face_plane(list[k]),
                            face_label(*s.p, list[k], k)});
@@ -508,6 +558,8 @@ class LayoutChecker {
   // reported at the middle of where they meet (OCCT's nearest points may be
   // anywhere along it).
   void box_contact(const Prepared& a, const Prepared& b, PairOutcome& outcome) const {
+    const std::size_t ia = static_cast<std::size_t>(&a - vols_base_);
+    const std::size_t ib = static_cast<std::size_t>(&b - vols_base_);
     const auto at = [](const dvec3& v, int axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; };
     double gap2 = 0.0;
     for (int axis = 0; axis < 3; ++axis) {
@@ -548,8 +600,7 @@ class LayoutChecker {
         set(hi, v, hi_v);
         const std::size_t side_a = static_cast<std::size_t>(axis * 2 + (a_high ? 1 : 0));
         const std::size_t side_b = static_cast<std::size_t>(axis * 2 + (a_high ? 0 : 1));
-        report_contact(a, b, a.side_names[side_a], b.side_names[side_b], area,
-                       dbox3::from_min_max(lo, hi), outcome);
+        outcome.box_faces.push_back({ia, ib, side_a, side_b, area, dbox3::from_min_max(lo, hi)});
         any = true;
       }
     }
@@ -578,7 +629,7 @@ class LayoutChecker {
   void contact(Side& sa, Side& sb, PairOutcome& outcome) const {
     const Prepared& a = *sa.p;
     const Prepared& b = *sb.p;
-    auto dist = kernel::min_distance(sa.boundary, sb.boundary);
+    auto dist = kernel::min_distance(*sa.boundary, *sb.boundary);
     if (!dist) {
       undecided(a, b, "contact", dist.error(), outcome);
       return;
@@ -646,25 +697,50 @@ double surface_gap(const dbox3& patch, const dbox3& box) {
 // A patch that is exactly its bounding box: planar on an axis-aligned
 // plane, as large as the rectangle its box spans (no holes, no curved or
 // slanted sides).
-std::optional<dbox3> rectangle_of(const Face& patch, double tol) {
-  const auto plane = kernel::face_plane(patch);
+struct Rectangle {
+  dbox3 box;
+  int axis = 0;  // of its normal
+};
+
+std::optional<Rectangle> rectangle_of(const Face& patch, double tol) {
+  const auto plane = kernel::face_surface_plane(patch);
   if (!plane) return std::nullopt;
   const dvec3 n = normalize(plane->normal);
   const dbox3 box = kernel::bounding_box(patch);
   const dvec3 size = box.size();
   double rectangle = 0.0;
+  int axis = 0;
   if (std::abs(n.x) > 1.0 - 1e-12 && size.x <= tol) {
     rectangle = size.y * size.z;
   } else if (std::abs(n.y) > 1.0 - 1e-12 && size.y <= tol) {
     rectangle = size.z * size.x;
+    axis = 1;
   } else if (std::abs(n.z) > 1.0 - 1e-12 && size.z <= tol) {
     rectangle = size.x * size.y;
+    axis = 2;
   } else {
     return std::nullopt;
   }
   const double area = kernel::surface_area(patch);
   if (!(rectangle > 0.0) || std::abs(area - rectangle) > 1e-9 * rectangle) return std::nullopt;
-  return box;
+  return Rectangle{box, axis};
+}
+
+// How far a point sampled on a patch may stray from the patch's bounding
+// box: the rounding of evaluating a plane at (u, v), far below this within
+// the working space.
+constexpr double kSampleSlack = 1e-9;
+
+// Whether no point on `patch` can lie deeper inside `box` than the
+// tolerance: it lies within the tolerance (less the sampling slack) of
+// one of the box's two sides across its normal. Every point's depth is at
+// most its distance to either of those sides, so deepest_inside_box() of
+// any points on it would be 0.
+bool on_a_side(const Rectangle& patch, const dbox3& box, double tol) {
+  const auto at = [](const dvec3& v, int axis) { return axis == 0 ? v.x : axis == 1 ? v.y : v.z; };
+  const int a = patch.axis;
+  return at(patch.box.max, a) + kSampleSlack - at(box.min, a) <= tol ||
+         at(box.max, a) - (at(patch.box.min, a) - kSampleSlack) <= tol;
 }
 
 // deepest_inside() for a boundary that is exactly `box`: a point more than
@@ -836,7 +912,7 @@ constexpr std::size_t kSurfacesPerChunk = 16;
 
 Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBuild& build,
                              const ProductSettings& settings, const ParallelFor& parallel,
-                             const BoxBoundaries& boxes) {
+                             const BoxBoundaries& boxes, bool sample_every_patch) {
   const Document& document = index.document();
   // The build's surfaces and volumes by id, the first of each as its
   // find_connection() and find_volume() find them.
@@ -887,7 +963,7 @@ Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBu
     }
     // A rectangle on an axis-aligned plane is its bounding box: its
     // distance to a box boundary is the boxes' (decision 0032).
-    const std::optional<dbox3> rectangle = rectangle_of(cb->patch, tol);
+    const std::optional<Rectangle> rectangle = rectangle_of(cb->patch, tol);
     // Points spread over the patch: none may lie inside a volume it joins
     // farther than the reach from its surface. The patch's distance to the
     // solid alone is zero for a patch floating inside it or poking through.
@@ -912,7 +988,7 @@ Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBu
       }
       double off = 0.0;
       if (box_path) {
-        off = surface_gap(*rectangle, box->second);
+        off = surface_gap(rectangle->box, box->second);
       } else {
         auto d = kernel::min_distance(cb->patch, *boundary);
         if (!d) {
@@ -922,7 +998,11 @@ Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBu
         off = d->distance;
       }
       bool inside = false;
-      if (off <= reach) {
+      if (off <= reach && box_path && !sample_every_patch &&
+          on_a_side(*rectangle, box->second, tol)) {
+        // No point of it can lie deeper inside than the tolerance, so
+        // deepest_inside_box() of its samples would be 0 (decision 0034).
+      } else if (off <= reach) {
         if (!samples) {
           auto s = patch_points(cb->patch, settings);
           if (!s) {
@@ -996,7 +1076,8 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
     const dbox3 box = kernel::bounding_box(vb.boundary);
     if (box_sides(vb.boundary, box, settings.linear_tolerance_mm)) boxes.emplace(&vb, box);
   }
-  return connection_rules(model::DocumentIndex(document), build, settings, parallel, boxes);
+  return connection_rules(model::DocumentIndex(document), build, settings, parallel, boxes,
+                          false);
 }
 
 LayoutReport validate_layout(const Document& document, const DocumentBuild& build,
