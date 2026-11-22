@@ -30,12 +30,12 @@ Configuration config(std::string name, std::vector<ConfigurationValue> values) {
 }
 
 const VolumeParameter& parameter(const Document& d, const Id& id) {
+  const VolumeParameter* found = nullptr;
   for (const auto& v : d.volumes) {
-    if (const auto* p = v.find_parameter(id)) return *p;
+    if (const auto* p = v.find_parameter(id)) found = p;
   }
-  FAIL("no parameter");
-  static VolumeParameter none;
-  return none;
+  REQUIRE(found != nullptr);
+  return *found;
 }
 
 // Nested with a variable in Housing's layout (Housing/inset).
