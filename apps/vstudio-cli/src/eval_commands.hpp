@@ -17,4 +17,13 @@ namespace vs::cli {
 // arguments.
 int run_rebuild(std::span<const std::string_view> args, std::ostream& out, std::ostream& err);
 
+// `bench-edit [--volumes N] [--repeat R] [--no-reuse] [--project <p>]`:
+// times what an edit costs outside generation (History's check, the preview
+// tier, the full evaluation) on rows of N parametric boxes with two links,
+// for a contents edit, a parameter edit and an edit upstream of the links;
+// with --project, a project's check, layout and evaluating it again.
+// --no-reuse turns off the engine's layout reuse and checks the state
+// before each edit too, as before decision 0029.
+int run_bench_edit(std::span<const std::string_view> args, std::ostream& out, std::ostream& err);
+
 }  // namespace vs::cli

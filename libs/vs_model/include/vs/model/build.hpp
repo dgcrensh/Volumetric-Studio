@@ -172,6 +172,28 @@ struct ContentsBuild {
 // failed and Stale otherwise. `diagnostics` collects what was built.
 DocumentBuild build_layout(const Document& document, const ProductSettings& settings);
 
+// The document as build_layout() and validate::validate_layout() read it
+// (decision 0029): every volume but a composite has empty contents of its
+// kind, no outputs and seed 0. Two documents with equal layout_inputs()
+// have equal layouts, so a caller may keep a layout build and reuse it;
+// vs_eval's engine builds every layout from this, so that holds by
+// construction.
+Document layout_inputs(const Document& document);
+
+// layout_inputs() with every non-composite volume's parameters' values and
+// expressions cleared (ids and names kept): two documents equal under it
+// have layouts that differ at most in those volumes' `parameters`, which
+// refresh_parameters() redoes.
+Document layout_shape(const Document& document);
+
+// Evaluates the parameters of `document.volumes[index]`, a non-composite
+// volume, into `layout` (a build_layout() result of a document equal to
+// `document` under layout_shape()). Returns false, changing nothing, when
+// that can't stand in for build_layout(): the volume is a composite or
+// failed, or a parameter's value has a diagnostic (now or in `layout`).
+bool refresh_parameters(const Document& document, DocumentBuild& layout, std::size_t index,
+                        const ProductSettings& settings);
+
 // The contents of `document.volumes[index]`, given a build_layout() result
 // of the same document. It only reads `layout`, so calls for different
 // volumes may run on different threads at the same time.
