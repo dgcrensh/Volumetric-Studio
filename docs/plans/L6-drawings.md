@@ -107,7 +107,7 @@ tests generate procedural contents):
 vs_core → ... → vs_eval → vs_proc → vs_draw → vs_gpu
 ```
 
-`project_view()` turns what a view shows into 2D polylines in view
+A `ViewProjector` turns what a view shows into 2D polylines in view
 coordinates (mm, x right, y up):
 
 - **Boundaries** and **connection surfaces** are drawn whole, without
@@ -118,8 +118,8 @@ coordinates (mm, x right, y up):
   the view. B-rep contents are tessellated (`kernel::tessellate()`):
   their edges are B-rep edges (seams of closed surfaces left out) plus
   silhouettes from each face's triangulation. Mesh contents (procedural,
-  imported, baked) contribute border edges, creases sharper than 30° and
-  silhouettes.
+  imported, baked) contribute border edges, creases sharper than 60° (a
+  surface-nets mesh's own facets meet at less) and silhouettes.
 - **Visibility** is our own ray test: every contents triangle is
   projected into a uniform grid over the view; a point of an edge is
   hidden when a triangle covering it lies nearer the viewer by more than
@@ -136,7 +136,7 @@ the view's scale (0.02 sheet mm).
 
 ## Sheets and files (vs_draw)
 
-`make_drawing(evaluation, drawing id, options)` returns a `DrawingResult`:
+`draw(evaluation, drawing, options)` returns a `DrawingResult`:
 the `Sheet` (polylines, filled arrows and text, each with a style and the
 id it came from), every dimension's measured value and whether it is
 stable, and `draw.*` diagnostics:
@@ -145,6 +145,7 @@ stable, and `draw.*` diagnostics:
 | --- | --- | --- |
 | `draw.drawing.missing` | error | no drawing of that id or name |
 | `draw.view.empty` | warning | a view shows nothing (no volume built) |
+| `draw.view.failed` | warning | part of a view couldn't be tessellated or projected |
 | `draw.contents.stale` | warning | a shown volume's contents aren't current (stale or failed: its last valid contents are drawn, if any) |
 | `draw.dimension.unresolved` | error | a stable anchor couldn't be found (its boundary failed, no such face, no such hole) |
 | `draw.dimension.not_parallel` | error, or `lost` | a plane not facing along the dimension, or a cylinder not facing the viewer |

@@ -125,7 +125,7 @@ Applications may link any library, but never each other, and nothing links an
 application.
 
 ```
-vs_core → vs_kernel → vs_sketch → vs_feature → vs_model → vs_validate → vs_mesh → vs_eval → vs_proc → vs_gpu
+vs_core → vs_kernel → vs_sketch → vs_feature → vs_model → vs_validate → vs_mesh → vs_eval → vs_proc → vs_draw → vs_gpu
 apps: vs_app, vstudio-cli
 ```
 
@@ -390,6 +390,16 @@ so they are registered. A new library must also be added to
   history prunes values whose target an edit removed
   (`prune_configurations()`). Design tables are the configurations as
   CSV (rows by name keep their ids; importing replaces them all).
+
+- **Drawings** (L6, decision 0038, `drawing.hpp`): `Document::drawings`
+  (written to JSON only when set) hold each drawing's sheet, views
+  (direction, shown volumes, what is drawn, scale, sheet position) and
+  dimensions (horizontal, vertical or diameter between `Anchor`s on the
+  origin, a boundary, a connection surface or contents). Only the
+  definition is saved; `layout_inputs()` strips drawings, so nothing that
+  builds sees them. `check()` adds `model.drawing.*`;
+  `prune_drawings()` drops what an edit removed (the app's history calls
+  it after every edit). Nothing can drive a dimension.
 
 ## vs_validate essentials
 
@@ -711,6 +721,37 @@ so they are registered. A new library must also be added to
   RSS) cover M12. `test_mvp_workflows.cpp` (`[mvp]`, M17) walks
   block out, fill, iterate, swap and ship end to end.
 
+## vs_draw essentials (L6)
+
+- **What.** Drawings from evaluations (decision 0038, plan
+  `docs/plans/L6-drawings.md`). `draw(evaluation, drawing, options)`
+  returns a `DrawingResult`: a `Sheet` (paths and texts in sheet mm,
+  origin lower left, each with a `Pen`), every dimension's value and
+  text, and `draw.*` diagnostics. Nothing is stored: a drawing is
+  computed from each evaluation, so disposable dimensions follow their
+  contents.
+- **Anchors.** On the origin, a boundary or a connection surface:
+  stable (missing is `draw.dimension.unresolved`, an error). On contents:
+  disposable, written in parentheses in their own pen, and
+  `draw.dimension.lost` (a warning) when gone. Extremes are exact for
+  B-reps (`kernel::extent()`), vertices' for meshes; a composite's
+  contents are its leaves'. Faces must face along the dimension, circles
+  the viewer (`draw.dimension.not_parallel`, `.not_circle`).
+- **Views** (`view.hpp`): `ViewProjector` draws boundaries and patches
+  whole as outlines, and contents with our own hidden-line removal
+  (B-rep edges and silhouettes from `kernel::tessellate()`, mesh borders,
+  creases and silhouettes; a ray test through a uniform grid; sampled,
+  split, simplified). FP64, fixed order, threads folded in order: the
+  same files on any thread count. Edge-on facets neither hide nor count
+  as front faces.
+- **Files** (`sheet.hpp`): our own SVG, PDF 1.4 and DXF R12 writers,
+  fixed precision; `write_sheet()` by extension (`draw.file.*`).
+  `standard_drawing()` lays out front, top, right and isometric views
+  third-angle with overall dimensions.
+- **CLI**: `vstudio-cli drawing <project> [<name>] [--standard [<name>]]
+  [--save] [--svg out] [--pdf out] [--dxf out] [--config name]
+  [--threads N]`.
+
 ## vs_gpu essentials (L1, L1b)
 
 - **What.** Procedural fields sampled on the GPU with exactly the CPU's
@@ -764,7 +805,7 @@ so they are registered. A new library must also be added to
 - **Build** with the `windows-msvc-app` preset only (Qt 6 from the vcpkg
   `app` feature; its first build compiles qtbase twice, for the host tools
   and the target). CI doesn't build the app. The Qt-free files
-  (`authoring`, `configurations`, `dimension_drag`, `exporter`, `graph_edit`, `guidance`,
+  (`authoring`, `configurations`, `dimension_drag`, `drawings`, `exporter`, `graph_edit`, `guidance`,
   `history`, `node_preview`, `outline`, `picking`, `reference_choices`,
   `scene`, `ship`, `sketch_editor`) are `vs_app_core`, built on every
   platform and tested by `vs_app_core_tests` on every CI job (plan H1);
