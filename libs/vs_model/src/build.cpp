@@ -6,9 +6,6 @@
 #include <filesystem>
 #include <fstream>
 #include <numbers>
-#include <map>
-#include <mutex>
-#include <cstdlib>
 
 #include <fmt/format.h>
 
@@ -430,22 +427,10 @@ class DocumentBuilder {
                       "its two corners don't span a box with volume"));
       return {};
     }
-    static const bool proto = [] { const char* e = std::getenv("VS_BOX_REUSE"); return e && *e == '1'; }();
-    static std::mutex m;
-    static std::map<std::array<double, 6>, Solid> boxes;
-    const std::array<double, 6> key{lo.x, lo.y, lo.z, hi.x, hi.y, hi.z};
-    if (proto) {
-      std::lock_guard lock(m);
-      if (auto it = boxes.find(key); it != boxes.end()) return it->second;
-    }
     auto s = kernel::make_box(core::dbox3::from_min_max(lo, hi), settings_);
     if (!s) {
       diags.add(about(by, s.error()));
       return {};
-    }
-    if (proto) {
-      std::lock_guard lock(m);
-      boxes.emplace(key, *s);
     }
     return *s;
   }
