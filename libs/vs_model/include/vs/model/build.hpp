@@ -186,10 +186,10 @@ DocumentBuild build_layout(const Document& document, const ProductSettings& sett
 
 // The document as build_layout() and validate::validate_layout() read it
 // (decision 0029): every volume but a composite has empty contents of its
-// kind, no outputs and seed 0. Two documents with equal layout_inputs()
-// have equal layouts, so a caller may keep a layout build and reuse it;
-// vs_eval's engine builds every layout from this, so that holds by
-// construction.
+// kind, no outputs and seed 0, and there are no drawings (L6). Two
+// documents with equal layout_inputs() have equal layouts, so a caller may
+// keep a layout build and reuse it; vs_eval's engine builds every layout
+// from this, so that holds by construction.
 Document layout_inputs(const Document& document);
 
 // layout_inputs() with every non-composite volume's parameters' values and

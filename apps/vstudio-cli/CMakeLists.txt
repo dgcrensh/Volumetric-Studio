@@ -7,6 +7,7 @@ vs_add_application(vstudio-cli
     src/bench_commands.cpp
     src/bench_edit.cpp
     src/config_commands.cpp
+    src/draw_commands.cpp
     src/eval_commands.cpp
     src/feature_commands.cpp
     src/kernel_commands.cpp
@@ -28,6 +29,7 @@ vs_add_application(vstudio-cli
     vs::vs_mesh
     vs::vs_eval
     vs::vs_proc
+    vs::vs_draw
     vs::vs_gpu)
 
 if(VS_BUILD_TESTS)
@@ -384,4 +386,47 @@ if(VS_BUILD_TESTS)
   set_tests_properties("vstudio-cli: info builds the active configuration" PROPERTIES
     PASS_REGULAR_EXPRESSION "configurations \\(2\\).*Heavy +1 value, active.*Base +current +boundary 32000 mm"
     FIXTURES_REQUIRED config_active)
+endif()
+
+if(VS_BUILD_TESTS)
+  # Drawings (L6).
+  set(cli_data "${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  add_test(NAME "vstudio-cli: drawing --standard draws the bracket in three formats"
+    COMMAND vstudio-cli drawing "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj"
+            --standard Overview --svg "${CMAKE_CURRENT_BINARY_DIR}/bracket-drawing.svg"
+            --pdf "${CMAKE_CURRENT_BINARY_DIR}/bracket-drawing.pdf"
+            --dxf "${CMAKE_CURRENT_BINARY_DIR}/bracket-drawing.dxf")
+  set_tests_properties("vstudio-cli: drawing --standard draws the bracket in three formats"
+    PROPERTIES PASS_REGULAR_EXPRESSION
+    "drawing +Overview +420 x 297 mm, 4 views, 3 dimensions.*view +Front +front +1:1 +[1-9][0-9]* visible.*view +Isometric.*dim 1 +Front +horizontal +60 +stable.*dim 2 +Front +vertical +50 +stable.*dim 3 +Top +vertical +40 +stable.*diagnostics 0 errors, 0 warnings.*wrote .*bracket-drawing\\.svg.*wrote .*bracket-drawing\\.pdf.*wrote .*bracket-drawing\\.dxf.*result +ok")
+  add_test(NAME "vstudio-cli: drawing lists disposable dimensions on generated contents"
+    COMMAND vstudio-cli drawing "${cli_data}/drawn_ball.vsproj" "Sheet 1" --threads 2)
+  set_tests_properties("vstudio-cli: drawing lists disposable dimensions on generated contents"
+    PROPERTIES PASS_REGULAR_EXPRESSION
+    "view +Front +front +2:1 +[1-9][0-9]* visible, [1-9][0-9]* hidden.*dim 1 +Front +horizontal +40 +stable.*dim 2 +Front +horizontal +\\(39\\.98\\) +disposable +Shelled contents min to Shelled contents max.*result +ok")
+  add_test(NAME "vstudio-cli: drawing needs a known drawing"
+    COMMAND vstudio-cli drawing "${cli_data}/drawn_ball.vsproj" Nope)
+  set_tests_properties("vstudio-cli: drawing needs a known drawing" PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME "vstudio-cli: drawing refuses an unknown file format"
+    COMMAND vstudio-cli drawing "${cli_data}/drawn_ball.vsproj"
+            --svg "${CMAKE_CURRENT_BINARY_DIR}/drawn.png")
+  set_tests_properties("vstudio-cli: drawing refuses an unknown file format" PROPERTIES
+    WILL_FAIL TRUE)
+  # --save keeps a standard drawing in a copy of the bracket.
+  set(drawn_project "${CMAKE_CURRENT_BINARY_DIR}/drawn-bracket.vsproj")
+  add_test(NAME "vstudio-cli: copy the bracket for drawings"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${PROJECT_SOURCE_DIR}/libs/vs_model/tests/data/bracket.vsproj" "${drawn_project}")
+  set_tests_properties("vstudio-cli: copy the bracket for drawings" PROPERTIES
+    FIXTURES_SETUP drawn_project)
+  add_test(NAME "vstudio-cli: drawing --save keeps a standard drawing"
+    COMMAND vstudio-cli drawing "${drawn_project}" --standard Overview --save)
+  set_tests_properties("vstudio-cli: drawing --save keeps a standard drawing" PROPERTIES
+    PASS_REGULAR_EXPRESSION "saved +drawing 'Overview'.*result +ok"
+    FIXTURES_REQUIRED drawn_project FIXTURES_SETUP drawn_saved)
+  add_test(NAME "vstudio-cli: drawing draws a saved drawing by name"
+    COMMAND vstudio-cli drawing "${drawn_project}" Overview)
+  set_tests_properties("vstudio-cli: drawing draws a saved drawing by name" PROPERTIES
+    PASS_REGULAR_EXPRESSION "drawing +Overview .*dim 1 +Front +horizontal +60 +stable.*result +ok"
+    FIXTURES_REQUIRED drawn_saved)
 endif()

@@ -3,6 +3,7 @@
 //   vs_app [project] [--select <volume or surface name>] [--view iso|top|front|right|...]
 //          [--context <volume name>] [--sketch <sketch name>] [--edit <feature name>]
 //          [--graph <volume name> [--node <node name>] [--slice]]
+//          [--drawing <name>] [--drawing-image <out.bmp>]
 //          [--size <w>x<h>] [--screenshot <out.bmp>] [--viewport-image <out.bmp>] [--cpu]
 //
 // (vcpkg's Qt here is built without PNG support, so images are BMP.)
@@ -12,6 +13,10 @@
 // dialog (with --screenshot it is saved too, as <out>-dialog.bmp).
 // --graph opens a procedural volume's graph in the node editor (M15),
 // --node selects and previews one of its nodes (--slice: fields as a slice).
+// --drawing opens a drawing by name (L6; a standard one of that name is made
+// when the project has none); --drawing-image saves its sheet (rendered off
+// screen) once drawn, and --screenshot then grabs the drawing window too, as
+// <out>-drawing-window.bmp.
 //
 // With --screenshot or --viewport-image the app opens the project, waits
 // for its evaluation to reach the screen, saves the window (as the screen
@@ -31,6 +36,7 @@
 #include <optional>
 #include <thread>
 
+#include "drawing_window.hpp"
 #include "feature_dialog.hpp"
 #include "main_window.hpp"
 #include "node_editor.hpp"
@@ -65,7 +71,8 @@ int main(int argc, char** argv) {
     }
   } join{gpu_check};
 
-  QString project, select, view, screenshot, viewport_image, context, sketch, edit, graph, node;
+  QString project, select, view, screenshot, viewport_image, context, sketch, edit, graph, node, drawing,
+      drawing_image;
   bool slice = false;
   std::optional<QSize> size;
   const QStringList args = QApplication::arguments();
@@ -88,6 +95,10 @@ int main(int argc, char** argv) {
       graph = args[++i];
     } else if (a == QLatin1String("--node") && has_value) {
       node = args[++i];
+    } else if (a == QLatin1String("--drawing") && has_value) {
+      drawing = args[++i];
+    } else if (a == QLatin1String("--drawing-image") && has_value) {
+      drawing_image = args[++i];
     } else if (a == QLatin1String("--cpu")) {
       // handled above
     } else if (a == QLatin1String("--slice")) {
@@ -110,7 +121,11 @@ int main(int argc, char** argv) {
     window.open_project(std::filesystem::path(project.toStdWString()));
   }
 
-  const bool capture = !screenshot.isEmpty() || !viewport_image.isEmpty();
+  const bool capture = !screenshot.isEmpty() || !viewport_image.isEmpty() || !drawing_image.isEmpty();
+  // A capture quits without asking about edits it made (--drawing may add a drawing).
+  if (capture) window.set_unsaved_prompt([] { return vs::app::MainWindow::UnsavedChoice::Discard; });
+  // A capture quits without asking about the edits it made (--drawing may add one).
+  if (capture) window.set_unsaved_prompt([] { return vs::app::MainWindow::UnsavedChoice::Discard; });
   bool applied = false;
   // The dialog --edit opened; it may be closed (and deleted) by the time
   // the capture runs (H7).
@@ -168,10 +183,23 @@ int main(int argc, char** argv) {
       }
     }
     if (window.sketch_mode() != nullptr) window.sketch_mode()->view().fit();
+    // --drawing opens a drawing of the project by name, or makes a
+    // standard one of that name when there is none (L6).
+    bool drawing_open = false;
+    if (!drawing.isEmpty()) {
+      if (const auto* d = doc.find_drawing(drawing.toStdString())) {
+        drawing_open = window.open_drawing(d->id);
+      } else {
+        drawing_open = !window.new_drawing(drawing.toStdString()).is_null();
+      }
+    }
     if (!capture) return;
-    // Let the last frames reach the screen first.
-    QTimer::singleShot(2500, &window, [&] {
+    auto finish = [&, drawing_open] {
       if (!viewport_image.isEmpty()) window.viewport().render_image().save(viewport_image);
+      if (!drawing_image.isEmpty()) {
+        const QSize at = size ? *size : QSize(1600, 1131);
+        window.drawing_view().render_image(at).save(drawing_image);
+      }
       if (!screenshot.isEmpty()) {
         // A window off every screen has none.
         if (QScreen* screen = window.screen()) screen->grabWindow(window.winId()).save(screenshot);
@@ -180,9 +208,23 @@ int main(int argc, char** argv) {
           out.replace(QStringLiteral(".bmp"), QStringLiteral("-dialog.bmp"));
           if (QScreen* screen = dialog->screen()) screen->grabWindow(dialog->winId()).save(out);
         }
+        if (drawing_open) {
+          QString out = screenshot;
+          out.replace(QStringLiteral(".bmp"), QStringLiteral("-drawing-window.bmp"));
+          auto& dw = window.drawing_window();
+          if (QScreen* screen = dw.screen()) screen->grabWindow(dw.winId()).save(out);
+        }
       }
       QApplication::quit();
-    });
+    };
+    if (drawing_open) {
+      // Wait for the drawing's sheet, then let it reach the screen.
+      QObject::connect(&window, &vs::app::MainWindow::drawingShown, &window,
+                       [&, finish] { QTimer::singleShot(1500, &window, finish); }, Qt::SingleShotConnection);
+      return;
+    }
+    // Let the last frames reach the screen first.
+    QTimer::singleShot(2500, &window, finish);
   });
 
   return QApplication::exec();

@@ -22,6 +22,9 @@
 #include <TopoDS_Face.hxx>
 #include <gp_Cylinder.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Quaternion.hxx>
+#include <gp_Trsf.hxx>
+#include <TopLoc_Location.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepGProp.hxx>
@@ -100,6 +103,35 @@ dbox3 bounding_box(const Shape& shape) {
   double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
   box.Get(x0, y0, z0, x1, y1, z1);
   return dbox3::from_min_max({x0, y0, z0}, {x1, y1, z1});
+}
+
+std::optional<std::pair<double, double>> extent(const Shape& shape, const dvec3& direction) {
+  if (shape.is_empty()) return std::nullopt;
+  const double len = core::length(direction);
+  if (!std::isfinite(len) || len == 0.0) return std::nullopt;
+  const dvec3 d = direction / len;
+  // Along a principal axis, the box itself.
+  for (int axis = 0; axis < 3; ++axis) {
+    const double a = d[static_cast<std::size_t>(axis)];
+    const bool principal = std::abs(a) == 1.0;
+    if (!principal) continue;
+    const dbox3 box = bounding_box(shape);
+    if (box.is_empty()) return std::nullopt;
+    const double lo = box.min[static_cast<std::size_t>(axis)];
+    const double hi = box.max[static_cast<std::size_t>(axis)];
+    return a > 0 ? std::pair{lo * len, hi * len} : std::pair{-hi * len, -lo * len};
+  }
+  // Otherwise turn the direction onto +x (a location only: the geometry is
+  // shared) and take the box's x range.
+  gp_Trsf turn;
+  turn.SetRotation(gp_Quaternion(gp_Vec(d.x, d.y, d.z), gp_Vec(1, 0, 0)));
+  const TopoDS_Shape moved = topo(shape).Moved(TopLoc_Location(turn));
+  Bnd_Box box;
+  BRepBndLib::AddOptimal(moved, box, /*useTriangulation=*/false, /*useShapeTolerance=*/false);
+  if (box.IsVoid()) return std::nullopt;
+  double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  return std::pair{x0 * len, x1 * len};
 }
 
 Result<DistanceResult> min_distance(const Shape& a, const Shape& b) {

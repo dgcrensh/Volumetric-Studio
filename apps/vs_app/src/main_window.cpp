@@ -42,6 +42,9 @@
 #include "authoring.hpp"
 #include "configurations.hpp"
 #include "design_table_dialog.hpp"
+#include "drawing_dialogs.hpp"
+#include "drawing_window.hpp"
+#include "drawings.hpp"
 #include "feature_dialog.hpp"
 #include "model_dialogs.hpp"
 #include "node_editor.hpp"
@@ -50,6 +53,8 @@
 #include "sketch_mode.hpp"
 #include "viewport.hpp"
 #include "vs/core/version.hpp"
+#include "vs/draw/drawing.hpp"
+#include "vs/draw/sheet.hpp"
 #include "vs/eval/import.hpp"
 #include "vs/gpu/gpu.hpp"
 #include "vs/kernel/queries.hpp"
@@ -315,6 +320,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     selection_ = {};
     refresh_edit_actions();
     refresh_configurations();
+    open_drawing({});
+    refresh_drawings();
     update_title();
   });
   connect(viewport_, &Viewport::picked, this, [this](core::Id subject) {
@@ -385,6 +392,7 @@ void MainWindow::build_menus() {
   file->addAction(tr("Export S&TEP…"), this, &MainWindow::export_step_dialog);
   file->addAction(tr("Export &STL…"), this, [this] { export_dialog(ExportFormat::Stl); });
   file->addAction(tr("Export &3MF…"), this, [this] { export_dialog(ExportFormat::ThreeMf); });
+  file->addAction(tr("Export &Drawing…"), this, &MainWindow::export_drawing_dialog);
   file->addSeparator();
   file->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -453,6 +461,8 @@ void MainWindow::build_menus() {
   model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, [this] { validate(); });
   model->addSeparator();
   model->addAction(tr("&Design Table…"), this, [this] { open_design_table(); });
+  model->addSeparator();
+  model->addAction(tr("New &Drawing"), this, [this] { new_drawing(); });
 
   QMenu* view = menuBar()->addMenu(tr("V&iew"));
   fit_action_ = view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
@@ -563,7 +573,7 @@ void MainWindow::build_docks() {
   vb->addWidget(remove_var);
   vb->addStretch(1);
   vl->addLayout(vb);
-  dock(tr("Variables"), "variables", vars, Qt::LeftDockWidgetArea);
+  QDockWidget* variables_dock = dock(tr("Variables"), "variables", vars, Qt::LeftDockWidgetArea);
   connect(add_var, &QPushButton::clicked, this, [this] {
     const Id volume = shown_tree();
     const auto* tree = tree_of(history_.project().document, volume);
@@ -644,6 +654,65 @@ void MainWindow::build_docks() {
     if (!graph_volume_.is_null()) bake(graph_volume_);
   });
   connect(node_editor_, &NodeEditor::closeRequested, this, &MainWindow::leave_graph);
+
+  // L6: drawings, tabbed with the variables; the drawing window beside.
+  auto* dw = new QWidget;
+  auto* dl = new QVBoxLayout(dw);
+  dl->setContentsMargins(0, 0, 0, 0);
+  drawings_ = make_tree({tr("Drawing")});
+  drawings_->setObjectName(QStringLiteral("drawings"));
+  drawings_->setAlternatingRowColors(false);
+  drawings_->setIndentation(14);
+  drawings_->setContextMenuPolicy(Qt::CustomContextMenu);
+  dl->addWidget(drawings_);
+  auto* db = new QHBoxLayout;
+  auto* new_drawing_button = new QPushButton(tr("New"));
+  new_drawing_button->setToolTip(tr("A standard drawing of what is shown: front, top, right and isometric "
+                                    "views with overall dimensions"));
+  auto* add_button = new QPushButton(tr("Add…"));
+  add_button->setToolTip(tr("Add a view to the selected drawing, or a dimension to the selected view"));
+  auto* delete_button = new QPushButton(tr("Delete"));
+  db->addWidget(new_drawing_button);
+  db->addWidget(add_button);
+  db->addWidget(delete_button);
+  db->addStretch(1);
+  dl->addLayout(db);
+  drawings_dock_ = dock(tr("Drawings"), "drawings", dw, Qt::LeftDockWidgetArea);
+  tabifyDockWidget(variables_dock, drawings_dock_);
+  variables_dock->raise();
+  connect(new_drawing_button, &QPushButton::clicked, this, [this] { new_drawing(); });
+  connect(add_button, &QPushButton::clicked, this, [this] {
+    const DrawingItem item = current_drawing_item();
+    if (item.kind == static_cast<int>(DrawingRowKind::Drawing)) {
+      add_drawing_view(item.drawing);
+    } else if (item.kind == static_cast<int>(DrawingRowKind::View)) {
+      add_drawing_dimension(item.drawing, item.id);
+    } else if (item.kind == static_cast<int>(DrawingRowKind::Dimension)) {
+      const model::Drawing* d = history_.project().document.find_drawing(item.drawing);
+      const model::DrawingDimension* m = d != nullptr ? d->find_dimension(item.id) : nullptr;
+      add_drawing_dimension(item.drawing, m != nullptr ? m->view : Id{});
+    }
+  });
+  connect(delete_button, &QPushButton::clicked, this, [this] {
+    const DrawingItem item = current_drawing_item();
+    if (item.kind >= 0) delete_drawing_item(item.id);
+  });
+  connect(drawings_, &QTreeWidget::customContextMenuRequested, this, &MainWindow::drawings_context_menu);
+  connect(drawings_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) {
+    const DrawingItem item = current_drawing_item();
+    if (item.kind == static_cast<int>(DrawingRowKind::Drawing)) open_drawing(item.id);
+    if (item.kind == static_cast<int>(DrawingRowKind::View)) edit_drawing_view(item.drawing, item.id);
+    if (item.kind == static_cast<int>(DrawingRowKind::Dimension)) edit_drawing_dimension(item.drawing, item.id);
+  });
+  connect(drawings_, &QTreeWidget::itemSelectionChanged, this, [this] {
+    // Selecting anything of another drawing shows that drawing, if one is open.
+    const DrawingItem item = current_drawing_item();
+    if (item.kind >= 0 && drawing_window_->isVisible() && item.drawing != drawing_window_->drawing()) {
+      open_drawing(item.drawing);
+    }
+  });
+  drawing_window_ = new DrawingWindow(this);
+  connect(drawing_window_, &DrawingWindow::exportRequested, this, &MainWindow::export_drawing_dialog);
 }
 
 // --- projects ---------------------------------------------------------------------------
@@ -672,6 +741,8 @@ void MainWindow::show_project() {
   update_title();
   refresh_graph();
   refresh_configurations();
+  refresh_drawings();
+  redraw();
   emit historyChanged();
 }
 
@@ -810,9 +881,13 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
                                  .arg(drag_->value, 0, 'g', 6)
                                  .arg(snapshot->evaluate_ms + snapshot->scene_ms, 0, 'f', 0));
     }
+    redraw(snapshot);
     emit dragPreviewShown();
     return;
   }
+  // The drawing as this evaluation's project has it (a dialog's preview
+  // included), measured from it.
+  redraw(snapshot, snapshot->project ? snapshot->project->document.find_drawing(drawing_window_->drawing()) : nullptr);
   // Keep the selection if it still exists.
   const auto& doc = snapshot->evaluation.document;
   if ((selection_.kind == Selection::Kind::Volume && doc.find_volume(selection_.id) == nullptr) ||
@@ -1645,6 +1720,321 @@ DesignTableDialog* MainWindow::open_design_table() {
   auto* d = new DesignTableDialog(history_.project().document, this);
   start_dialog(d, [d] { return set_design_table(d->table()); });
   return d;
+}
+
+// --- drawings (L6) ----------------------------------------------------------------------------
+
+namespace {
+constexpr int kRoleDrawing = Qt::UserRole + 2;  // a drawings dock row's drawing
+}  // namespace
+
+SheetView& MainWindow::drawing_view() { return drawing_window_->view(); }
+
+const Id& MainWindow::shown_drawing() const { return drawing_window_->drawing(); }
+
+MainWindow::DrawingItem MainWindow::current_drawing_item() const {
+  const QTreeWidgetItem* item = drawings_->currentItem();
+  if (item == nullptr) return {};
+  const auto id = row_id(item);
+  const auto drawing = Id::parse(sstr(item->data(0, kRoleDrawing).toString()));
+  if (!id || !drawing) return {};
+  return {item->data(0, kRoleKind).toInt(), *id, *drawing};
+}
+
+void MainWindow::refresh_drawings() {
+  if (drawings_ == nullptr) return;
+  const DrawingItem current = current_drawing_item();
+  const QSignalBlocker block(drawings_);
+  drawings_->clear();
+  const Id shown = drawing_window_ != nullptr ? drawing_window_->drawing() : Id{};
+  if (!session_->has_project()) return;
+  const model::Document& doc = history_.project().document;
+  // The drawing shown was removed (an edit, or undone to before it).
+  if (!shown.is_null() && doc.find_drawing(shown) == nullptr) {
+    drawing_window_->set_drawing({}, {});
+    drawing_window_->hide();
+  } else if (!shown.is_null()) {
+    drawing_window_->set_title(qstr(doc.find_drawing(shown)->name));
+  }
+  std::vector<QTreeWidgetItem*> parents;
+  const QColor disposable(0xb3, 0x5c, 0x00);
+  for (const DrawingRow& row : drawing_rows(doc)) {
+    auto* item = new QTreeWidgetItem;
+    item->setText(0, qstr(row.label));
+    item->setData(0, kRoleKind, static_cast<int>(row.kind));
+    item->setData(0, kRoleId, qstr(row.id.to_string()));
+    item->setData(0, kRoleDrawing, qstr(row.drawing.to_string()));
+    if (row.kind == DrawingRowKind::Drawing) {
+      item->setIcon(0, swatch(QColor(90, 100, 115), QChar('D'), true));
+      if (row.id == drawing_window_->drawing() && !row.id.is_null()) {
+        QFont f = item->font(0);
+        f.setBold(true);
+        item->setFont(0, f);
+      }
+    }
+    if (row.disposable) {
+      QFont f = item->font(0);
+      f.setItalic(true);
+      item->setFont(0, f);
+      item->setForeground(0, disposable);
+      item->setToolTip(0, tr("Disposable: on generated contents, measured again from every evaluation and "
+                             "dropped (with a warning) when its anchor goes"));
+    }
+    const auto depth = static_cast<std::size_t>(std::max(0, row.depth));
+    parents.resize(depth + 1);
+    parents[depth] = item;
+    if (depth == 0 || parents[depth - 1] == nullptr) {
+      drawings_->addTopLevelItem(item);
+    } else {
+      parents[depth - 1]->addChild(item);
+    }
+    if (row.id == current.id && current.kind == static_cast<int>(row.kind)) drawings_->setCurrentItem(item);
+  }
+  drawings_->expandAll();
+}
+
+void MainWindow::redraw(SnapshotPtr snapshot, const model::Drawing* definition) {
+  const Id id = drawing_window_->drawing();
+  if (id.is_null()) return;
+  if (!snapshot) snapshot = session_->latest();
+  if (!snapshot) return;
+  if (definition == nullptr) definition = history_.project().document.find_drawing(id);
+  if (definition == nullptr) return;
+  draw::DrawOptions options;
+  options.settings = session_->settings();
+  // Only the newest request is drawn: one still waiting for the worker
+  // when a newer one comes is skipped there.
+  const std::uint64_t ticket = ++*draw_requested_;
+  auto requested = draw_requested_;
+  auto result = std::make_shared<draw::DrawingResult>();
+  auto skipped = std::make_shared<bool>(false);
+  session_->run_in_background(
+      [snapshot, drawing = *definition, options, ticket, requested, result, skipped] {
+        if (requested->load() != ticket) {
+          *skipped = true;
+          return;
+        }
+        *result = draw::draw(snapshot->evaluation, drawing, options);
+      },
+      [this, id, result, skipped, ticket] {
+        drawn_ticket_ = std::max(drawn_ticket_, ticket);
+        if (*skipped || drawing_window_->drawing() != id) return;
+        drawing_window_->show_result(result);
+        ++drawings_shown_;
+        emit drawingShown();
+      });
+}
+
+bool MainWindow::open_drawing(const Id& drawing) {
+  if (drawing.is_null()) {
+    drawing_window_->set_drawing({}, {});
+    drawing_window_->hide();
+    refresh_drawings();
+    return true;
+  }
+  const model::Drawing* d = history_.project().document.find_drawing(drawing);
+  if (d == nullptr) return false;
+  drawing_window_->set_drawing(drawing, qstr(d->name));
+  drawing_window_->show();
+  drawing_window_->raise();
+  refresh_drawings();
+  redraw();
+  return true;
+}
+
+Id MainWindow::new_drawing(const std::string& name) {
+  const SnapshotPtr s = session_->latest();
+  if (!s || !session_->has_project()) return {};
+  model::Drawing d = draw::standard_drawing(s->evaluation.document, s->evaluation.build, name);
+  if (d.id.is_null()) d.id = Id::random();
+  const Id id = d.id;
+  if (apply(add_drawing(std::move(d))).has_errors()) return {};
+  open_drawing(id);
+  return id;
+}
+
+core::Diagnostics MainWindow::delete_drawing_item(const Id& item) {
+  for (const auto& d : history_.project().document.drawings) {
+    if (d.id == item) return apply(remove_drawing(item));
+    if (d.find_view(item) != nullptr) return apply(remove_view(d.id, item));
+    if (d.find_dimension(item) != nullptr) return apply(remove_dimension(d.id, item));
+  }
+  core::Diagnostics out;
+  out.add(core::Diagnostic::error("app.drawing.missing", "No drawing, view or dimension of that id"));
+  return out;
+}
+
+core::Diagnostics MainWindow::rename_drawing_item(const Id& item, const std::string& name) {
+  for (const auto& d : history_.project().document.drawings) {
+    if (d.id == item) return apply(rename_drawing(item, name));
+    if (const model::DrawingView* v = d.find_view(item)) {
+      model::DrawingView renamed = *v;
+      renamed.name = name;
+      return apply(update_view(d.id, renamed));
+    }
+  }
+  core::Diagnostics out;
+  out.add(core::Diagnostic::error("app.drawing.missing", "Only drawings and views have names"));
+  return out;
+}
+
+ViewDialog* MainWindow::add_drawing_view(const Id& drawing) {
+  const model::Drawing* d = history_.project().document.find_drawing(drawing);
+  if (d == nullptr) return nullptr;
+  model::DrawingView v;
+  v.id = Id::random();
+  v.name = "View";
+  v.x = d->width / 2;
+  v.y = d->height / 2;
+  v.scale = d->views.empty() ? 1.0 : d->views.front().scale;
+  auto* dialog = new ViewDialog(v, history_.project().document, this);
+  start_dialog(dialog, [drawing, dialog] { return add_view(drawing, dialog->value()); });
+  return dialog;
+}
+
+ViewDialog* MainWindow::edit_drawing_view(const Id& drawing, const Id& view) {
+  const model::Drawing* d = history_.project().document.find_drawing(drawing);
+  const model::DrawingView* v = d != nullptr ? d->find_view(view) : nullptr;
+  if (v == nullptr) return nullptr;
+  auto* dialog = new ViewDialog(*v, history_.project().document, this);
+  start_dialog(dialog, [drawing, dialog] { return update_view(drawing, dialog->value()); });
+  return dialog;
+}
+
+DimensionDialog* MainWindow::add_drawing_dimension(const Id& drawing, const Id& view) {
+  const SnapshotPtr s = session_->latest();
+  const model::Drawing* d = history_.project().document.find_drawing(drawing);
+  if (!s || d == nullptr) return nullptr;
+  if (d->views.empty()) {
+    status_label_->setText(tr("Add a view to %1 first").arg(qstr(d->name)));
+    return nullptr;
+  }
+  model::DrawingDimension m;
+  m.id = Id::random();
+  m.view = d->find_view(view) != nullptr ? view : d->views.front().id;
+  m.kind = model::DimensionKind::Horizontal;
+  m.offset = 10.0;
+  auto* dialog = new DimensionDialog(m, *d, std::shared_ptr<const eval::Evaluation>(s, &s->evaluation), this);
+  start_dialog(dialog, [drawing, dialog] { return add_dimension(drawing, dialog->value()); });
+  return dialog;
+}
+
+DimensionDialog* MainWindow::edit_drawing_dimension(const Id& drawing, const Id& dimension) {
+  const SnapshotPtr s = session_->latest();
+  const model::Drawing* d = history_.project().document.find_drawing(drawing);
+  const model::DrawingDimension* m = d != nullptr ? d->find_dimension(dimension) : nullptr;
+  if (!s || m == nullptr) return nullptr;
+  auto* dialog = new DimensionDialog(*m, *d, std::shared_ptr<const eval::Evaluation>(s, &s->evaluation), this);
+  start_dialog(dialog, [drawing, dialog] { return update_dimension(drawing, dialog->value()); });
+  return dialog;
+}
+
+void MainWindow::drawings_context_menu(const QPoint& pos) {
+  if (!session_->has_project()) return;
+  if (QTreeWidgetItem* at = drawings_->itemAt(pos)) drawings_->setCurrentItem(at);
+  const DrawingItem item = current_drawing_item();
+  const auto kind = static_cast<DrawingRowKind>(item.kind);
+  QMenu menu(this);
+  menu.addAction(tr("New drawing"), this, [this] { new_drawing(); });
+  if (item.kind >= 0) {
+    if (kind == DrawingRowKind::Drawing) menu.addAction(tr("Open"), this, [this, item] { open_drawing(item.id); });
+    menu.addSeparator();
+    menu.addAction(tr("Add view…"), this, [this, item] { add_drawing_view(item.drawing); });
+    QAction* add_dim = menu.addAction(tr("Add dimension…"), this, [this, item, kind] {
+      add_drawing_dimension(item.drawing, kind == DrawingRowKind::View ? item.id : Id{});
+    });
+    const model::Drawing* d = history_.project().document.find_drawing(item.drawing);
+    add_dim->setEnabled(d != nullptr && !d->views.empty());
+    if (kind == DrawingRowKind::View) {
+      menu.addAction(tr("Edit view…"), this, [this, item] { edit_drawing_view(item.drawing, item.id); });
+    }
+    if (kind == DrawingRowKind::Dimension) {
+      menu.addAction(tr("Edit dimension…"), this, [this, item] { edit_drawing_dimension(item.drawing, item.id); });
+    }
+    menu.addSeparator();
+    if (kind != DrawingRowKind::Dimension) {
+      menu.addAction(tr("Rename…"), this, [this, item] {
+        const QString old = drawings_->currentItem() != nullptr ? drawings_->currentItem()->text(0) : QString();
+        QString current = old;
+        if (const model::Drawing* dd = history_.project().document.find_drawing(item.drawing)) {
+          current = qstr(dd->name);
+          if (const model::DrawingView* v = dd->find_view(item.id)) current = qstr(v->name);
+        }
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, tr("Rename"), tr("Name"), QLineEdit::Normal, current, &ok);
+        if (ok && !name.trimmed().isEmpty()) rename_drawing_item(item.id, sstr(name.trimmed()));
+      });
+    }
+    menu.addAction(tr("Delete"), this, [this, item] { delete_drawing_item(item.id); });
+    if (kind == DrawingRowKind::Drawing) {
+      menu.addSeparator();
+      menu.addAction(tr("Export…"), this, [this, item] {
+        open_drawing(item.id);
+        export_drawing_dialog();
+      });
+    }
+  }
+  menu.exec(drawings_->viewport()->mapToGlobal(pos));
+}
+
+void MainWindow::export_drawing_dialog() {
+  if (!session_->has_project()) return;
+  const model::Document& doc = history_.project().document;
+  Id drawing = drawing_window_->drawing();
+  if (drawing.is_null()) drawing = current_drawing_item().drawing;
+  if (drawing.is_null() && !doc.drawings.empty()) drawing = doc.drawings.front().id;
+  const model::Drawing* d = doc.find_drawing(drawing);
+  if (d == nullptr) {
+    QMessageBox::information(this, tr("Export Drawing"),
+                             tr("The project has no drawing yet: Model > New Drawing makes one."));
+    return;
+  }
+  const QString name = qstr(d->name);
+  check_then(tr("Export Drawing"), ShipTarget::Step, [this, drawing, name] {
+    QString filter;
+    QString path = QFileDialog::getSaveFileName(this, tr("Export Drawing"), name,
+                                                tr("SVG (*.svg);;PDF (*.pdf);;DXF (*.dxf)"), &filter);
+    if (path.isEmpty()) return;
+    if (QFileInfo(path).suffix().isEmpty()) {
+      path += filter.startsWith(QStringLiteral("PDF"))   ? QStringLiteral(".pdf")
+              : filter.startsWith(QStringLiteral("DXF")) ? QStringLiteral(".dxf")
+                                                          : QStringLiteral(".svg");
+    }
+    export_drawing_to(drawing, fspath(path));
+  });
+}
+
+void MainWindow::export_drawing_to(const Id& drawing, const std::filesystem::path& path,
+                                   std::function<void(const core::Diagnostics&)> done) {
+  const SnapshotPtr s = session_->latest();
+  core::Diagnostics refused;
+  const model::Drawing* d = history_.project().document.find_drawing(drawing);
+  if (!s || s->preview || session_->busy() || previewing_) {
+    refused.add(core::Diagnostic::error("app.export.busy",
+                                        "Wait for the evaluation to finish (and close the open dialog) "
+                                        "before exporting."));
+  } else if (d == nullptr) {
+    refused.add(core::Diagnostic::error("app.drawing.missing", "No drawing of that id"));
+  }
+  if (refused.has_errors()) {
+    report(refused, {});
+    if (done) done(refused);
+    return;
+  }
+  status_label_->setText(tr("Exporting…"));
+  draw::DrawOptions options;
+  options.settings = session_->settings();
+  auto result = std::make_shared<core::Diagnostics>();
+  session_->run_in_background(
+      [s, definition = *d, options, path, result] {
+        const draw::DrawingResult r = draw::draw(s->evaluation, definition, options);
+        *result = r.diagnostics;
+        if (r.ok()) result->append(draw::write_sheet(r.sheet, path));
+      },
+      [this, result, path, done] {
+        report(*result, tr("Exported drawing %1").arg(qpath(path)));
+        if (done) done(*result);
+      });
 }
 
 LinkDialog* MainWindow::new_link() {

@@ -57,11 +57,18 @@
 // authored values or one configuration; Model > Design Table… edits them
 // all as a grid (design_table_dialog.hpp); the inspector marks a parameter
 // or variable the shown configuration drives (configurations.hpp).
+//
+// Drawings (L6): the Drawings dock lists drawings, views and dimensions;
+// the drawing window shows one drawing's sheet (drawing_window.hpp),
+// recomputed from every evaluation; view and dimension dialogs
+// (drawing_dialogs.hpp); Model > New Drawing and File > Export Drawing…
 
 #include <QMainWindow>
 #include <QKeySequence>
 #include <QPointer>
 
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -100,7 +107,11 @@ namespace vs::app {
 
 class ConnectionDialog;
 class DesignTableDialog;
+class DimensionDialog;
+class DrawingWindow;
 class FeatureDialog;
+class SheetView;
+class ViewDialog;
 class KeepOutDialog;
 class LinkDialog;
 class NodeEditor;
@@ -288,10 +299,53 @@ class MainWindow : public QMainWindow {
   // one undoable step (set_design_table()).
   DesignTableDialog* open_design_table();
 
+  // --- drawings (L6, decision 0038)
+  // The Drawings dock: drawings, their views, their dimensions
+  // (drawing_rows(); disposable dimensions marked), with add / remove
+  // buttons and a context menu. Every change is one undoable step.
+  [[nodiscard]] QDockWidget& drawings_dock() { return *drawings_dock_; }
+  [[nodiscard]] QTreeWidget& drawings_tree() { return *drawings_; }
+  // The drawing window and its sheet; it shows the open drawing, redrawn
+  // (draw::draw() on the session's worker) after every evaluation that
+  // reaches the screen, preview and full, and every edit of the drawing.
+  [[nodiscard]] DrawingWindow& drawing_window() { return *drawing_window_; }
+  [[nodiscard]] SheetView& drawing_view();
+  // Model > New Drawing: a standard drawing (front, top, right and
+  // isometric views, overall dimensions) of the shown evaluation, added
+  // as one step and opened. Returns its id (null when refused or nothing
+  // is evaluated yet).
+  Id new_drawing(const std::string& name = "Sheet");
+  // Opens a drawing in the drawing window (false: no such drawing); null
+  // closes it.
+  bool open_drawing(const Id& drawing);
+  [[nodiscard]] const Id& shown_drawing() const;
+  // Removes a drawing, a view (with its dimensions) or a dimension, by
+  // id, as the dock's Delete does.
+  core::Diagnostics delete_drawing_item(const Id& item);
+  core::Diagnostics rename_drawing_item(const Id& item, const std::string& name);
+  // Dialogs for a new or existing view or dimension of `drawing`; a new
+  // dimension goes on `view` (null: the drawing's first view).
+  ViewDialog* add_drawing_view(const Id& drawing);
+  ViewDialog* edit_drawing_view(const Id& drawing, const Id& view);
+  DimensionDialog* add_drawing_dimension(const Id& drawing, const Id& view = {});
+  DimensionDialog* edit_drawing_dimension(const Id& drawing, const Id& dimension);
+  // Writes `drawing` of what is shown (draw::draw() then write_sheet(),
+  // by the extension: .svg, .pdf, .dxf) on the worker; `done` gets the
+  // diagnostics on the UI thread. File > Export Drawing… runs the
+  // shipping check first, as every export does.
+  void export_drawing_to(const Id& drawing, const std::filesystem::path& path,
+                         std::function<void(const core::Diagnostics&)> done = {});
+  // How many sheets the drawing window has been given (tests wait on it).
+  [[nodiscard]] std::uint64_t drawings_shown() const { return drawings_shown_; }
+  // Whether the newest redraw hasn't come back from the worker yet.
+  [[nodiscard]] bool drawing_pending() const { return drawn_ticket_ < draw_requested_->load(); }
+
   // Pick in view: the last pick a feature dialog was given.
   [[nodiscard]] const std::optional<PickResolution>& last_pick() const { return last_pick_; }
 
  signals:
+  // A sheet reached the drawing window (L6).
+  void drawingShown();
   // A full (not preview) evaluation reached the screen.
   void evaluationShown();
   // A dimension drag's preview reached the screen (M16).
@@ -429,6 +483,28 @@ class MainWindow : public QMainWindow {
   void refresh_configurations();
   QToolBar* configuration_bar_ = nullptr;
   QComboBox* configuration_box_ = nullptr;
+
+  // L6.
+  void refresh_drawings();
+  // Draws the open drawing as `definition` (null: as the history has it)
+  // from `snapshot` (null: the latest) on the worker; a newer request
+  // skips an older one still waiting.
+  void redraw(SnapshotPtr snapshot = {}, const model::Drawing* definition = nullptr);
+  void drawings_context_menu(const QPoint& pos);
+  void export_drawing_dialog();
+  // The drawing a dock row belongs to, and the row's own id and kind.
+  struct DrawingItem {
+    int kind = -1;  // DrawingRowKind, -1: no row
+    Id id;
+    Id drawing;
+  };
+  [[nodiscard]] DrawingItem current_drawing_item() const;
+  QDockWidget* drawings_dock_ = nullptr;
+  QTreeWidget* drawings_ = nullptr;
+  DrawingWindow* drawing_window_ = nullptr;
+  std::shared_ptr<std::atomic<std::uint64_t>> draw_requested_ = std::make_shared<std::atomic<std::uint64_t>>(0);
+  std::uint64_t drawings_shown_ = 0;
+  std::uint64_t drawn_ticket_ = 0;  // the newest redraw that came back
 
   SketchMode* sketch_mode_ = nullptr;
   struct SketchSession {

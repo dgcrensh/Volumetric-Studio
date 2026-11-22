@@ -9,6 +9,7 @@
 
 #include "vs/model/check.hpp"
 #include "vs/model/configuration.hpp"
+#include "vs/model/drawing.hpp"
 
 namespace vs::app {
 
@@ -88,6 +89,8 @@ std::shared_ptr<const model::Project> History::attempt(const Command& command,
   }
   // L5: values whose target the change removed go with it, as links do.
   if (!next->document.configurations.empty()) model::prune_configurations(next->document);
+  // L6: so do views and dimensions of what the change removed.
+  if (!next->document.drawings.empty()) model::prune_drawings(next->document);
   core::Diagnostics after = model::check(next->document);
   core::Diagnostics added = new_errors(current_check(), after);
   if (!added.empty()) {

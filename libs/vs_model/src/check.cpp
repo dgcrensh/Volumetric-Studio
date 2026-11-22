@@ -1,6 +1,7 @@
 #include "vs/model/check.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -49,6 +50,7 @@ class Checker {
     out_.append(loops);
     generated_links(graph);
     configurations(loops.has_errors());
+    drawings();
     return std::move(out_);
   }
 
@@ -118,6 +120,109 @@ class Checker {
     for (const auto& k : doc_.keep_outs) note(k.id, ix_.keep_out_subject(k.id));
     for (const auto& l : doc_.links) note(l.id, doc_.link_subject(l.id));
     for (const auto& c : doc_.configurations) note(c.id, doc_.configuration_subject(c.id));
+    for (const auto& d : doc_.drawings) {
+      note(d.id, doc_.drawing_subject(d.id));
+      for (const auto& v : d.views) note(v.id, doc_.drawing_subject(v.id));
+      for (const auto& m : d.dimensions) note(m.id, doc_.drawing_subject(m.id));
+    }
+  }
+
+  // Drawings (L6): what they name must exist and be of the right kind.
+  // Face names aren't checked: a boundary's need a build, and contents'
+  // are disposable (vs_draw reports them when it draws).
+  void drawings() {
+    std::unordered_set<std::string> names;
+    for (const auto& d : doc_.drawings) {
+      const SubjectRef self = doc_.drawing_subject(d.id);
+      if (d.name.empty()) {
+        error("model.drawing.name", self, "it has no name; name it");
+      } else if (!names.insert(d.name).second) {
+        error("model.drawing.name", self,
+              "another drawing has the same name; drawings need distinct names");
+      }
+      auto usable = [](double x) { return std::isfinite(x) && x > 0.0; };
+      if (!usable(d.width) || !usable(d.height) || d.width > 10000.0 || d.height > 10000.0) {
+        error("model.drawing.sheet", self, "its sheet needs a width and height between 0 and 10 m");
+      }
+      if (d.decimals < 0 || d.decimals > 6) {
+        error("model.drawing.sheet", self, "dimensions show 0 to 6 decimals");
+      }
+      for (const auto& v : d.views) {
+        const SubjectRef vs = doc_.drawing_subject(v.id);
+        if (!usable(v.scale) || !std::isfinite(v.x) || !std::isfinite(v.y)) {
+          error("model.drawing.sheet", vs, "a view needs a positive scale and a finite position");
+        }
+        for (const auto& id : v.volumes) {
+          const Volume* vol = ix_.volume(id);
+          if (!vol || vol->generated) {
+            error("model.drawing.volume", vs,
+                  fmt::format("it shows volume {}, which isn't in the document", id.to_string()));
+          }
+        }
+      }
+      for (const auto& m : d.dimensions) {
+        const SubjectRef ms = doc_.drawing_subject(m.id);
+        if (!d.find_view(m.view)) {
+          error("model.drawing.view", ms, "it names no view of its drawing");
+        }
+        if (!std::isfinite(m.offset)) error("model.drawing.sheet", ms, "its offset isn't finite");
+        anchor(ms, m.from, m.kind == DimensionKind::Diameter, "from");
+        if (m.kind != DimensionKind::Diameter) anchor(ms, m.to, false, "to");
+      }
+    }
+  }
+
+  void anchor(const SubjectRef& by, const Anchor& a, bool diameter, std::string_view end) {
+    auto bad = [&](std::string why) {
+      error("model.drawing.anchor", by, fmt::format("its '{}' anchor {}", end, why));
+    };
+    auto parts = [&](std::initializer_list<AnchorPart> allowed) {
+      if (std::find(allowed.begin(), allowed.end(), a.part) == allowed.end()) {
+        bad(fmt::format("can't be the {} of a {}", to_string(a.part), to_string(a.on)));
+        return false;
+      }
+      return true;
+    };
+    switch (a.on) {
+      case AnchorOn::Origin:
+        if (diameter) bad("is the origin, which has no diameter");
+        parts({AnchorPart::Centre});
+        return;
+      case AnchorOn::VolumeBoundary:
+      case AnchorOn::VolumeContents: {
+        const Volume* v = ix_.volume(a.target);
+        if (!v || v->generated) {
+          bad("names a volume that isn't in the document");
+          return;
+        }
+        if (!parts({AnchorPart::Min, AnchorPart::Max, AnchorPart::Centre, AnchorPart::Face})) {
+          return;
+        }
+        if (a.part == AnchorPart::Face && a.face.empty()) bad("names no face");
+        if (diameter && a.part != AnchorPart::Face) bad("needs a cylindrical face for a diameter");
+        return;
+      }
+      case AnchorOn::Surface: {
+        const ConnectionSurface* s = ix_.connection(a.target);
+        if (!s) {
+          bad("names a connection surface that isn't in the document");
+          return;
+        }
+        if (!parts({AnchorPart::Min, AnchorPart::Max, AnchorPart::Centre, AnchorPart::Hole})) {
+          return;
+        }
+        if (a.part == AnchorPart::Hole && s->type() != ConnectionType::BoltedFlange) {
+          bad("names a bolt hole of a surface that isn't a bolted flange");
+        }
+        if (diameter && a.part == AnchorPart::Centre &&
+            !std::holds_alternative<CylinderPatch>(s->geometry)) {
+          bad("needs a bolt hole or a cylindrical patch for a diameter");
+        } else if (diameter && a.part != AnchorPart::Hole && a.part != AnchorPart::Centre) {
+          bad("needs a bolt hole or a cylindrical patch for a diameter");
+        }
+        return;
+      }
+    }
   }
 
   // A composite's delegations (L3): each passes a surface joining the

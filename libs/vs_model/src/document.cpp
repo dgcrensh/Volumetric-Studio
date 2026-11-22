@@ -200,6 +200,35 @@ const Configuration* Document::find_configuration(std::string_view cname) const 
   return it == configurations.end() ? nullptr : &*it;
 }
 
+const Drawing* Document::find_drawing(const Id& did) const {
+  if (did.is_null()) return nullptr;
+  return find_by_id(drawings, did);
+}
+
+Drawing* Document::find_drawing(const Id& did) {
+  return const_cast<Drawing*>(std::as_const(*this).find_drawing(did));
+}
+
+const Drawing* Document::find_drawing(std::string_view dname) const {
+  const auto it = std::find_if(drawings.begin(), drawings.end(),
+                               [&](const Drawing& d) { return d.name == dname; });
+  return it == drawings.end() ? nullptr : &*it;
+}
+
+const DrawingView* Drawing::find_view(const Id& vid) const {
+  if (vid.is_null()) return nullptr;
+  const auto it =
+      std::find_if(views.begin(), views.end(), [&](const DrawingView& v) { return v.id == vid; });
+  return it == views.end() ? nullptr : &*it;
+}
+
+const DrawingDimension* Drawing::find_dimension(const Id& did) const {
+  if (did.is_null()) return nullptr;
+  const auto it = std::find_if(dimensions.begin(), dimensions.end(),
+                               [&](const DrawingDimension& d) { return d.id == did; });
+  return it == dimensions.end() ? nullptr : &*it;
+}
+
 const ConfigurationValue* Configuration::find(const Id& target) const {
   const auto it = std::find_if(values.begin(), values.end(),
                                [&](const ConfigurationValue& v) { return v.target == target; });
@@ -262,6 +291,80 @@ SubjectRef Document::configuration_subject(const Id& cid) const {
   if (!c) return {SubjectKind::Configuration, cid, "(missing configuration)"};
   return {SubjectKind::Configuration, cid,
           fmt::format("configuration '{}'", c->name.empty() ? std::string("(unnamed)") : c->name)};
+}
+
+SubjectRef Document::drawing_subject(const Id& item) const {
+  auto named = [](const std::string& text) {
+    return text.empty() ? std::string("(unnamed)") : text;
+  };
+  for (const auto& d : drawings) {
+    if (d.id == item) return {SubjectKind::Drawing, item, fmt::format("drawing '{}'", named(d.name))};
+    if (const auto* v = d.find_view(item)) {
+      return {SubjectKind::Drawing, item,
+              fmt::format("view '{}' of drawing '{}'", named(v->name), named(d.name))};
+    }
+    if (d.find_dimension(item)) {
+      const auto at = std::find_if(d.dimensions.begin(), d.dimensions.end(),
+                                   [&](const DrawingDimension& x) { return x.id == item; });
+      return {SubjectKind::Drawing, item,
+              fmt::format("dimension {} of drawing '{}'", at - d.dimensions.begin() + 1,
+                          named(d.name))};
+    }
+  }
+  return {SubjectKind::Drawing, item, "(missing drawing)"};
+}
+
+std::string_view to_string(ViewDirection direction) {
+  switch (direction) {
+    case ViewDirection::Front: return "front";
+    case ViewDirection::Back: return "back";
+    case ViewDirection::Top: return "top";
+    case ViewDirection::Bottom: return "bottom";
+    case ViewDirection::Left: return "left";
+    case ViewDirection::Right: return "right";
+    case ViewDirection::Isometric: return "isometric";
+  }
+  return "front";
+}
+
+std::optional<ViewDirection> view_direction_from_string(std::string_view text) {
+  for (auto d : {ViewDirection::Front, ViewDirection::Back, ViewDirection::Top,
+                 ViewDirection::Bottom, ViewDirection::Left, ViewDirection::Right,
+                 ViewDirection::Isometric}) {
+    if (to_string(d) == text) return d;
+  }
+  if (text == "iso") return ViewDirection::Isometric;
+  return std::nullopt;
+}
+
+std::string_view to_string(AnchorOn on) {
+  switch (on) {
+    case AnchorOn::Origin: return "origin";
+    case AnchorOn::VolumeBoundary: return "boundary";
+    case AnchorOn::Surface: return "surface";
+    case AnchorOn::VolumeContents: return "contents";
+  }
+  return "origin";
+}
+
+std::string_view to_string(AnchorPart part) {
+  switch (part) {
+    case AnchorPart::Min: return "min";
+    case AnchorPart::Max: return "max";
+    case AnchorPart::Centre: return "centre";
+    case AnchorPart::Face: return "face";
+    case AnchorPart::Hole: return "hole";
+  }
+  return "centre";
+}
+
+std::string_view to_string(DimensionKind kind) {
+  switch (kind) {
+    case DimensionKind::Horizontal: return "horizontal";
+    case DimensionKind::Vertical: return "vertical";
+    case DimensionKind::Diameter: return "diameter";
+  }
+  return "horizontal";
 }
 
 Document make_document(std::string name) {

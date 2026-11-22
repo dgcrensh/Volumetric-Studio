@@ -1036,6 +1036,7 @@ Document layout_inputs(const Document& document) {
     v.outputs.clear();
     v.seed = 0;
   }
+  out.drawings.clear();  // L6: nothing builds from them
   return out;
 }
 

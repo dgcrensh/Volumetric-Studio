@@ -32,6 +32,7 @@ std::string_view to_string(SubjectKind kind) {
     case SubjectKind::Parameter: return "Parameter";
     case SubjectKind::Link: return "Link";
     case SubjectKind::Configuration: return "Configuration";
+    case SubjectKind::Drawing: return "Drawing";
   }
   return "Unknown";
 }
