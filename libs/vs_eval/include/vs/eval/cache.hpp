@@ -55,6 +55,7 @@
 #include "vs/mesh/mesh.hpp"
 #include "vs/model/build.hpp"
 #include "vs/model/document.hpp"
+#include "vs/model/index.hpp"
 #include "vs/model/project.hpp"
 
 namespace vs::eval {
@@ -66,6 +67,11 @@ using core::Hash256;
 // boundary or a parameter failed. The settings are part of the key (H3):
 // the tolerance and working space change what generation accepts.
 std::optional<Hash256> cache_key(const model::Document& document,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings);
+// The same through an index of the document (model/index.hpp), for a
+// caller keying many volumes of one document.
+std::optional<Hash256> cache_key(const model::DocumentIndex& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings);
 
@@ -88,6 +94,10 @@ class LayoutShapeHashes {
 // cache_key() with the shape hashes of the same `layout` (or of an equal
 // one) given: the same key.
 std::optional<Hash256> cache_key(const model::Document& document,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings,
+                                 const LayoutShapeHashes& hashes);
+std::optional<Hash256> cache_key(const model::DocumentIndex& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings,
                                  const LayoutShapeHashes& hashes);

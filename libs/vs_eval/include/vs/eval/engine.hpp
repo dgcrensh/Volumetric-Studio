@@ -258,8 +258,11 @@ class Engine {
   // The layout of `document`, from the memo when it can, and its layout
   // checks when `validated`.
   Layout layout_of(const model::Document& document, bool validated, EvaluationStats& stats);
-  std::optional<Hash256> key_of(const model::Document& document, const model::DocumentBuild& layout,
-                                std::size_t index, const LayoutShapeHashes* hashes) const;
+  std::optional<Hash256> key_of(const model::DocumentIndex& document,
+                                const model::DocumentBuild& layout, std::size_t index,
+                                const LayoutShapeHashes* hashes) const;
+  // The layout checks' ParallelFor: chunks on the pool.
+  validate::ParallelFor parallel_for();
 
   struct Expansion;
   Expansion expand_generated(const model::Document& document, const CancellationToken& cancel,

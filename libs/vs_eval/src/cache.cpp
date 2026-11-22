@@ -45,7 +45,7 @@ void add_optional(Hasher& h, const std::optional<double>& v) {
   if (v) h.add(*v);
 }
 
-std::optional<Hash256> cache_key_impl(const model::Document& document,
+std::optional<Hash256> cache_key_impl(const model::DocumentIndex& document_index,
                                       const model::DocumentBuild& layout, std::size_t index,
                                       const core::ProductSettings& settings,
                                       const LayoutShapeHashes* hashes);
@@ -72,22 +72,36 @@ Hash256 LayoutShapeHashes::patch(std::size_t connection) const {
 std::optional<Hash256> cache_key(const model::Document& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings) {
-  return cache_key_impl(document, layout, index, settings, nullptr);
+  return cache_key_impl(model::DocumentIndex(document), layout, index, settings, nullptr);
 }
 
 std::optional<Hash256> cache_key(const model::Document& document,
                                  const model::DocumentBuild& layout, std::size_t index,
                                  const core::ProductSettings& settings,
                                  const LayoutShapeHashes& hashes) {
-  return cache_key_impl(document, layout, index, settings, &hashes);
+  return cache_key_impl(model::DocumentIndex(document), layout, index, settings, &hashes);
+}
+
+std::optional<Hash256> cache_key(const model::DocumentIndex& document_index,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings) {
+  return cache_key_impl(document_index, layout, index, settings, nullptr);
+}
+
+std::optional<Hash256> cache_key(const model::DocumentIndex& document_index,
+                                 const model::DocumentBuild& layout, std::size_t index,
+                                 const core::ProductSettings& settings,
+                                 const LayoutShapeHashes& hashes) {
+  return cache_key_impl(document_index, layout, index, settings, &hashes);
 }
 
 namespace {
 
-std::optional<Hash256> cache_key_impl(const model::Document& document,
+std::optional<Hash256> cache_key_impl(const model::DocumentIndex& document_index,
                                       const model::DocumentBuild& layout, std::size_t index,
                                       const core::ProductSettings& settings,
                                       const LayoutShapeHashes* hashes) {
+  const model::Document& document = document_index.document();
   const model::Volume& v = document.volumes[index];
   const model::VolumeBuild& vb = layout.volumes[index];
   if (vb.boundary.is_empty() || vb.status == VolumeStatus::Failed) return std::nullopt;
@@ -140,9 +154,8 @@ std::optional<Hash256> cache_key_impl(const model::Document& document,
   add_named_faces(h, vb.boundary_faces);
 
   // The connection surfaces joining it.
-  for (std::size_t k = 0; k < document.connections.size(); ++k) {
+  for (const std::size_t k : document_index.joining(v.id)) {
     const model::ConnectionSurface& c = document.connections[k];
-    if (!model::joins(document, c, v.id)) continue;
     const model::ConnectionBuild& cb = layout.connections[k];
     h.add(c.id).add(c.type()).add(cb.ok);
     if (!cb.ok) continue;

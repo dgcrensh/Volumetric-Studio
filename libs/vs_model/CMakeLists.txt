@@ -15,6 +15,7 @@ vs_add_library(vs_model
     src/document.cpp
     src/generated.cpp
     src/hierarchy.cpp
+    src/index.cpp
     src/module.cpp
     src/project.cpp
     src/references.cpp
@@ -40,6 +41,7 @@ vs_add_library_tests(vs_model
     tests/test_nested.cpp
     tests/test_generated.cpp
     tests/test_hardening.cpp
+    tests/test_index.cpp
     tests/test_module.cpp
     tests/test_project.cpp
     tests/test_zip.cpp)

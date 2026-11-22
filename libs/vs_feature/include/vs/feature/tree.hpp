@@ -365,6 +365,10 @@ class FeatureTree {
   Id add(FeatureDefinition definition, std::string name = {}, Id id = {});
   // Adds a fully formed feature at `index` (clamped to the end).
   Id insert(std::size_t index, Feature feature);
+  // add() for each feature, in order, in one pass (a generated layout
+  // appends thousands): a feature whose id is null or already used, in the
+  // tree or earlier in the list, gets a random one. Returns the ids.
+  std::vector<Id> append(std::vector<Feature> features);
 
   // Removes a feature. Features that used it report a broken reference on
   // the next rebuild.
@@ -386,6 +390,9 @@ class FeatureTree {
   // features of that kind, such as "Extrude 2".
   [[nodiscard]] std::string label(const Id& id) const;
   [[nodiscard]] core::SubjectRef subject(const Id& id) const;
+  // subject() of every feature, in order, in one pass rather than a search
+  // each (a generated layout holds thousands of features).
+  [[nodiscard]] std::vector<core::SubjectRef> subjects() const;
 
   // Structural problems: duplicate feature ids ("feature.tree.duplicate_id")
   // and the variable table's own check().

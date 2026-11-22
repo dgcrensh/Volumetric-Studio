@@ -4,8 +4,11 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <mutex>
+#include <set>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 
 #include <fmt/format.h>
@@ -14,6 +17,7 @@
 #include "vs/kernel/queries.hpp"
 #include "vs/kernel/tessellate.hpp"
 #include "vs/model/hierarchy.hpp"
+#include "vs/model/index.hpp"
 #include "vs/validate/registry.hpp"
 
 namespace vs::validate {
@@ -52,14 +56,47 @@ struct Prepared {
   const model::Volume* volume = nullptr;
   const VolumeBuild* build = nullptr;
   dbox3 box;
-  std::vector<BoundaryFace> faces;  // filled on first use
+};
+
+// A volume as one chunk of pairs sees it: its boundary (a deep copy when
+// chunks run on several threads, since OCCT's distance tools may fill
+// caches on the shapes they read) and, once needed, its faces.
+struct Side {
+  const Prepared* p = nullptr;
+  kernel::Solid boundary;
+  std::vector<BoundaryFace> faces;
   bool faces_ready = false;
 };
 
+// What checking one pair found, folded into the report in pair order.
+struct PairOutcome {
+  bool tested = false;
+  Diagnostics found;     // overlaps and undecided pairs
+  Diagnostics contacts;  // contact warnings, reported after every pair's `found`
+  std::vector<Overlap> overlaps;
+  std::vector<Contact> touching;
+};
+
+// Pairs per chunk: enough to reuse each chunk's copies of its boundaries.
+constexpr std::size_t kPairsPerChunk = 32;
+
+Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBuild& build,
+                             const ProductSettings& settings, const ParallelFor& parallel);
+
 class LayoutChecker {
  public:
-  LayoutChecker(const Document& doc, const DocumentBuild& build, const ProductSettings& settings)
-      : doc_(doc), build_(build), settings_(settings), tol_(settings.linear_tolerance_mm) {}
+  LayoutChecker(const Document& doc, const model::DocumentIndex& index, const DocumentBuild& build,
+                const ProductSettings& settings, const ParallelFor& parallel)
+      : doc_(doc), ix_(index), build_(build), settings_(settings), parallel_(parallel),
+        tol_(settings.linear_tolerance_mm) {
+    // Pairs a bonded or bolted surface joins (shares_surface()).
+    for (const auto& c : doc_.connections) {
+      if (c.type() == model::ConnectionType::Clearance) continue;
+      for (const Id& a : c.volumes) {
+        for (const Id& b : c.volumes) bonded_.emplace(a, b);
+      }
+    }
+  }
 
   LayoutReport run() {
     std::vector<Prepared> vols;
@@ -73,70 +110,141 @@ class LayoutChecker {
       vols.push_back(std::move(p));
     }
 
-    Diagnostics contacts;
-    for (std::size_t i = 0; i < vols.size(); ++i) {
-      for (std::size_t j = i + 1; j < vols.size(); ++j) {
-        Prepared& a = vols[i];
-        Prepared& b = vols[j];
-        // Only siblings are checked against each other (L3): a child is
-        // inside its parent, and meets its parent's neighbours only
-        // through surfaces delegated to it.
-        if (!(a.volume->parent == b.volume->parent)) continue;
-        if (!a.box.intersects(b.box, tol_)) continue;
-        ++report_.pairs_tested;
-        if (overlap(a, b)) continue;
-        if (shares_surface(a.volume->id, b.volume->id)) continue;  // adjacent by definition
-        if (a.volume->keep_out || b.volume->keep_out) continue;
-        contact(a, b, contacts);
+    // Only siblings are checked against each other (L3): a child is inside
+    // its parent, and meets its parent's neighbours only through surfaces
+    // delegated to it.
+    std::vector<std::pair<std::size_t, std::size_t>> pairs;
+    for (const auto& [i, j] : candidate_pairs(vols)) {
+      if (vols[i].volume->parent == vols[j].volume->parent) pairs.emplace_back(i, j);
+    }
+    std::vector<PairOutcome> outcomes(pairs.size());
+    const std::size_t chunks = (pairs.size() + kPairsPerChunk - 1) / kPairsPerChunk;
+    const bool threads = static_cast<bool>(parallel_) && chunks > 1;
+    const auto chunk = [&](std::size_t k) {
+      std::unordered_map<std::size_t, Side> sides;  // this chunk's view of each volume
+      const auto side = [&](std::size_t i) -> Side* {
+        auto it = sides.find(i);
+        if (it != sides.end()) return &it->second;
+        Side s;
+        s.p = &vols[i];
+        if (threads) {
+          auto copy = kernel::deep_copy(vols[i].build->boundary);
+          if (!copy) return nullptr;
+          s.boundary = std::move(*copy);
+        } else {
+          s.boundary = vols[i].build->boundary;
+        }
+        return &sides.emplace(i, std::move(s)).first->second;
+      };
+      const std::size_t end = std::min(pairs.size(), (k + 1) * kPairsPerChunk);
+      for (std::size_t n = k * kPairsPerChunk; n < end; ++n) {
+        PairOutcome& out = outcomes[n];
+        Side* a = side(pairs[n].first);
+        Side* b = side(pairs[n].second);
+        out.tested = true;
+        if (a == nullptr || b == nullptr) {
+          undecided(vols[pairs[n].first], vols[pairs[n].second], "overlap",
+                    Diagnostic::error("kernel.copy.failed", "copying a boundary failed"), out);
+          continue;
+        }
+        check_pair(*a, *b, out);
       }
+    };
+    if (threads) {
+      parallel_(chunks, chunk);
+    } else {
+      for (std::size_t k = 0; k < chunks; ++k) chunk(k);
+    }
+    Diagnostics contacts;
+    for (auto& out : outcomes) {
+      if (out.tested) ++report_.pairs_tested;
+      report_.diagnostics.append(out.found);
+      contacts.append(out.contacts);
+      for (auto& o : out.overlaps) report_.overlaps.push_back(std::move(o));
+      for (auto& c : out.touching) report_.contacts.push_back(std::move(c));
     }
     report_.diagnostics.append(contacts);
+    std::unordered_map<Id, std::size_t> first;  // the first prepared volume with an id
+    for (std::size_t k = 0; k < vols.size(); ++k) first.emplace(vols[k].volume->id, k);
     for (const Prepared& child : vols) {
-      if (!child.volume->parent.is_null()) nesting(child, vols);
+      if (!child.volume->parent.is_null()) nesting(child, vols, first);
     }
-    report_.diagnostics.append(check_connections(doc_, build_, settings_));
+    report_.diagnostics.append(connection_rules(ix_, build_, settings_, parallel_));
     return std::move(report_);
   }
 
  private:
   const Document& doc_;
+  const model::DocumentIndex& ix_;
   const DocumentBuild& build_;
   const ProductSettings& settings_;
+  const ParallelFor& parallel_;
   double tol_;
   LayoutReport report_;
+  // Feature labels of each level's layout, for face names (readable()).
+  mutable std::mutex labels_mutex_;
+  mutable std::map<Id, std::unordered_map<Id, std::string>> labels_;
   std::map<Id, bool> fills_box_;
+  std::set<std::pair<Id, Id>> bonded_;  // both ways round
+
+  // The pairs (i < j, in that order) whose boxes meet within the
+  // tolerance: what testing every pair finds, by a sweep along x.
+  std::vector<std::pair<std::size_t, std::size_t>> candidate_pairs(
+      const std::vector<Prepared>& vols) const {
+    std::vector<std::size_t> by_x(vols.size());
+    for (std::size_t k = 0; k < by_x.size(); ++k) by_x[k] = k;
+    std::sort(by_x.begin(), by_x.end(), [&](std::size_t a, std::size_t b) {
+      return vols[a].box.min.x < vols[b].box.min.x || (vols[a].box.min.x == vols[b].box.min.x && a < b);
+    });
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    for (std::size_t p = 0; p < by_x.size(); ++p) {
+      const Prepared& a = vols[by_x[p]];
+      for (std::size_t q = p + 1; q < by_x.size(); ++q) {
+        const Prepared& b = vols[by_x[q]];
+        // Sorted by min.x: once b starts past a's end, so do the rest.
+        if (b.box.min.x > a.box.max.x + tol_) break;
+        if (!a.box.intersects(b.box, tol_)) continue;
+        out.emplace_back(std::min(by_x[p], by_x[q]), std::max(by_x[p], by_x[q]));
+      }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+  }
 
   // A bonded or bolted surface between them: they meet there by design. A
   // clearance surface keeps them apart by its gap, so any contact between
   // them is still reported.
-  bool shares_surface(const Id& a, const Id& b) const {
-    return std::any_of(doc_.connections.begin(), doc_.connections.end(),
-                       [&](const model::ConnectionSurface& c) {
-                         return c.type() != model::ConnectionType::Clearance && c.joins(a) &&
-                                c.joins(b);
-                       });
+  bool shares_surface(const Id& a, const Id& b) const { return bonded_.contains({a, b}); }
+
+  void check_pair(Side& a, Side& b, PairOutcome& out) const {
+    if (overlap(a, b, out)) return;
+    if (shares_surface(a.p->volume->id, b.p->volume->id)) return;  // adjacent by definition
+    if (a.p->volume->keep_out || b.p->volume->keep_out) return;
+    contact(a, b, out);
   }
 
   void undecided(const Prepared& a, const Prepared& b, std::string_view what,
-                 const Diagnostic& why) {
-    report_.diagnostics.add(Diagnostic::error(
+                 const Diagnostic& why, PairOutcome& out) const {
+    out.found.add(Diagnostic::error(
         "validate.undecided",
         fmt::format("Couldn't check '{}' and '{}' for {}: {}", a.volume->name, b.volume->name,
                     what, why.message),
-        {doc_.boundary_subject(a.volume->id), doc_.boundary_subject(b.volume->id)}));
+        {ix_.boundary_subject(a.volume->id), ix_.boundary_subject(b.volume->id)}));
   }
 
   // True when the pair overlaps (reported) or couldn't be checked.
-  bool overlap(const Prepared& a, const Prepared& b) {
+  bool overlap(const Side& sa, const Side& sb, PairOutcome& out) const {
+    const Prepared& a = *sa.p;
+    const Prepared& b = *sb.p;
     // The overlap lies inside both boxes, so it is no deeper than their
     // intersection's smallest side: neighbours that only touch skip the
     // boolean.
     const dbox3 meet = core::intersection(a.box, b.box);
     if (meet.is_empty() || smallest_side(meet) <= tol_) return false;
 
-    auto common = kernel::common(a.build->boundary, b.build->boundary, {tol_});
+    auto common = kernel::common(sa.boundary, sb.boundary, {tol_});
     if (!common) {
-      undecided(a, b, "overlap", common.error());
+      undecided(a, b, "overlap", common.error(), out);
       return true;
     }
     if (common->is_empty()) return false;
@@ -146,13 +254,13 @@ class LayoutChecker {
     const double volume = mass ? mass->volume : 0.0;
     if (depth <= tol_ || volume <= 0.0) return false;  // touching
 
-    report_.overlaps.push_back({a.volume->id, b.volume->id, region, volume, depth});
-    report_.diagnostics.add(Diagnostic::error(
+    out.overlaps.push_back({a.volume->id, b.volume->id, region, volume, depth});
+    out.found.add(Diagnostic::error(
         "validate.overlap",
         fmt::format("'{}' and '{}' overlap by {} mm ({} mm³ from {}); move or resize one, "
                     "or cut one with a keep-out region",
                     a.volume->name, b.volume->name, mm(depth), mm(volume), box_text(region)),
-        {doc_.boundary_subject(a.volume->id), doc_.boundary_subject(b.volume->id)}));
+        {ix_.boundary_subject(a.volume->id), ix_.boundary_subject(b.volume->id)}));
     return true;
   }
 
@@ -160,18 +268,20 @@ class LayoutChecker {
 
   // A child's boundary must lie inside its composite's: whatever pokes out
   // is reported with its depth (the region's thinnest side), as overlap is.
-  void nesting(const Prepared& child, const std::vector<Prepared>& vols) {
-    const auto parent = std::find_if(vols.begin(), vols.end(), [&](const Prepared& p) {
-      return p.volume->id == child.volume->parent;
-    });
-    if (parent == vols.end()) return;  // the parent's boundary failed: reported already
+  void nesting(const Prepared& child, const std::vector<Prepared>& vols,
+               const std::unordered_map<Id, std::size_t>& first) {
+    const auto found = first.find(child.volume->parent);
+    if (found == first.end()) return;  // the parent's boundary failed: reported already
+    const auto parent = vols.begin() + static_cast<std::ptrdiff_t>(found->second);
     // Inside the box of a parent that is exactly its box: nothing to check.
     // Anything else (a notch, a curved face) needs the boolean.
     if (parent->box.contains(child.box, tol_) && fills_box(*parent)) return;
     auto outside = kernel::cut(child.build->boundary, std::vector<Solid>{parent->build->boundary}, {tol_});
     if (!outside) {
       if (outside.error().code == "kernel.boolean.empty_result") return;
-      undecided(child, *parent, "nesting", outside.error());
+      PairOutcome why;
+      undecided(child, *parent, "nesting", outside.error(), why);
+      report_.diagnostics.append(why.found);
       return;
     }
     if (outside->is_empty()) return;
@@ -186,7 +296,7 @@ class LayoutChecker {
                     "{}); a child must stay inside its parent's boundary",
                     child.volume->name, mm(depth), parent->volume->name, mm(volume),
                     box_text(region)),
-        {doc_.boundary_subject(child.volume->id), doc_.boundary_subject(parent->volume->id)}));
+        {ix_.boundary_subject(child.volume->id), ix_.boundary_subject(parent->volume->id)}));
   }
 
   // True when the boundary is exactly its bounding box: one solid with six
@@ -266,41 +376,58 @@ class LayoutChecker {
     if (colon == std::string::npos) return name;
     const auto id = Id::parse(name.substr(0, colon));
     if (!id) return name;
-    const feature::FeatureTree* layout = model::level_layout(doc_, level);
-    return fmt::format("{}:{}", layout != nullptr ? layout->label(*id) : id->to_string(),
+    const feature::FeatureTree* layout = ix_.level_layout(level);
+    return fmt::format("{}:{}", layout != nullptr ? label(*layout, level, *id) : id->to_string(),
                        name.substr(colon + 1));
   }
 
-  const std::vector<BoundaryFace>& faces_of(Prepared& p) const {
-    if (!p.faces_ready) {
-      const auto list = kernel::faces(p.build->boundary);
-      for (std::size_t k = 0; k < list.size(); ++k) {
-        p.faces.push_back({list[k], kernel::bounding_box(list[k]), kernel::face_plane(list[k]),
-                           face_label(p, list[k], k)});
-      }
-      p.faces_ready = true;
+  // layout.label(id), from a table made once per level rather than a
+  // search through the layout each time.
+  std::string label(const feature::FeatureTree& layout, const Id& level, const Id& id) const {
+    const std::lock_guard lock(labels_mutex_);
+    auto it = labels_.find(level);
+    if (it == labels_.end()) {
+      std::unordered_map<Id, std::string> table;
+      for (const auto& s : layout.subjects()) table.emplace(s.id, s.label);
+      it = labels_.emplace(level, std::move(table)).first;
     }
-    return p.faces;
+    const auto found = it->second.find(id);
+    return found != it->second.end() ? found->second : layout.label(id);
+  }
+
+  const std::vector<BoundaryFace>& faces_of(Side& s) const {
+    if (!s.faces_ready) {
+      const auto list = kernel::faces(s.boundary);
+      for (std::size_t k = 0; k < list.size(); ++k) {
+        s.faces.push_back({list[k], kernel::bounding_box(list[k]), kernel::face_plane(list[k]),
+                           face_label(*s.p, list[k], k)});
+      }
+      s.faces_ready = true;
+    }
+    return s.faces;
   }
 
   SubjectRef face_subject(const Prepared& p, const std::string& face) const {
-    SubjectRef s = doc_.boundary_subject(p.volume->id);
+    SubjectRef s = ix_.boundary_subject(p.volume->id);
     s.label = fmt::format("{}, face '{}'", s.label, face);
     return s;
   }
 
-  void contact(Prepared& a, Prepared& b, Diagnostics& out) {
-    auto dist = kernel::min_distance(a.build->boundary, b.build->boundary);
+  void contact(Side& sa, Side& sb, PairOutcome& outcome) const {
+    const Prepared& a = *sa.p;
+    const Prepared& b = *sb.p;
+    Diagnostics& out = outcome.contacts;
+    auto dist = kernel::min_distance(sa.boundary, sb.boundary);
     if (!dist) {
-      undecided(a, b, "contact", dist.error());
+      undecided(a, b, "contact", dist.error(), outcome);
       return;
     }
     if (dist->distance > tol_) return;
 
     const double min_area = settings_.min_feature_size_mm() * settings_.min_feature_size_mm();
     bool any = false;
-    for (const auto& fa : faces_of(a)) {
-      for (const auto& fb : faces_of(b)) {
+    for (const auto& fa : faces_of(sa)) {
+      for (const auto& fb : faces_of(sb)) {
         if (!fa.box.intersects(fb.box, tol_)) continue;
         if (fa.plane && fb.plane) {
           // Planar faces lie against each other only when they face each
@@ -310,7 +437,7 @@ class LayoutChecker {
         }
         auto shared = kernel::common_faces(fa.face, fb.face, {tol_});
         if (!shared) {
-          undecided(a, b, "contact", shared.error());
+          undecided(a, b, "contact", shared.error(), outcome);
           return;
         }
         if (shared->is_empty()) continue;
@@ -318,7 +445,7 @@ class LayoutChecker {
         if (area <= min_area) continue;
         any = true;
         const dbox3 region = kernel::bounding_box(*shared);
-        report_.contacts.push_back({a.volume->id, b.volume->id, fa.name, fb.name, area, region});
+        outcome.touching.push_back({a.volume->id, b.volume->id, fa.name, fb.name, area, region});
         out.add(Diagnostic::warning(
             "validate.contact",
             fmt::format("Face '{}' of '{}' touches face '{}' of '{}' over {} mm², with no "
@@ -332,7 +459,7 @@ class LayoutChecker {
     dbox3 region = dbox3::empty();
     region.expand(dist->point_on_a);
     region.expand(dist->point_on_b);
-    report_.contacts.push_back({a.volume->id, b.volume->id, {}, {}, 0.0, region});
+    outcome.touching.push_back({a.volume->id, b.volume->id, {}, {}, 0.0, region});
     out.add(Diagnostic::warning(
         "validate.contact.edge",
         fmt::format("'{}' and '{}' touch along an edge or at a point near ({}, {}, {}), with no "
@@ -340,7 +467,7 @@ class LayoutChecker {
                     "to face through a connection surface",
                     a.volume->name, b.volume->name, mm(dist->point_on_a.x),
                     mm(dist->point_on_a.y), mm(dist->point_on_a.z)),
-        {doc_.boundary_subject(a.volume->id), doc_.boundary_subject(b.volume->id)}));
+        {ix_.boundary_subject(a.volume->id), ix_.boundary_subject(b.volume->id)}));
   }
 };
 
@@ -421,11 +548,10 @@ std::string params_text(std::initializer_list<std::string_view> names) {
   return out;
 }
 
-void check_bolts(const Document& doc, const model::ConnectionSurface& c,
+void check_bolts(const SubjectRef& self, const model::ConnectionSurface& c,
                  const model::BoltedFlangeParams& params, const ConnectionBuild& cb,
                  const ProductSettings& settings, Diagnostics& out) {
   const double tol = settings.linear_tolerance_mm;
-  const SubjectRef self = doc.connection_subject(c.id);
   const double wall = cb.min_wall.value_or(0.0);
   if (wall < settings.min_feature_size_mm()) {
     out.add(Diagnostic::error(
@@ -503,14 +629,34 @@ void check_bolts(const Document& doc, const model::ConnectionSurface& c,
 
 }  // namespace
 
-Diagnostics check_connections(const Document& document, const DocumentBuild& build,
-                              const ProductSettings& settings) {
-  Diagnostics out;
+namespace {
+
+// Surfaces per chunk of the connection rules.
+constexpr std::size_t kSurfacesPerChunk = 16;
+
+Diagnostics connection_rules(const model::DocumentIndex& index, const DocumentBuild& build,
+                             const ProductSettings& settings, const ParallelFor& parallel) {
+  const Document& document = index.document();
+  // The build's surfaces and volumes by id, the first of each as its
+  // find_connection() and find_volume() find them.
+  std::unordered_map<Id, const ConnectionBuild*> built_surfaces;
+  for (const auto& cb : build.connections) built_surfaces.emplace(cb.surface, &cb);
+  std::unordered_map<Id, const VolumeBuild*> built_volumes;
+  for (const auto& vb : build.volumes) built_volumes.emplace(vb.volume, &vb);
   const double tol = settings.linear_tolerance_mm;
-  for (const auto& c : document.connections) {
-    const ConnectionBuild* cb = build.find_connection(c.id);
-    if (!cb || !cb->ok) continue;
-    const SubjectRef self = document.connection_subject(c.id);
+  const std::size_t count = document.connections.size();
+  std::vector<Diagnostics> found_by_surface(count);
+  const std::size_t chunks = (count + kSurfacesPerChunk - 1) / kSurfacesPerChunk;
+  const bool threads = static_cast<bool>(parallel) && chunks > 1;
+  // One surface's rules. On several threads each chunk reads its own deep
+  // copies of the boundaries (`boundary_of`); a patch is read by its own
+  // surface's task alone.
+  const auto check_one = [&](const model::ConnectionSurface& c, Diagnostics& out,
+                             const auto& boundary_of) {
+    const auto found = built_surfaces.find(c.id);
+    const ConnectionBuild* cb = found != built_surfaces.end() ? found->second : nullptr;
+    if (!cb || !cb->ok) return;
+    const SubjectRef self = index.connection_subject(c.id);
 
     // Clearance gap first: the boundary rule below depends on it.
     double reach = tol;
@@ -535,7 +681,7 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
       Id at = named;
       for (std::size_t guard = 0; !at.is_null() && guard <= document.volumes.size(); ++guard) {
         met.push_back(at);
-        at = model::delegate_of(document, at, c.id);
+        at = index.delegate_of(at, c.id);
       }
     }
     // Points spread over the patch: none may lie inside a volume it joins
@@ -543,16 +689,22 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
     // solid alone is zero for a patch floating inside it or poking through.
     std::optional<std::vector<dvec3>> samples;
     for (const auto& vid : met) {
-      const VolumeBuild* vb = build.find_volume(vid);
+      const auto built = built_volumes.find(vid);
+      const VolumeBuild* vb = built != built_volumes.end() ? built->second : nullptr;
       if (!vb || vb->boundary.is_empty()) continue;
       auto undecided = [&](const std::string& why) {
         out.add(Diagnostic::error(
             "validate.undecided",
             fmt::format("Couldn't check that '{}' lies on '{}': {}", c.name,
-                        document.volume_subject(vid).label, why),
-            {self, document.boundary_subject(vid)}));
+                        index.volume_subject(vid).label, why),
+            {self, index.boundary_subject(vid)}));
       };
-      auto d = kernel::min_distance(cb->patch, vb->boundary);
+      const kernel::Solid* boundary = boundary_of(*vb);
+      if (boundary == nullptr) {
+        undecided("copying its boundary failed");
+        continue;
+      }
+      auto d = kernel::min_distance(cb->patch, *boundary);
       if (!d) {
         undecided(d.error().message);
         continue;
@@ -568,7 +720,7 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
           }
           samples = std::move(*s);
         }
-        auto far = deepest_inside(*samples, vb->boundary, settings, reach);
+        auto far = deepest_inside(*samples, *boundary, settings, reach);
         if (!far) {
           undecided(far.error().message);
           continue;
@@ -583,24 +735,56 @@ Diagnostics check_connections(const Document& document, const DocumentBuild& bui
             fmt::format("'{}' {} {} mm {} the boundary of '{}', which it joins; a {} surface "
                         "must lie on {} (parameters: geometry{})",
                         c.name, inside ? "reaches" : "is", mm(off),
-                        inside ? "inside" : "from", document.volume_subject(vid).label,
+                        inside ? "inside" : "from", index.volume_subject(vid).label,
                         to_string(c.type()),
                         clearance ? "it, or within the gap of it" : "it",
                         clearance ? ", gap" : ""),
-            {self, document.boundary_subject(vid)}));
+            {self, index.boundary_subject(vid)}));
       }
     }
 
     if (const auto* bolts = std::get_if<model::BoltedFlangeParams>(&c.params)) {
-      check_bolts(document, c, *bolts, *cb, settings, out);
+      check_bolts(self, c, *bolts, *cb, settings, out);
     }
+  };
+  const auto chunk = [&](std::size_t k) {
+    std::unordered_map<const VolumeBuild*, std::optional<kernel::Solid>> copies;
+    const auto boundary_of = [&](const VolumeBuild& vb) -> const kernel::Solid* {
+      if (!threads) return &vb.boundary;
+      auto it = copies.find(&vb);
+      if (it == copies.end()) {
+        auto copy = kernel::deep_copy(vb.boundary);
+        it = copies.emplace(&vb, copy ? std::optional<kernel::Solid>(std::move(*copy))
+                                      : std::nullopt).first;
+      }
+      return it->second ? &*it->second : nullptr;
+    };
+    const std::size_t end = std::min(count, (k + 1) * kSurfacesPerChunk);
+    for (std::size_t n = k * kSurfacesPerChunk; n < end; ++n) {
+      check_one(document.connections[n], found_by_surface[n], boundary_of);
+    }
+  };
+  if (threads) {
+    parallel(chunks, chunk);
+  } else {
+    for (std::size_t k = 0; k < chunks; ++k) chunk(k);
   }
+  Diagnostics out;
+  for (const auto& found : found_by_surface) out.append(found);
   return out;
 }
 
+}  // namespace
+
+Diagnostics check_connections(const Document& document, const DocumentBuild& build,
+                              const ProductSettings& settings, const ParallelFor& parallel) {
+  return connection_rules(model::DocumentIndex(document), build, settings, parallel);
+}
+
 LayoutReport validate_layout(const Document& document, const DocumentBuild& build,
-                             const ProductSettings& settings) {
-  return LayoutChecker(document, build, settings).run();
+                             const ProductSettings& settings, const ParallelFor& parallel) {
+  const model::DocumentIndex index(document);
+  return LayoutChecker(document, index, build, settings, parallel).run();
 }
 
 }  // namespace vs::validate

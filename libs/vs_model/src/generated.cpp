@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <map>
 #include <utility>
 
 #include <fmt/format.h>
@@ -89,18 +90,33 @@ feature::PrincipalPlane plane_normal_to(int axis) {
 
 }  // namespace
 
-TemplateContents instantiate(const TemplateContents& contents, const Id& template_id,
-                             const Id& child) {
+namespace {
+
+// instantiate(), given the template tree's JSON when it is parametric
+// (expand() writes it once per template, not once per child).
+TemplateContents instantiate_from(const TemplateContents& contents, const std::string& json,
+                                  const Id& template_id, const Id& child) {
   if (const auto* p = std::get_if<ParametricContents>(&contents)) {
     // Through the tree's JSON, which names every id it holds.
-    auto tree = feature::feature_tree_from_json(
-        remap_ids(feature::to_json(p->tree), template_id, child));
+    auto tree = feature::feature_tree_from_json(remap_ids(json, template_id, child));
     if (tree) return ParametricContents{std::move(tree).value()};
     return *p;  // can't happen: the JSON is the tree's own, ids aside
   }
   // Static contents hold no ids; a graph is opaque, and its node ids need
   // not be unique across the document.
   return contents;
+}
+
+std::string tree_json(const TemplateContents& contents) {
+  const auto* p = std::get_if<ParametricContents>(&contents);
+  return p != nullptr ? feature::to_json(p->tree) : std::string{};
+}
+
+}  // namespace
+
+TemplateContents instantiate(const TemplateContents& contents, const Id& template_id,
+                             const Id& child) {
+  return instantiate_from(contents, tree_json(contents), template_id, child);
 }
 
 Id generator_of(const Document& document, const Id& volume) {
@@ -125,6 +141,10 @@ core::Result<Document> expand(const Document& document, const Id& composite,
 
   std::vector<Id> child_ids;
   std::vector<Volume> made;
+  // Each child's two points, appended to the layout in one go after the
+  // loop (FeatureTree::append()), then its boundary refers to their ids.
+  std::vector<feature::Feature> points;
+  std::map<const ChildTemplate*, std::string> template_json;
   for (const GeneratedChild& c : layout.children) {
     const Id id = generated_child_id(composite, c.key);
     child_ids.push_back(id);
@@ -134,19 +154,20 @@ core::Result<Document> expand(const Document& document, const Id& composite,
           fmt::format("'{}': its generator made '{}' with an empty box", self.label, c.name),
           {self});
     }
-    const Id lo_id = tree.add(feature::DatumPointFeature{feature::PointAt{
-                                  param(c.box.min.x), param(c.box.min.y), param(c.box.min.z)}},
-                              c.name + " low", Id::derive(id, "low"));
-    const Id hi_id = tree.add(feature::DatumPointFeature{feature::PointAt{
-                                  param(c.box.max.x), param(c.box.max.y), param(c.box.max.z)}},
-                              c.name + " high", Id::derive(id, "high"));
+    for (const bool high : {false, true}) {
+      const core::dvec3& at = high ? c.box.max : c.box.min;
+      feature::Feature f;
+      f.id = Id::derive(id, high ? "high" : "low");
+      f.name = c.name + (high ? " high" : " low");
+      f.definition = feature::DatumPointFeature{feature::PointAt{param(at.x), param(at.y), param(at.z)}};
+      points.push_back(std::move(f));
+    }
 
     Volume v;
     v.id = id;
     v.name = c.name;
     v.parent = composite;
     v.generated = true;
-    v.boundary = BoxBoundary{feature::FeatureRef{lo_id}, feature::FeatureRef{hi_id}};
     v.seed = c.seed;
     if (c.template_name.empty()) {
       v.contents = StaticContents{};
@@ -167,7 +188,9 @@ core::Result<Document> expand(const Document& document, const Id& composite,
                         self.label, c.name, c.template_name),
             {self});
       }
-      v.contents = as_contents(instantiate(t->contents, t->id, id));
+      auto json = template_json.find(t);
+      if (json == template_json.end()) json = template_json.emplace(t, tree_json(t->contents)).first;
+      v.contents = as_contents(instantiate_from(t->contents, json->second, t->id, id));
       if (std::holds_alternative<ParametricContents>(t->contents)) {
         v.contents_offset = c.box.min - t->origin;
       }
@@ -198,6 +221,14 @@ core::Result<Document> expand(const Document& document, const Id& composite,
     made.push_back(std::move(v));
   }
 
+  const std::vector<Id> point_ids = tree.append(std::move(points));
+  for (std::size_t i = 0; i < made.size(); ++i) {
+    made[i].boundary = BoxBoundary{feature::FeatureRef{point_ids[2 * i]},
+                                   feature::FeatureRef{point_ids[2 * i + 1]}};
+  }
+
+  // Likewise each surface's plane.
+  std::vector<feature::Feature> planes;
   std::vector<ConnectionSurface> surfaces;
   for (const GeneratedSurface& s : layout.surfaces) {
     if (s.a >= child_ids.size() || s.b >= child_ids.size() || s.a == s.b || s.axis < 0 ||
@@ -210,15 +241,17 @@ core::Result<Document> expand(const Document& document, const Id& composite,
           {self});
     }
     const Id id = generated_surface_id(composite, s.key);
-    const Id plane = tree.add(
-        feature::DatumPlaneFeature{feature::PlaneOffset{plane_normal_to(s.axis), param(s.offset)}},
-        s.name + " plane", Id::derive(id, "plane"));
+    feature::Feature plane;
+    plane.id = Id::derive(id, "plane");
+    plane.name = s.name + " plane";
+    plane.definition =
+        feature::DatumPlaneFeature{feature::PlaneOffset{plane_normal_to(s.axis), param(s.offset)}};
+    planes.push_back(std::move(plane));
 
     ConnectionSurface c;
     c.id = id;
     c.name = s.name;
     DatumPatch patch;
-    patch.plane = feature::FeatureRef{plane};
     patch.u = param((s.lo[0] + s.hi[0]) / 2);
     patch.v = param((s.lo[1] + s.hi[1]) / 2);
     patch.width = param(s.hi[0] - s.lo[0]);
@@ -231,6 +264,11 @@ core::Result<Document> expand(const Document& document, const Id& composite,
       c.params = BondedParams{};
     }
     surfaces.push_back(std::move(c));
+  }
+
+  const std::vector<Id> plane_ids = tree.append(std::move(planes));
+  for (std::size_t i = 0; i < surfaces.size(); ++i) {
+    std::get<DatumPatch>(surfaces[i].geometry).plane = feature::FeatureRef{plane_ids[i]};
   }
 
   for (const GeneratedDelegation& d : layout.delegations) {

@@ -296,6 +296,14 @@ so they are registered. A new library must also be added to
   a feature using the body above it, such as a through-all extrude, a cut,
   shell, fillet, chamfer or pattern, depends on every body feature above
   it, H2).
+- **Index** (`index.hpp`, decision 0031): `DocumentIndex` is a read-only
+  index of one document (ids, children, joining surfaces, keep-outs,
+  delegations, `classify()` targets) answering exactly what the list
+  searches answer, first match winning. Anything that looks up per volume
+  or surface (`check()`, `DependencyGraph::build(index)`, cache keys, the
+  layout checks, the engine) builds one per pass; one list search per
+  volume is quadratic at 10,000 generated children. The walks are written
+  once over either (`src/lookup.hpp`); `test_index.cpp` compares them.
 - **Contents see inputs, nothing else.** A parametric tree is rebuilt with
   `feature::ExternalInputs`: the boundary by the volume's id (faces
   `<layout feature id>:<name>`, or `-x`..`+z` for a box), each joining
@@ -377,7 +385,11 @@ so they are registered. A new library must also be added to
   (`validate.connection.*`): patch on each joined boundary (and each child
   it is delegated to), never floating inside or poking through one, clearance gap
   and flange wall at least the minimum feature size, ISO 273 holes clear of
-  the patch edge and each other by the minimum wall.
+  the patch edge and each other by the minimum wall. Candidate pairs come
+  from a sweep along x; an optional `ParallelFor` (`parallel.hpp`) runs
+  pairs and surfaces in fixed chunks with their own boundary copies,
+  folded in order, so the report is the same on any thread count (0031).
+  `vs_validate_tests "[.scaling]"` times the layout phases on n × n grids.
 - **Containment** (`containment.hpp`): `check_containment(boundary, solid
   or MeshView, volume subject, settings)`, for M9 to call after generation.
   B-rep reach is measured over tessellated points of the part outside, not
