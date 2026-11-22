@@ -34,6 +34,21 @@ using vs::core::Id;
 
 namespace {
 
+// An environment variable, empty when unset (MSVC deprecates getenv).
+std::string environment(const char* name) {
+#ifdef _MSC_VER
+  char* value = nullptr;
+  std::size_t length = 0;
+  if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) return {};
+  std::string out(value);
+  std::free(value);
+  return out;
+#else
+  const char* value = std::getenv(name);
+  return value != nullptr ? std::string(value) : std::string();
+#endif
+}
+
 double seconds_since(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -156,14 +171,16 @@ TEST_CASE("validate_layout reports the same on several threads", "[validate][sca
 TEST_CASE("Layout phases scale with generated children", "[.scaling]") {
   const auto settings = vs::core::ProductSettings::defaults();
   int largest = 2500;
-  if (const char* env = std::getenv("VS_SCALING_CELLS")) largest = std::atoi(env);
+  if (const auto env = environment("VS_SCALING_CELLS"); !env.empty()) largest = std::atoi(env.c_str());
   std::vector<int> sides;
   for (int side : {10, 32, 50, 71, 100, 141, 200}) {
     if (side * side <= largest) sides.push_back(side);
   }
-  const bool validate = std::getenv("VS_SCALING_SKIP_VALIDATE") == nullptr;
+  const bool validate = environment("VS_SCALING_SKIP_VALIDATE").empty();
   unsigned threads = 0;
-  if (const char* env = std::getenv("VS_SCALING_THREADS")) threads = static_cast<unsigned>(std::atoi(env));
+  if (const auto env = environment("VS_SCALING_THREADS"); !env.empty()) {
+    threads = static_cast<unsigned>(std::atoi(env.c_str()));
+  }
   const vs::validate::ParallelFor parallel = threads > 1 ? threads_for(threads) : nullptr;
   std::printf("%8s %10s %10s %10s %10s %10s\n", "cells", "expand", "check", "graph",
               "layout", "validate");
