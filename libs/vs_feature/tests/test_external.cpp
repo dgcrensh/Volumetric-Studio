@@ -51,7 +51,7 @@ TEST_CASE("External inputs stand in for features outside the tree", "[feature][e
   ExternalInputs inputs;
   ExternalInput in;
   in.subject = {vs::core::SubjectKind::Boundary, outside, "boundary of 'X'"};
-  in.result.faces.push_back({"top", {{0, 0, 5}, {0, 0, 1}}, std::nullopt});
+  in.result.faces.push_back({"top", {{0, 0, 5}, {0, 0, 1}}, std::nullopt, {}});
   inputs.references.push_back(in);
   inputs.values["depth"] = 3.0;
 

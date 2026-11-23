@@ -60,8 +60,9 @@
 //                                  side behind it), facing back along the extrusion
 //                  "end"           the far face
 //                  "side:<id>"     the side face made by sketch curve <id>: planar
-//                                  for a line; cylindrical for a circle or arc
-//                                  (only without draft)
+//                                  for a line; cylindrical for a circle or arc,
+//                                  found by sampled points for a Bézier (both
+//                                  only without draft)
 //   Extrude (cut)  "end"           the floor of a blind or up-to-plane cut
 //                  "side:<id>"     the wall made by sketch curve <id>
 //   Revolve        "start", "end"  the flat ends of a partial revolve
@@ -118,12 +119,26 @@ using core::ProductSettings;
 enum class FeatureStatus { Ok, Failed, Suppressed };
 std::string_view to_string(FeatureStatus status);
 
+// A point on a named face's surface and the face's outward normal there.
+struct SurfacePoint {
+  dvec3 point;
+  dvec3 normal;
+};
+
 struct NamedFace {
   std::string name;
   // For a planar face: a point on the face's plane and its outward normal.
   kernel::Plane plane;
   // Set for a cylindrical face, whose `plane` is then meaningless.
   std::optional<kernel::Cylinder> cylinder;
+  // Set (not empty) for a face on any other surface, such as the side of an
+  // extruded Bézier (decision 0040): points on the surface and the normals
+  // there. `plane` is then meaningless. A body face is on it when its
+  // surface passes through every point, facing the same way at each.
+  std::vector<SurfacePoint> samples;
+
+  // On a cylinder or another curved surface: not a plane.
+  [[nodiscard]] bool curved() const { return cylinder.has_value() || !samples.empty(); }
 };
 
 struct FeatureResult {

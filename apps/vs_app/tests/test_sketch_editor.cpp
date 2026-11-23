@@ -384,3 +384,20 @@ TEST_CASE("A zero-size click leaves no undo step and keeps the redo stack (H5)",
   CHECK(ed.sketch() == before);
   CHECK_FALSE(ed.can_undo());
 }
+
+TEST_CASE("A Bezier in a sketch is picked, freed and deleted with its points", "[app][sketch][bezier]") {
+  sketch::Sketch s(Id::random(), "Curve");
+  const Id curve = s.add_bezier(core::dvec2{0, 0}, core::dvec2{0, 30}, core::dvec2{40, 30}, core::dvec2{40, 0});
+  const auto* b = s.find_entity(curve)->as<sketch::Bezier>();
+  const Id handle = b->control1;
+  SketchEditor ed(s, kSettings);
+  // B(1/2) = (20, 22.5): the curve is picked there, not at its chord.
+  CHECK(ed.distance_to(curve, {20, 22.5}) < 1e-3);
+  CHECK(ed.distance_to(curve, {20, 5}) > 15);  // the chord would pass 5 mm away
+  CHECK(ed.nearest_entity({20, 22.4}, 1.0) == curve);
+  CHECK(ed.is_free(curve));
+  // Deleting a handle takes the curve with it.
+  CHECK(ed.remove({handle}));
+  CHECK(ed.sketch().find_entity(curve) == nullptr);
+  CHECK(count(ed.sketch(), sketch::EntityKind::Bezier) == 0);
+}

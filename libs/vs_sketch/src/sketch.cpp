@@ -62,6 +62,7 @@ std::string_view entity_label(EntityKind kind) {
     case EntityKind::Line: return "Line";
     case EntityKind::Circle: return "Circle";
     case EntityKind::Arc: return "Arc";
+    case EntityKind::Bezier: return "Curve";
   }
   return "Entity";
 }
@@ -74,6 +75,7 @@ std::string_view to_string(EntityKind kind) {
     case EntityKind::Line: return "line";
     case EntityKind::Circle: return "circle";
     case EntityKind::Arc: return "arc";
+    case EntityKind::Bezier: return "bezier";
   }
   return "unknown";
 }
@@ -161,6 +163,19 @@ Id Sketch::add_arc(dvec2 center, double radius, double start_angle, double end_a
   const Id e = add_point(center + dvec2{std::cos(end_angle), std::sin(end_angle)} * radius,
                          construction);
   return add_arc(c, s, e, construction);
+}
+
+Id Sketch::add_bezier(Id start, Id control1, Id control2, Id end, bool construction, Id id) {
+  return add_entity({id, Bezier{start, control1, control2, end}, construction, {}});
+}
+
+Id Sketch::add_bezier(dvec2 start, dvec2 control1, dvec2 control2, dvec2 end,
+                      bool construction) {
+  const Id a = add_point(start, construction);
+  const Id b = add_point(control1, construction);
+  const Id c = add_point(control2, construction);
+  const Id d = add_point(end, construction);
+  return add_bezier(a, b, c, d, construction);
 }
 
 Id Sketch::add_constraint(Constraint constraint) {
@@ -347,6 +362,22 @@ Diagnostics Sketch::validate() const {
                                                     label(e.id)),
                                         {subject(e.id), sketch_subject()}));
             }
+          } else if constexpr (std::is_same_v<T, Bezier>) {
+            check_point_ref(*this, e, g.start, "start point", out);
+            check_point_ref(*this, e, g.control1, "first handle", out);
+            check_point_ref(*this, e, g.control2, "second handle", out);
+            check_point_ref(*this, e, g.end, "end point", out);
+            const std::array<Id, 4> ids{g.start, g.control1, g.control2, g.end};
+            bool repeated = false;
+            for (std::size_t i = 0; i < ids.size(); ++i) {
+              for (std::size_t j = i + 1; j < ids.size(); ++j) repeated |= ids[i] == ids[j];
+            }
+            if (repeated) {
+              out.add(Diagnostic::error("sketch.entity.degenerate",
+                                        fmt::format("{} reuses one point for two roles",
+                                                    label(e.id)),
+                                        {subject(e.id), sketch_subject()}));
+            }
           }
         },
         e.geometry);
@@ -435,6 +466,71 @@ std::optional<CircleGeometry> circle_geometry(const Sketch& sketch, const Id& ci
   const auto c = sketch.point(e->as<Circle>()->center);
   if (!c) return std::nullopt;
   return CircleGeometry{*c, e->as<Circle>()->radius};
+}
+
+dvec2 BezierGeometry::at(double t) const {
+  const double u = 1.0 - t;
+  const dvec2 a = p[0] * u + p[1] * t;
+  const dvec2 b = p[1] * u + p[2] * t;
+  const dvec2 c = p[2] * u + p[3] * t;
+  const dvec2 d = a * u + b * t;
+  const dvec2 e = b * u + c * t;
+  return d * u + e * t;
+}
+
+dvec2 BezierGeometry::derivative(double t) const {
+  const double u = 1.0 - t;
+  const dvec2 a = (p[1] - p[0]) * 3.0;
+  const dvec2 b = (p[2] - p[1]) * 3.0;
+  const dvec2 c = (p[3] - p[2]) * 3.0;
+  return (a * u + b * t) * u + (b * u + c * t) * t;
+}
+
+dvec2 BezierGeometry::tangent(bool at_end) const {
+  // From the end along the nearest control point that differs from it.
+  const std::array<dvec2, 3> toward =
+      at_end ? std::array<dvec2, 3>{p[3] - p[2], p[3] - p[1], p[3] - p[0]}
+             : std::array<dvec2, 3>{p[1] - p[0], p[2] - p[0], p[3] - p[0]};
+  for (const auto& d : toward) {
+    const double len = core::length(d);
+    if (len > 0.0) return d / len;
+  }
+  return {};
+}
+
+double BezierGeometry::area_term() const {
+  const auto cr = [&](int i, int j) { return core::cross(p[i], p[j]); };
+  return (6.0 * cr(0, 1) + 3.0 * cr(0, 2) + cr(0, 3) + 3.0 * cr(1, 2) + 3.0 * cr(1, 3) +
+          6.0 * cr(2, 3)) /
+         20.0;
+}
+
+int BezierGeometry::steps_within(double deflection, int min_steps) const {
+  // A chord over a step h strays at most h² max|B''| / 8 from the curve,
+  // and |B''| <= 6 max(|p0 - 2 p1 + p2|, |p1 - 2 p2 + p3|).
+  const double m = 6.0 * std::max(core::length(p[0] - p[1] * 2.0 + p[2]),
+                                  core::length(p[1] - p[2] * 2.0 + p[3]));
+  constexpr int kMaxSteps = 65536;
+  int n = min_steps;
+  if (deflection > 0.0 && m > 0.0) {
+    const double need = std::ceil(std::sqrt(m / (8.0 * deflection)));
+    if (need > n) n = need >= kMaxSteps ? kMaxSteps : static_cast<int>(need);
+  }
+  return std::min(n, kMaxSteps);
+}
+
+std::optional<BezierGeometry> bezier_geometry(const Sketch& sketch, const Id& bezier) {
+  const Entity* e = sketch.find_entity(bezier);
+  if (e == nullptr || e->as<Bezier>() == nullptr) return std::nullopt;
+  const Bezier& g = *e->as<Bezier>();
+  BezierGeometry out;
+  const std::array<Id, 4> ids{g.start, g.control1, g.control2, g.end};
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    const auto pt = sketch.point(ids[i]);
+    if (!pt) return std::nullopt;
+    out.p[i] = *pt;
+  }
+  return out;
 }
 
 }  // namespace vs::sketch

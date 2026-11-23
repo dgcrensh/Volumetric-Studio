@@ -97,7 +97,7 @@ void add_tree(const feature::FeatureTree& tree, const feature::RebuildResult* re
         for (const auto& face : r->faces) {
           const std::string fl = label + " " + face_label(tree, f.id, face.name);
           out.faces.push_back({fl, FaceRef{f.id, face.name}});
-          if (!face.cylinder) out.planes.push_back({fl, FaceRef{f.id, face.name}});
+          if (!face.curved()) out.planes.push_back({fl, FaceRef{f.id, face.name}});
         }
       }
     }
@@ -173,7 +173,7 @@ ReferenceChoices reference_choices(const eval::Evaluation& evaluation, const Id&
       }
       const std::string label = "Boundary: " + what;
       out.faces.push_back({label, FaceRef{volume, face.name}});
-      if (!face.cylinder) out.planes.push_back({label, FaceRef{volume, face.name}});
+      if (!face.curved()) out.planes.push_back({label, FaceRef{volume, face.name}});
     }
   }
   for (const auto& s : doc.connections) {

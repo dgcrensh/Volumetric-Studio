@@ -37,6 +37,11 @@ void add_named_faces(Hasher& h, const std::vector<feature::NamedFace>& faces) {
     } else {
       add_plane(h, f.plane);
     }
+    // Sampled faces (decision 0040) only: every other face hashes as it did.
+    if (!f.samples.empty()) {
+      h.add(std::string_view("samples")).add(static_cast<std::uint64_t>(f.samples.size()));
+      for (const auto& s : f.samples) h.add(s.point).add(s.normal);
+    }
   }
 }
 

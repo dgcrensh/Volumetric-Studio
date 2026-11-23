@@ -4,11 +4,12 @@
 // relate it.
 //
 // A sketch holds entities and constraints, each with a stable Id (vs_core).
-// Entities are points, lines, circles and arcs. Points are entities in their
-// own right: a line refers to its two end points and an arc to its centre,
-// start and end points, so two curves that share a point id are joined
-// without a coincident constraint (a coincident constraint between two
-// distinct points works too).
+// Entities are points, lines, circles, arcs and cubic Béziers. Points are
+// entities in their own right: a line refers to its two end points, an arc
+// to its centre, start and end points and a Bézier to its four control
+// points, so two curves that share a point id are joined without a
+// coincident constraint (a coincident constraint between two distinct points
+// works too).
 //
 // Positions are in sketch coordinates (millimetres, FP64). `SketchPlane`
 // places the sketch in model space. The solver (solver.hpp) moves points to
@@ -64,7 +65,7 @@ struct SketchPlane {
 
 // --- entities -----------------------------------------------------------
 
-enum class EntityKind { Point, Line, Circle, Arc };
+enum class EntityKind { Point, Line, Circle, Arc, Bezier };
 
 std::string_view to_string(EntityKind kind);
 
@@ -97,7 +98,22 @@ struct Arc {
   friend bool operator==(const Arc&, const Arc&) = default;
 };
 
-using Geometry = std::variant<Point, Line, Circle, Arc>;
+// A cubic Bézier curve from `start` to `end`, shaped by two handles: it
+// leaves `start` towards `control1` and arrives at `end` from `control2`
+// (decision 0040). All four are point entities, so the constraints and drags
+// that move points shape the curve; its handles are tangent to it at its
+// ends. A quadratic Bézier is a cubic with handles two thirds of the way to
+// its control point.
+struct Bezier {
+  Id start;
+  Id control1;
+  Id control2;
+  Id end;
+  friend bool operator==(const Bezier&, const Bezier&) = default;
+};
+
+// The order of the alternatives is EntityKind's (Entity::kind()).
+using Geometry = std::variant<Point, Line, Circle, Arc, Bezier>;
 
 struct Entity {
   Id id;
@@ -123,12 +139,14 @@ struct Entity {
 // `refs` may take, in order; `value` is required where noted.
 enum class ConstraintKind {
   Coincident,          // (point, point)
-  PointOnCurve,        // (point, line | circle | arc)
+  PointOnCurve,        // (point, line | circle | arc); not yet on a Bézier
   Horizontal,          // (line) | (point, point)
   Vertical,            // (line) | (point, point)
   Parallel,            // (line, line)
   Perpendicular,       // (line, line)
-  Tangent,             // (line, circle | arc) | (circle | arc, circle | arc)
+  Tangent,             // (line, circle | arc) | (circle | arc, circle | arc) |
+                       // (bezier, line | arc | bezier) | (line | arc, bezier):
+                       // a Bézier only at an end point it shares with the other
   Equal,               // (line, line): lengths | (circle | arc, circle | arc): radii
   Distance,            // value: (point, point) | (point, line) | (line): its length
   HorizontalDistance,  // value: (point, point): x of the second minus x of the first
@@ -138,7 +156,7 @@ enum class ConstraintKind {
   Radius,              // value: (circle | arc)
   Diameter,            // value: (circle | arc)
   Symmetric,           // (point, point, line | point): the first two mirror about the third
-  Fix,                 // (point | line | circle | arc): keep it where it is now
+  Fix,                 // (point | any curve): keep it where it is now
 };
 
 std::string_view to_string(ConstraintKind kind);
@@ -195,6 +213,11 @@ class Sketch {
   // `end_angle` (radians).
   Id add_arc(dvec2 center, double radius, double start_angle, double end_angle,
              bool construction = false);
+
+  Id add_bezier(Id start, Id control1, Id control2, Id end, bool construction = false,
+                Id id = {});
+  Id add_bezier(dvec2 start, dvec2 control1, dvec2 control2, dvec2 end,
+                bool construction = false);
 
   // Adds an entity as given (used by deserialisation). Its id must be new.
   Id add_entity(Entity entity);
@@ -292,9 +315,30 @@ struct CircleGeometry {
   dvec2 center;
   double radius = 0;
 };
+// A cubic Bézier's control points, start to end. Points are evaluated by de
+// Casteljau's construction, the same arithmetic on every platform.
+struct BezierGeometry {
+  dvec2 p[4];
+  [[nodiscard]] dvec2 start() const { return p[0]; }
+  [[nodiscard]] dvec2 end() const { return p[3]; }
+  // The point at parameter t in [0, 1].
+  [[nodiscard]] dvec2 at(double t) const;
+  // The derivative with respect to t.
+  [[nodiscard]] dvec2 derivative(double t) const;
+  // The direction of travel at the start (at_end = false) or the end, unit
+  // length: along the handle, or towards the other control points when a
+  // handle has no length. Zero only when all four points coincide.
+  [[nodiscard]] dvec2 tangent(bool at_end) const;
+  // ∮ (x dy − y dx) / 2 along the curve: its share of a loop's signed area.
+  [[nodiscard]] double area_term() const;
+  // How many equal steps in t keep every chord within `deflection` of the
+  // curve (at least `min_steps`, at most 65,536).
+  [[nodiscard]] int steps_within(double deflection, int min_steps = 4) const;
+};
 
 std::optional<LineGeometry> line_geometry(const Sketch& sketch, const Id& line);
 std::optional<ArcGeometry> arc_geometry(const Sketch& sketch, const Id& arc);
 std::optional<CircleGeometry> circle_geometry(const Sketch& sketch, const Id& circle);
+std::optional<BezierGeometry> bezier_geometry(const Sketch& sketch, const Id& bezier);
 
 }  // namespace vs::sketch

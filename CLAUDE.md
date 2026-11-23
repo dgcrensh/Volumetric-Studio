@@ -208,6 +208,10 @@ so they are registered. A new library must also be added to
   (XDE) and `read_step_parts()` reads it back; `mesh_shape()` is a
   surface-less face carrying triangles, written as AP242 tessellated
   geometry (decision 0017).
+- **Béziers** (S1): `BezierSegment` is an exact `Geom_BezierCurve` edge
+  in profiles and paths. `surface_normals_at(face, points, tol)` says
+  whether points lie on a face's underlying surface (any kind, searched
+  past the trimmed face) and gives the normals there.
 - **Tessellation** (`tessellate.hpp`, M8) runs BRepMesh on a copy and
   returns plain data: vertices, each edge's division, each face's wires
   and triangulation with where every point sits (inside, vertex, k-th edge
@@ -217,10 +221,14 @@ so they are registered. A new library must also be added to
 
 ## vs_sketch essentials
 
-- **Model.** A `Sketch` holds entities (points, lines, circles, arcs) and
-  constraints, each with a stable `Id`. Curves refer to point entities, so
-  sharing a point joins two curves. Arcs run counter-clockwise from start to
-  end. Dimensions carry a `value` and an optional `expression` (evaluated by
+- **Model.** A `Sketch` holds entities (points, lines, circles, arcs,
+  cubic Béziers) and constraints, each with a stable `Id`. Curves refer to
+  point entities, so sharing a point joins two curves. Arcs run
+  counter-clockwise from start to end. A `Bezier`'s four control points
+  are point entities (S1, decision 0040): the solver sees only them, so
+  Tangent with a Bézier needs a shared end (handle collinearity), and
+  point on curve, Equal, Radius and length on one are refused until
+  phase 4 puts curves in PlaneGCS. Dimensions carry a `value` and an optional `expression` (evaluated by
   M3; until then only `value` is used). `validate()` reports broken
   references and malformed constraints (`sketch.reference.*`,
   `sketch.constraint.*`).
@@ -235,9 +243,9 @@ so they are registered. A new library must also be added to
   geometry, nests them (even depth: outer, odd: hole) and `make_face()`
   turns them into `vs_kernel` faces on the sketch plane. Loops whose sides
   cross (`sketch.profile.loops_cross`, coincident loops too) or that cross
-  themselves (`sketch.profile.self_crossing`) are refused; arcs become
-  polygons within the minimum feature size, compared by box and an x sweep
-  (H2).
+  themselves (`sketch.profile.self_crossing`) are refused; arcs and
+  Béziers become polygons within the minimum feature size
+  (`BezierGeometry::steps_within()`), compared by box and an x sweep (H2).
 - **Files.** `to_json()` / `sketch_from_json()` round-trip exactly, ids
   included; an object's own id may not be null (H2, also in vs_feature and
   vs_model files). `vstudio-cli sketch-solve <file>` solves one from the
@@ -266,7 +274,9 @@ so they are registered. A new library must also be added to
   tolerance audit runs after each body change (decision 0002).
 - **Face references** name a face by feature and name (`start`, `end`,
   `side:<sketch curve id>`, `<k>:<seed id>:<name>` on pattern copies) and
-  are found again by plane or cylinder; see `rebuild.hpp`. **Edge
+  are found again by plane or cylinder, or for an extruded Bézier's side by
+  sampled points and normals (`NamedFace::samples`, `curved()`; decision
+  0040); see `rebuild.hpp`. **Edge
   references** are one or two face references: the edges where they meet,
   or every edge of one (decision 0003).
 - **M4 features.** Sweep (path = a whole sketch, one chain), loft (one

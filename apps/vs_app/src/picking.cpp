@@ -23,6 +23,9 @@ double distance_to_line(const dvec3& p, const kernel::Axis& axis) {
 }
 
 std::optional<NamedSurface> from_named(const feature::NamedFace& f) {
+  // A sampled face (a Bézier's side, decision 0040) is neither a plane nor
+  // a cylinder; it can't be compared by surface here.
+  if (!f.samples.empty()) return std::nullopt;
   NamedSurface s;
   s.plane = f.plane;
   s.cylinder = f.cylinder;

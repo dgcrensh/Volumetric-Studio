@@ -45,6 +45,20 @@ constexpr long long kMaxPatternCount = 1000;
 
 // True when `face` lies on the surface `named` describes, facing the same way.
 bool on_named(const NamedFace& named, const Face& face, double tol) {
+  if (!named.samples.empty()) {
+    // Planes and cylinders are never the side of a Bézier: skip them before
+    // projecting points.
+    if (kernel::face_surface_plane(face) || kernel::face_cylinder(face)) return false;
+    std::vector<dvec3> points;
+    points.reserve(named.samples.size());
+    for (const auto& s : named.samples) points.push_back(s.point);
+    const auto normals = kernel::surface_normals_at(face, points, tol);
+    if (!normals) return false;
+    for (std::size_t i = 0; i < points.size(); ++i) {
+      if (dot((*normals)[i], named.samples[i].normal) < 1.0 - kParallel) return false;
+    }
+    return true;
+  }
   if (named.cylinder) {
     const auto c = kernel::face_cylinder(face);
     if (!c || c->inward != named.cylinder->inward) return false;
@@ -64,8 +78,11 @@ bool on_named(const NamedFace& named, const Face& face, double tol) {
 }
 
 NamedFace transformed(const NamedFace& face, const dtransform& t, std::string name) {
-  NamedFace out{std::move(name), {}, std::nullopt};
+  NamedFace out{std::move(name), {}, std::nullopt, {}};
   out.plane = Plane{t.apply_point(face.plane.origin), normalize(t.apply_vector(face.plane.normal))};
+  for (const auto& s : face.samples) {
+    out.samples.push_back({t.apply_point(s.point), normalize(t.apply_vector(s.normal))});
+  }
   if (face.cylinder) {
     kernel::Cylinder c = *face.cylinder;
     c.axis = Axis{t.apply_point(c.axis.origin), normalize(t.apply_vector(c.axis.direction))};
@@ -95,6 +112,7 @@ kernel::ProfileSegment reversed(const kernel::ProfileSegment& s) {
   if (const auto* line = std::get_if<kernel::LineSegment>(&s)) {
     return kernel::LineSegment{line->end, line->start};
   }
+  if (const auto* bezier = std::get_if<kernel::BezierSegment>(&s)) return bezier->reversed();
   const auto& arc = std::get<kernel::ArcSegment>(s);
   return kernel::ArcSegment{arc.end, arc.through, arc.start};
 }
@@ -104,6 +122,17 @@ kernel::ProfileSegment reversed(const kernel::ProfileSegment& s) {
 dvec3 tangent(const kernel::ProfileSegment& s, bool at_end) {
   if (const auto* line = std::get_if<kernel::LineSegment>(&s)) {
     return normalize(line->end - line->start);
+  }
+  if (const auto* b = std::get_if<kernel::BezierSegment>(&s)) {
+    // Along the handle, or towards the next control point that differs.
+    const std::array<dvec3, 3> toward =
+        at_end ? std::array<dvec3, 3>{b->end - b->control2, b->end - b->control1, b->end - b->start}
+               : std::array<dvec3, 3>{b->control1 - b->start, b->control2 - b->start,
+                                      b->end - b->start};
+    for (const auto& d : toward) {
+      if (length(d) > 0.0) return normalize(d);
+    }
+    return {};
   }
   const auto& arc = std::get<kernel::ArcSegment>(s);
   // The circle through the three points: centre from the standard formula.
@@ -325,7 +354,7 @@ class Builder {
                                  in->subject.label),
                      {in->subject});
       }
-      if (named->cylinder) {
+      if (named->curved()) {
         return error("feature.reference.wrong_kind",
                      fmt::format("the face '{}' of '{}' is curved; it needs a flat face",
                                  face.name, in->subject.label),
@@ -335,7 +364,7 @@ class Builder {
     }
     auto found = faces_of(face);
     if (!found) return found.error();
-    if (found->named->cylinder) {
+    if (found->named->curved()) {
       const SubjectRef other = subject_of(face.feature);
       return error("feature.reference.wrong_kind",
                    fmt::format("the face '{}' of '{}' is curved; it needs a flat face",
@@ -361,8 +390,8 @@ class Builder {
       std::string why = fmt::format("the face '{}' of '{}' no longer exists", face.name,
                                     other.label);
       if (face.name.starts_with("side:")) {
-        why += "; the sketch line (or arc or circle) that made it was probably deleted or is no "
-               "longer part of a profile";
+        why += "; the sketch line (or arc, circle or curve) that made it was probably deleted or "
+               "is no longer part of a profile";
       }
       return error("feature.reference.broken", why, {other});
     }
@@ -642,8 +671,28 @@ class Builder {
     return out;
   }
 
+  // Names the side face of `tool` that Bézier `id` made, by points a
+  // quarter, half and three quarters along it (decision 0040).
+  void name_bezier_side(const std::vector<Face>& tool_faces, const sketch::Sketch& sk,
+                        const Id& id, const sketch::BezierGeometry& bz, Operation op) {
+    std::vector<dvec3> points;
+    for (const double t : {0.25, 0.5, 0.75}) points.push_back(sk.plane().to_model(bz.at(t)));
+    for (const Face& f : tool_faces) {
+      if (kernel::face_surface_plane(f) || kernel::face_cylinder(f)) continue;
+      const auto normals = kernel::surface_normals_at(f, points, settings_.linear_tolerance_mm);
+      if (!normals) continue;
+      NamedFace named{"side:" + id.to_string(), Plane{}, std::nullopt, {}};
+      for (std::size_t i = 0; i < points.size(); ++i) {
+        const dvec3 n = op == Operation::Add ? (*normals)[i] : -(*normals)[i];
+        named.samples.push_back({points[i], n});
+      }
+      result_.faces.push_back(std::move(named));
+      return;
+    }
+  }
+
   // Names the side faces of `tool` made by the sketch's lines and, when
-  // `curved` (no draft), its circles and arcs.
+  // `curved` (no draft), its circles, arcs and Béziers.
   void name_sides(const Solid& tool, const sketch::Sketch& sk, const Profiles& profiles,
                   const dvec3& dir, Operation op, bool curved) {
     const auto tool_faces = kernel::faces(tool);
@@ -661,6 +710,9 @@ class Builder {
         } else if (const auto a = sketch::arc_geometry(sk, id)) {
           centre = a->center;
           radius = a->radius;
+        } else if (const auto bz = sketch::bezier_geometry(sk, id)) {
+          name_bezier_side(tool_faces, sk, id, *bz, op);
+          continue;
         } else {
           continue;
         }
@@ -670,10 +722,10 @@ class Builder {
         for (const Face& f : tool_faces) {
           const auto c = kernel::face_cylinder(f);
           if (!c) continue;
-          NamedFace probe{{}, {}, kernel::Cylinder{axis, radius, c->inward}};
+          NamedFace probe{{}, {}, kernel::Cylinder{axis, radius, c->inward}, {}};
           if (!on_named(probe, f, tol)) continue;
           kernel::Cylinder cyl{axis, radius, op == Operation::Add ? c->inward : !c->inward};
-          result_.faces.push_back({"side:" + id.to_string(), Plane{}, cyl});
+          result_.faces.push_back({"side:" + id.to_string(), Plane{}, cyl, {}});
           break;
         }
       }
@@ -691,7 +743,7 @@ class Builder {
         }
         const dvec3 normal = op == Operation::Add ? fp->normal : -fp->normal;
         result_.faces.push_back(
-            {"side:" + id.to_string(), Plane{(a + b) * 0.5, normal}, std::nullopt});
+            {"side:" + id.to_string(), Plane{(a + b) * 0.5, normal}, std::nullopt, {}});
         break;
       }
     }
@@ -989,10 +1041,10 @@ class Builder {
     const dvec3 start_point = plane.origin + dir * start;
     const dvec3 end_point = start_point + dir * depth;
     if (ex.operation == Operation::Add) {
-      result_.faces.push_back({"start", Plane{start_point, -dir}, std::nullopt});
-      result_.faces.push_back({"end", Plane{end_point, dir}, std::nullopt});
+      result_.faces.push_back({"start", Plane{start_point, -dir}, std::nullopt, {}});
+      result_.faces.push_back({"end", Plane{end_point, dir}, std::nullopt, {}});
     } else if (ex.extent == Extent::Blind || ex.extent == Extent::UpToPlane) {
-      result_.faces.push_back({"end", Plane{end_point, -dir}, std::nullopt});
+      result_.faces.push_back({"end", Plane{end_point, -dir}, std::nullopt, {}});
     }
     name_sides(tool, sk, *profiles, dir, ex.operation, /*curved=*/*draft == 0.0);
     return {};
@@ -1055,8 +1107,8 @@ class Builder {
                            dtransform::translate(-ax.origin);
       const dvec3 end_normal = -r.apply_vector(start_normal);
       const double s = rv.operation == Operation::Add ? 1.0 : -1.0;
-      result_.faces.push_back({"start", Plane{c, start_normal * s}, std::nullopt});
-      result_.faces.push_back({"end", Plane{r.apply_point(c), end_normal * s}, std::nullopt});
+      result_.faces.push_back({"start", Plane{c, start_normal * s}, std::nullopt, {}});
+      result_.faces.push_back({"end", Plane{r.apply_point(c), end_normal * s}, std::nullopt, {}});
     }
     return {};
   }
@@ -1083,7 +1135,7 @@ class Builder {
     }
     if (!best) return;
     const dvec3 normal = op == Operation::Add ? best->normal : -best->normal;
-    result_.faces.push_back({std::move(name), Plane{point, normal}, std::nullopt});
+    result_.faces.push_back({std::move(name), Plane{point, normal}, std::nullopt, {}});
   }
 
   // The path drawn in a sketch, as one chain of model-space segments. An
@@ -1115,13 +1167,21 @@ class Builder {
                                     plane.to_model(g->at((g->start_angle + g->end_angle) / 2)),
                                     plane.to_model(g->end())},
                         {0, 0}});
+      } else if (e.kind() == sketch::EntityKind::Bezier) {
+        const auto g = sketch::bezier_geometry(sk, e.id);
+        if (!g) continue;
+        curves.push_back({e.id, kernel::BezierSegment{plane.to_model(g->p[0]),
+                                                      plane.to_model(g->p[1]),
+                                                      plane.to_model(g->p[2]),
+                                                      plane.to_model(g->p[3])},
+                          {0, 0}});
       } else if (e.kind() == sketch::EntityKind::Circle) {
         circles.push_back(e.id);
       }
     }
     if (curves.empty() && circles.empty()) {
       return error("feature.sweep.no_path",
-                   fmt::format("'{}' has no lines, arcs or circles to sweep along",
+                   fmt::format("'{}' has no lines, arcs, curves or circles to sweep along",
                                sketch_subject.label),
                    {sketch_subject});
     }

@@ -24,6 +24,7 @@ vs_add_library_tests(vs_feature
   SOURCES
     tests/parts.cpp
     tests/test_acceptance.cpp
+    tests/test_bezier_features.cpp
     tests/test_datums.cpp
     tests/test_design_rules.cpp
     tests/test_expression.cpp

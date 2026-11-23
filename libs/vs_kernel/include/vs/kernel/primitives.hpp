@@ -49,7 +49,22 @@ struct ArcSegment {
   dvec3 end{};
 };
 
-using ProfileSegment = std::variant<LineSegment, ArcSegment>;
+// A cubic Bézier from `start` to `end`, leaving along `control1` and
+// arriving from `control2` (decision 0040). Built as an exact
+// Geom_BezierCurve edge.
+struct BezierSegment {
+  dvec3 start{};
+  dvec3 control1{};
+  dvec3 control2{};
+  dvec3 end{};
+
+  // The same curve run the other way.
+  [[nodiscard]] BezierSegment reversed() const { return {end, control2, control1, start}; }
+  // The point at parameter t in [0, 1] (de Casteljau).
+  [[nodiscard]] dvec3 at(double t) const;
+};
+
+using ProfileSegment = std::variant<LineSegment, ArcSegment, BezierSegment>;
 
 // A closed loop of segments, in order: each segment starts where the previous
 // one ends (within tolerance), and the last ends where the first starts.

@@ -3,7 +3,7 @@
 // Profile extraction: closed loops of sketch geometry, nested into outer
 // loops and holes, and the planar faces they bound.
 //
-// Only non-construction lines, arcs and circles take part. Curve ends are
+// Only non-construction lines, arcs, circles and Béziers take part. Curve ends are
 // joined when they share a point entity or lie within the linear tolerance
 // of each other. Every joint must join exactly two curve ends:
 //
@@ -14,7 +14,7 @@
 //     (coincident circles), are "sketch.profile.loops_cross";
 //   - a loop that crosses itself (a bowtie) is "sketch.profile.self_crossing".
 //
-// The tests turn arcs into polygons whose chords stray no more than the
+// The tests turn arcs and Béziers into polygons whose chords stray no more than the
 // minimum feature size from them (more chords on larger radii), so loops
 // closer than that count as touching. Each loop's box prunes the pairs
 // compared, and sides are compared by a sweep in x.

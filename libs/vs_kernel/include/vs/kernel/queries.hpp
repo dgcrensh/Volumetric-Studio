@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -101,6 +102,16 @@ std::optional<Plane> face_plane(const Face& face);
 // for comparing planes, where face_plane()'s centre costs most of the time
 // (H5).
 std::optional<Plane> face_surface_plane(const Face& face);
+
+// The face's normals (facing the way the face does) at `points`, when every
+// one of them lies within `tolerance` of the face's underlying surface (the
+// whole surface, not only the trimmed face); nullopt otherwise, or for an
+// empty list. Works on any kind of surface: feature face names use it for
+// sides that are neither planes nor cylinders, such as an extruded Bézier's
+// (decision 0040).
+std::optional<std::vector<dvec3>> surface_normals_at(const Face& face,
+                                                     std::span<const dvec3> points,
+                                                     double tolerance);
 
 // A cylindrical face's surface: its axis (unit direction, origin on the
 // axis), radius, and which way the face faces.

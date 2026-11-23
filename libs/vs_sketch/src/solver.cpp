@@ -2,6 +2,7 @@
 //
 // Each solve builds a fresh GCS::System from the sketch:
 //   - every point contributes two unknowns (x, y); circles add their radius;
+//     Béziers add nothing, being their four points;
 //     arcs add their radius and start and end angles, tied to their centre,
 //     start and end points by PlaneGCS's arc rules;
 //   - every sketch constraint becomes one or more GCS constraints carrying
@@ -77,22 +78,10 @@ class GcsModel {
   GCS::Circle& circle(const Id& id) { return circles_.at(id); }
   GCS::Arc& arc(const Id& id) { return arcs_.at(id); }
 
-  // A point that is an end (not the centre) of both line or arc `a` and `b`.
   std::optional<Id> shared_end(const Id& a, const Id& b) const {
-    const auto ends = [&](const Id& id) -> std::array<Id, 2> {
-      const Entity* e = sketch_.find_entity(id);
-      if (const auto* l = e->as<Line>()) return {l->start, l->end};
-      if (const auto* arc = e->as<Arc>()) return {arc->start, arc->end};
-      return {};
-    };
-    for (const auto& p : ends(a)) {
-      if (p.is_null()) continue;
-      for (const auto& q : ends(b)) {
-        if (p == q) return p;
-      }
-    }
-    return std::nullopt;
+    return detail::shared_end(sketch_, a, b);
   }
+  const Bezier& bezier(const Id& id) const { return *sketch_.find_entity(id)->as<Bezier>(); }
 
   void add_constraint(const Constraint& c, int tag);
   void fix_point(const Id& id, int tag);
@@ -205,7 +194,26 @@ void GcsModel::add_constraint(const Constraint& c, int tag) {
       // (PlaneGCS's general tangency, a centre-to-line distance equal to the
       // radius, pins the touching point only to about the square root of the
       // solver's tolerance.)
-      if (const auto s = shared_end(r[0], r[1])) {
+      if (kinds[0] == K::Bezier || kinds[1] == K::Bezier) {
+        // Always at a shared end (match_form). A Bézier's direction there is
+        // along its handle: the handle stays on the line's line, square to
+        // the arc's radius, or in line with the other Bézier's handle.
+        const Id s = *shared_end(r[0], r[1]);
+        const bool bezier_first = kinds[0] == K::Bezier;
+        const Id& b = r[bezier_first ? 0 : 1];
+        const Id& other = r[bezier_first ? 1 : 0];
+        const K other_kind = kinds[bezier_first ? 1 : 0];
+        GCS::Point& handle = point(detail::handle_at(bezier(b), s));
+        if (other_kind == K::Line) {
+          GCS::Line& l = line(other);
+          sys_.addConstraintPointOnLine(handle, l.p1, l.p2, tag);
+        } else if (other_kind == K::Arc) {
+          sys_.addConstraintPerpendicular(handle, point(s), arc(other).center, point(s), tag);
+        } else {
+          GCS::Point& other_handle = point(detail::handle_at(bezier(other), s));
+          sys_.addConstraintPointOnLine(point(s), handle, other_handle, tag);
+        }
+      } else if (const auto s = shared_end(r[0], r[1])) {
         if (kinds[0] == K::Line || kinds[1] == K::Line) {
           const bool line_first = kinds[0] == K::Line;
           GCS::Line& l = line(r[line_first ? 0 : 1]);
@@ -315,6 +323,11 @@ void GcsModel::add_constraint(const Constraint& c, int tag) {
           sys_.addConstraintEqual(g.rad, constant(*g.rad), tag);
           sys_.addConstraintEqual(g.startAngle, constant(*g.startAngle), tag);
           sys_.addConstraintEqual(g.endAngle, constant(*g.endAngle), tag);
+          break;
+        }
+        case K::Bezier: {
+          const Bezier& g = bezier(r[0]);
+          for (const Id& p : {g.start, g.control1, g.control2, g.end}) fix_point(p, tag);
           break;
         }
       }

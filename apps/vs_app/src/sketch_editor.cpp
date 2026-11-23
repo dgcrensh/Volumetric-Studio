@@ -94,6 +94,9 @@ bool SketchEditor::is_free(const Id& entity) const {
     if (const auto* l = e->as<sketch::Line>()) return free(l->start) || free(l->end);
     if (const auto* a = e->as<sketch::Arc>()) return free(a->center) || free(a->start) || free(a->end);
     if (const auto* c = e->as<sketch::Circle>()) return free(c->center);
+    if (const auto* b = e->as<sketch::Bezier>()) {
+      return free(b->start) || free(b->control1) || free(b->control2) || free(b->end);
+    }
   }
   return false;
 }
@@ -343,6 +346,20 @@ double SketchEditor::distance_to(const Id& entity, dvec2 p) const {
       if (a <= g->end_angle) return std::abs(distance(p, g->center) - g->radius);
       return std::min(distance(p, g->start()), distance(p, g->end()));
     }
+    case EntityKind::Bezier: {
+      const auto g = sketch::bezier_geometry(sketch_, entity);
+      if (!g) return std::numeric_limits<double>::infinity();
+      // Nearest chord of a fine polyline: hit-testing needs pixels, not microns.
+      const int n = std::min(g->steps_within(1e-3, 32), 1024);
+      double best = std::numeric_limits<double>::infinity();
+      dvec2 prev = g->at(0.0);
+      for (int i = 1; i <= n; ++i) {
+        const dvec2 next = g->at(static_cast<double>(i) / n);
+        best = std::min(best, segment_distance(p, prev, next));
+        prev = next;
+      }
+      return best;
+    }
   }
   return std::numeric_limits<double>::infinity();
 }
@@ -520,6 +537,7 @@ bool SketchEditor::remove(const std::vector<Id>& ids) {
     if (const auto* l = e.as<sketch::Line>()) return {l->start, l->end};
     if (const auto* c = e.as<sketch::Circle>()) return {c->center};
     if (const auto* a = e.as<sketch::Arc>()) return {a->center, a->start, a->end};
+    if (const auto* b = e.as<sketch::Bezier>()) return {b->start, b->control1, b->control2, b->end};
     return {};
   };
   // Curves that use a removed point go too.

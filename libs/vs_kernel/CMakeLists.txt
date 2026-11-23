@@ -30,6 +30,7 @@ vs_add_library(vs_kernel
 
 vs_add_library_tests(vs_kernel
   SOURCES
+    tests/test_bezier.cpp
     tests/test_check.cpp
     tests/test_exchange.cpp
     tests/test_empty_inputs.cpp
