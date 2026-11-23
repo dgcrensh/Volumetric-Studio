@@ -228,10 +228,12 @@ so they are registered. A new library must also be added to
   cubic Béziers) and constraints, each with a stable `Id`. Curves refer to
   point entities, so sharing a point joins two curves. Arcs run
   counter-clockwise from start to end. A `Bezier`'s four control points
-  are point entities (S1, decision 0040): the solver sees only them, so
-  Tangent with a Bézier needs a shared end (handle collinearity), and
-  point on curve, Equal, Radius and length on one are refused until
-  phase 4 puts curves in PlaneGCS. Dimensions carry a `value` and an optional `expression` (evaluated by
+  are point entities (S1, decision 0040). Tangent at a shared end keeps
+  the handle in line; point on curve, and Tangent with a line, circle or
+  arc anywhere along it, make it a one-span PlaneGCS BSpline with the
+  curve parameter (and contact) as hidden unknowns; a parameter solved
+  past the ends is `sketch.solve.beyond_curve`. Equal, Radius, length
+  on one, and two Béziers tangent away from a shared end, are refused. Dimensions carry a `value` and an optional `expression` (evaluated by
   M3; until then only `value` is used). `validate()` reports broken
   references and malformed constraints (`sketch.reference.*`,
   `sketch.constraint.*`).

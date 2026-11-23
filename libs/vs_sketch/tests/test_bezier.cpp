@@ -186,15 +186,11 @@ TEST_CASE("A sketch with Beziers round-trips through JSON", "[sketch][bezier]") 
 TEST_CASE("Constraints that don't apply to a Bezier are refused", "[sketch][bezier]") {
   auto d = dee();
   const Id other = d.sketch.add_bezier(dvec2{100, 0}, dvec2{110, 10}, dvec2{120, 10}, dvec2{130, 0});
-  const Id circle = d.sketch.add_circle(dvec2{200, 0}, 5);
-  SECTION("point on a Bezier (until the solver knows curves)") {
-    d.sketch.point_on(d.sketch.add_point({5, 5}), d.curve);
-  }
   SECTION("equal") { d.sketch.equal(d.curve, other); }
   SECTION("radius") { d.sketch.radius(d.curve, 3); }
   SECTION("length") { d.sketch.length(d.curve, 3); }
   SECTION("tangent without a shared end") { d.sketch.tangent(d.curve, other); }
-  SECTION("tangent to a circle") { d.sketch.tangent(d.curve, circle); }
+  SECTION("diameter") { d.sketch.diameter(d.curve, 3); }
   SECTION("horizontal") { d.sketch.horizontal(d.curve); }
   CHECK(has_code(d.sketch.validate(), "sketch.constraint.bad_form"));
 }
@@ -377,4 +373,148 @@ TEST_CASE("A reversed Bezier in a loop still makes a valid face", "[sketch][bezi
   REQUIRE(faces);
   CHECK(vs::kernel::check_validity(faces->front()).empty());
   CHECK(vs::kernel::surface_area(faces->front()) == Approx(960));
+}
+
+// --- along the curve (S1 phase 4) ---------------------------------------------
+
+namespace {
+
+// The parameter in [0, 1] where `f` is least: dense samples, then a
+// narrowing search round the best.
+template <class F>
+double least_param(F f) {
+  int best = 0;
+  for (int i = 1; i <= 4000; ++i) {
+    if (f(i / 4000.0) < f(best / 4000.0)) best = i;
+  }
+  double lo = std::max(0.0, (best - 1) / 4000.0), hi = std::min(1.0, (best + 1) / 4000.0);
+  for (int k = 0; k < 200; ++k) {
+    const double a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+    (f(a) < f(b) ? hi : lo) = (f(a) < f(b) ? b : a);
+  }
+  return (lo + hi) / 2;
+}
+
+// The least distance from `p` to the Bézier.
+double distance_to_curve(const Sketch& s, const Id& curve, dvec2 p) {
+  const auto g = *bezier_geometry(s, curve);
+  return vs::core::distance(g.at(least_param([&](double t) { return vs::core::distance(g.at(t), p); })), p);
+}
+
+// A fixed S-shaped Bézier from (0, 0) to (60, 0).
+struct Ess {
+  Sketch sketch;
+  Id curve;
+};
+Ess ess() {
+  Ess e;
+  e.curve = e.sketch.add_bezier(dvec2{0, 0}, dvec2{20, 40}, dvec2{40, -40}, dvec2{60, 0});
+  e.sketch.fix(e.curve);
+  return e;
+}
+
+}  // namespace
+
+TEST_CASE("A point on a Bezier lies on the curve", "[sketch][bezier]") {
+  auto e = ess();
+  const Id p = e.sketch.add_point({12, 20});
+  e.sketch.point_on(p, e.curve);
+  CHECK(e.sketch.validate().empty());
+  auto report = solve(e.sketch, kSettings);
+  REQUIRE(report.ok());
+  CHECK(report.dof == 1);  // it slides along the curve
+  CHECK(distance_to_curve(e.sketch, e.curve, *e.sketch.point(p)) < 1e-6);
+
+  // Dragging slides it along; it stays on.
+  report = drag(e.sketch, p, {40, -5}, kSettings);
+  REQUIRE(report.ok());
+  CHECK(distance_to_curve(e.sketch, e.curve, *e.sketch.point(p)) < 1e-6);
+  CHECK(e.sketch.point(p)->x > 30);
+}
+
+TEST_CASE("A free Bezier bends to pass through a fixed point", "[sketch][bezier]") {
+  Sketch s;
+  const Id a = s.add_point({0, 0});
+  const Id h1 = s.add_point({10, 20});
+  const Id h2 = s.add_point({30, 20});
+  const Id b = s.add_point({40, 0});
+  const Id curve = s.add_bezier(a, h1, h2, b);
+  for (const Id& id : {a, b, h2}) s.fix(id);
+  const Id target = s.add_point({15, 25});
+  s.fix(target);
+  s.point_on(target, curve);
+  const auto report = solve(s, kSettings);
+  REQUIRE(report.ok());
+  CHECK(report.dof == 1);  // the first handle moves along a curve of solutions
+  CHECK(distance_to_curve(s, curve, {15, 25}) < 1e-6);
+}
+
+TEST_CASE("Circles, arcs and lines touch a Bezier anywhere along it", "[sketch][bezier]") {
+  auto e = ess();
+  const auto g = *bezier_geometry(e.sketch, e.curve);
+  SECTION("a circle whose radius is found") {
+    // Centre fixed above the hump; the radius is what tangency decides.
+    const Id c = e.sketch.add_circle(dvec2{15, 40}, 5);
+    e.sketch.fix(e.sketch.find_entity(c)->as<Circle>()->center);
+    e.sketch.tangent(e.curve, c);
+    const auto report = solve(e.sketch, kSettings);
+    REQUIRE(report.ok());
+    CHECK(report.dof == 0);
+    const auto cg = *circle_geometry(e.sketch, c);
+    CHECK(cg.radius == Approx(distance_to_curve(e.sketch, e.curve, cg.center)).epsilon(1e-6));
+  }
+  SECTION("an arc, in either order") {
+    const Id arc = e.sketch.add_arc(dvec2{45, -30}, 6, 0, kPi);
+    e.sketch.fix(e.sketch.find_entity(arc)->as<Arc>()->center);
+    e.sketch.tangent(arc, e.curve);
+    const auto report = solve(e.sketch, kSettings);
+    REQUIRE(report.ok());
+    const auto ag = *arc_geometry(e.sketch, arc);
+    CHECK(ag.radius == Approx(distance_to_curve(e.sketch, e.curve, ag.center)).epsilon(1e-6));
+  }
+  SECTION("a line through a fixed point swings to touch the hump") {
+    const Id pivot = e.sketch.add_point({-20, 30});
+    const Id tip = e.sketch.add_point({40, 25});
+    const Id l = e.sketch.add_line(pivot, tip);
+    e.sketch.fix(pivot);
+    e.sketch.length(l, 60);
+    e.sketch.tangent(l, e.curve);
+    const auto report = solve(e.sketch, kSettings);
+    REQUIRE(report.ok());
+    CHECK(report.dof == 0);
+    // The line meets the curve somewhere, running along it there.
+    const dvec2 p = *e.sketch.point(pivot), q = *e.sketch.point(tip);
+    const dvec2 d = vs::core::normalize(q - p);
+    const double t = least_param([&](double u) { return std::abs(vs::core::cross(d, g.at(u) - p)); });
+    CHECK(std::abs(vs::core::cross(d, g.at(t) - p)) < 1e-6);
+    CHECK(std::abs(vs::core::cross(d, vs::core::normalize(g.derivative(t)))) < 1e-6);
+  }
+}
+
+TEST_CASE("A tangency the Bezier can't reach conflicts by name", "[sketch][bezier]") {
+  auto e = ess();
+  const Id c = e.sketch.add_circle(dvec2{30, 80}, 5);
+  e.sketch.fix(c);
+  const Id t = e.sketch.tangent(e.curve, c);
+  const Sketch before = e.sketch;
+  const auto report = solve(e.sketch, kSettings);
+  CHECK_FALSE(report.ok());
+  CHECK(report.status == SolveStatus::OverConstrained);
+  CHECK(std::find(report.conflicting.begin(), report.conflicting.end(), t) != report.conflicting.end());
+  CHECK(e.sketch == before);
+}
+
+TEST_CASE("A point can't settle on a Bezier's extension", "[sketch][bezier]") {
+  Sketch s;
+  const Id curve = s.add_bezier(dvec2{0, 0}, dvec2{10, 0}, dvec2{20, 0}, dvec2{30, 0});
+  s.fix(curve);
+  const Id p = s.add_point({50, 0});
+  s.fix(p);
+  s.point_on(p, curve);  // on the line the curve lies on, past its end
+  const Sketch before = s;
+  const auto report = solve(s, kSettings);
+  CHECK_FALSE(report.ok());
+  CHECK(report.status == SolveStatus::Failed);
+  CHECK(report.diagnostics.with_code("sketch.solve.beyond_curve").size() == 1);
+  CHECK(s == before);
 }

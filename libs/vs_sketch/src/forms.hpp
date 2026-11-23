@@ -72,7 +72,7 @@ inline bool match_form(const Sketch& sketch, const Constraint& c) {
     case ConstraintKind::VerticalDistance:
       return n == 2 && k[0] == K::Point && k[1] == K::Point;
     case ConstraintKind::PointOnCurve:
-      return n == 2 && k[0] == K::Point && is_curve(k[1]) && k[1] != K::Bezier;
+      return n == 2 && k[0] == K::Point && is_curve(k[1]);
     case ConstraintKind::Horizontal:
     case ConstraintKind::Vertical:
       return (n == 1 && k[0] == K::Line) || (n == 2 && k[0] == K::Point && k[1] == K::Point);
@@ -81,13 +81,15 @@ inline bool match_form(const Sketch& sketch, const Constraint& c) {
       return n == 2 && k[0] == K::Line && k[1] == K::Line;
     case ConstraintKind::Tangent:
       if (n != 2) return false;
+      if (k[0] == K::Bezier && k[1] == K::Bezier) {
+        // Two Béziers only where they share an end point (decision 0040).
+        return shared_end(sketch, c.refs[0], c.refs[1]).has_value();
+      }
       if (k[0] == K::Bezier || k[1] == K::Bezier) {
-        // Only where the two curves share an end point (decision 0040).
-        const auto partner_ok = [](K kind) {
-          return kind == K::Line || kind == K::Arc || kind == K::Bezier;
-        };
-        return partner_ok(k[0]) && partner_ok(k[1]) &&
-               shared_end(sketch, c.refs[0], c.refs[1]).has_value();
+        // With a line, circle or arc: at a shared end, or anywhere along
+        // the Bézier (S1 phase 4).
+        const K other = k[0] == K::Bezier ? k[1] : k[0];
+        return other == K::Line || is_round(other);
       }
       return (k[0] == K::Line && is_round(k[1])) || (is_round(k[0]) && is_round(k[1]));
     case ConstraintKind::Equal:

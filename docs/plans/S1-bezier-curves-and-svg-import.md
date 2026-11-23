@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows U1 (context toolbar) · decision record:
 `docs/decisions/0040-bezier-curves.md`
 
-Status: phases 1 to 3 done.
+Status: done (phases 1 to 4).
 
 ## Goal
 
@@ -73,9 +73,25 @@ Bézier entity first.
    to History with the rest of the sketch; `History::try_apply()` isn't
    involved. `MainWindow::import_svg(path)` is the entry point tests
    drive; Finish with the dialog open keeps what it shows.
-4. **Curves in the solver.** Béziers as one-span PlaneGCS `BSpline`s;
+4. **Curves in the solver (done).** Béziers as one-span PlaneGCS `BSpline`s;
    point on curve with Béziers; tangency to a circle or arc anywhere along
    one; dof and conflicts reported as for other curves.
+
+   As built: a Bézier becomes a `GCS::BSpline` over its own four point
+   unknowns (degree 3, knots 0 and 1 of multiplicity 4, weights 1) only
+   when a constraint reaches along it. Point on curve adds the curve
+   parameter as a hidden unknown, started at the nearest sample
+   (`addConstraintPointOnBSpline`). Tangency with a line, circle or arc
+   that shares no end with it adds a contact point and its parameter,
+   puts the contact on both curves and makes the normals parallel there
+   (`addConstraintAngleViaPointAndParam`, keeping the side they face at
+   the start): one degree of freedom taken, as for any tangency. Hidden
+   unknowns belong to the Bézier, so dof and free entities read as
+   before, and tags map conflicts back to the constraint. A solve that
+   leaves a parameter outside [0, 1] put the point on the curve's
+   extension: it fails with `sketch.solve.beyond_curve` and leaves the
+   sketch unchanged. Equal, Radius, Diameter and length on a Bézier, and
+   two Béziers tangent away from a shared end, stay refused.
 
 ## Out of scope
 

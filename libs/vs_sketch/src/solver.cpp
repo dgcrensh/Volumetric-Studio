@@ -2,13 +2,20 @@
 //
 // Each solve builds a fresh GCS::System from the sketch:
 //   - every point contributes two unknowns (x, y); circles add their radius;
-//     Béziers add nothing, being their four points;
+//     Béziers add nothing, being their four points (S1 phase 4: a Bézier a
+//     constraint reaches along its length is also a one-span cubic
+//     GCS::BSpline over the same four points, with constant knots and
+//     weights);
 //     arcs add their radius and start and end angles, tied to their centre,
 //     start and end points by PlaneGCS's arc rules;
 //   - every sketch constraint becomes one or more GCS constraints carrying
 //     the tag (index + 1), so PlaneGCS's diagnosis can be mapped back to it;
 //   - dimension values and fixed positions are constants: pointers to doubles
 //     that are not declared unknown.
+//   - a point on a Bézier, and a tangency anywhere along one, add a curve
+//     parameter (and for a tangency a contact point) as hidden unknowns,
+//     started at the nearest place on the curve; a solve that puts one off
+//     the curve's ends fails (sketch.solve.beyond_curve).
 // Dragging adds two temporary constraints (tag -1) pulling the point to the
 // target. PlaneGCS solves those with lower priority than the sketch's own,
 // so the sketch's constraints keep holding and the point gets as close as
@@ -21,6 +28,7 @@
 #include <cmath>
 #include <deque>
 #include <map>
+#include <numbers>
 #include <optional>
 
 #include <set>
@@ -77,6 +85,14 @@ class GcsModel {
   GCS::Line& line(const Id& id) { return lines_.at(id); }
   GCS::Circle& circle(const Id& id) { return circles_.at(id); }
   GCS::Arc& arc(const Id& id) { return arcs_.at(id); }
+  GCS::BSpline& bspline(const Id& id);
+  // A curve parameter of Bézier `b` (hidden, owned by `owner`), started at `t`.
+  double* curve_param(double t, const Id& owner) {
+    double* u = unknown(t, owner);
+    curve_params_.push_back(u);
+    return u;
+  }
+  void tangent_along(const Id& bezier_id, const Id& other, EntityKind other_kind, int tag);
 
   std::optional<Id> shared_end(const Id& a, const Id& b) const {
     return detail::shared_end(sketch_, a, b);
@@ -98,7 +114,108 @@ class GcsModel {
   std::map<Id, GCS::Line> lines_;
   std::map<Id, GCS::Circle> circles_;
   std::map<Id, GCS::Arc> arcs_;
+  std::map<Id, GCS::BSpline> bsplines_;
+  std::deque<GCS::Point> contacts_;
+  std::vector<double*> curve_params_;
 };
+
+// The parameter in [0, 1] of the point of `g` nearest to where `score` is
+// least: a dense sample, then a refinement by thirds.
+template <typename Score>
+double best_param(const BezierGeometry& g, Score&& score) {
+  constexpr int kSamples = 256;
+  int best = 0;
+  double best_score = score(g.at(0));
+  for (int i = 1; i <= kSamples; ++i) {
+    const double v = score(g.at(static_cast<double>(i) / kSamples));
+    if (v < best_score) {
+      best_score = v;
+      best = i;
+    }
+  }
+  double lo = std::max(0.0, (best - 1.0) / kSamples), hi = std::min(1.0, (best + 1.0) / kSamples);
+  for (int i = 0; i < 60; ++i) {
+    const double a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+    if (score(g.at(a)) < score(g.at(b))) {
+      hi = b;
+    } else {
+      lo = a;
+    }
+  }
+  return (lo + hi) / 2;
+}
+
+GCS::BSpline& GcsModel::bspline(const Id& id) {
+  if (auto it = bsplines_.find(id); it != bsplines_.end()) return it->second;
+  const Bezier& z = bezier(id);
+  GCS::BSpline& b = bsplines_[id];
+  for (const Id& p : {z.start, z.control1, z.control2, z.end}) {
+    b.poles.push_back(point(p));
+    b.weights.push_back(constant(1.0));
+  }
+  b.knots = {constant(0.0), constant(1.0)};
+  b.mult = {4, 4};
+  b.degree = 3;
+  b.periodic = false;
+  b.start = point(z.start);
+  b.end = point(z.end);
+  b.setupFlattenedKnots();
+  return b;
+}
+
+// Tangency anywhere along a Bézier: a contact point on both curves, where
+// their normals are parallel. Three hidden unknowns (the contact and the
+// Bézier's parameter there) and four equations: one degree of freedom
+// taken, like any tangency.
+void GcsModel::tangent_along(const Id& bezier_id, const Id& other, EntityKind other_kind, int tag) {
+  const BezierGeometry g = *bezier_geometry(sketch_, bezier_id);
+  double t = 0.5;
+  if (other_kind == EntityKind::Line) {
+    const auto l = *line_geometry(sketch_, other);
+    const dvec2 d = core::normalize(l.end - l.start);
+    t = best_param(g, [&](dvec2 p) { return std::abs(core::cross(d, p - l.start)); });
+  } else {
+    dvec2 c;
+    double r = 0;
+    if (other_kind == EntityKind::Circle) {
+      const auto cg = *circle_geometry(sketch_, other);
+      c = cg.center;
+      r = cg.radius;
+    } else {
+      const auto ag = *arc_geometry(sketch_, other);
+      c = ag.center;
+      r = ag.radius;
+    }
+    t = best_param(g, [&](dvec2 p) { return std::abs(core::distance(p, c) - r); });
+  }
+  const dvec2 at = g.at(t);
+  double* u = curve_param(t, bezier_id);
+  contacts_.emplace_back(unknown(at.x, bezier_id), unknown(at.y, bezier_id));
+  GCS::Point& contact = contacts_.back();
+  GCS::BSpline& b = bspline(bezier_id);
+  sys_.addConstraintPointOnBSpline(contact, b, u, tag);
+  GCS::Curve* partner = nullptr;
+  switch (other_kind) {
+    case EntityKind::Line:
+      sys_.addConstraintPointOnLine(contact, line(other), tag);
+      partner = &line(other);
+      break;
+    case EntityKind::Circle:
+      sys_.addConstraintPointOnCircle(contact, circle(other), tag);
+      partner = &circle(other);
+      break;
+    default:
+      sys_.addConstraintPointOnArc(contact, arc(other), tag);
+      partner = &arc(other);
+      break;
+  }
+  // Normals parallel, facing the way they face now (0 or a half turn).
+  const GCS::DeriVector2 n1 = b.CalculateNormal(u);
+  const GCS::DeriVector2 n2 = partner->CalculateNormal(contact);
+  const double facing = n1.x * n2.x + n1.y * n2.y;
+  sys_.addConstraintAngleViaPointAndParam(b, *partner, contact, u,
+                                          constant(facing >= 0 ? 0.0 : std::numbers::pi), tag);
+}
 
 void GcsModel::build() {
   // Points first, so curves can refer to them.
@@ -161,6 +278,11 @@ void GcsModel::add_constraint(const Constraint& c, int tag) {
     case ConstraintKind::PointOnCurve:
       if (kinds[1] == K::Line) {
         sys_.addConstraintPointOnLine(point(r[0]), line(r[1]), tag);
+      } else if (kinds[1] == K::Bezier) {
+        const BezierGeometry g = *bezier_geometry(sketch_, r[1]);
+        const dvec2 p = *sketch_.point(r[0]);
+        const double t = best_param(g, [&](dvec2 q) { return core::distance(p, q); });
+        sys_.addConstraintPointOnBSpline(point(r[0]), bspline(r[1]), curve_param(t, r[0]), tag);
       } else if (kinds[1] == K::Circle) {
         sys_.addConstraintPointOnCircle(point(r[0]), circle(r[1]), tag);
       } else {
@@ -194,8 +316,13 @@ void GcsModel::add_constraint(const Constraint& c, int tag) {
       // (PlaneGCS's general tangency, a centre-to-line distance equal to the
       // radius, pins the touching point only to about the square root of the
       // solver's tolerance.)
-      if (kinds[0] == K::Bezier || kinds[1] == K::Bezier) {
-        // Always at a shared end (match_form). A Bézier's direction there is
+      if ((kinds[0] == K::Bezier || kinds[1] == K::Bezier) && !shared_end(r[0], r[1])) {
+        // Anywhere along the Bézier (match_form: a line, circle or arc).
+        const bool bezier_first = kinds[0] == K::Bezier;
+        tangent_along(r[bezier_first ? 0 : 1], r[bezier_first ? 1 : 0], kinds[bezier_first ? 1 : 0],
+                      tag);
+      } else if (kinds[0] == K::Bezier || kinds[1] == K::Bezier) {
+        // At their shared end. A Bézier's direction there is
         // along its handle: the handle stays on the line's line, square to
         // the arc's radius, or in line with the other Bézier's handle.
         const Id s = *shared_end(r[0], r[1]);
@@ -443,7 +570,22 @@ SolveReport GcsModel::run() {
     return report;
   }
 
+  // A curve parameter past the curve's ends puts a point on the curve's
+  // extension, not on the curve.
+  constexpr double kParamSlack = 1e-9;
   sys_.applySolution();
+  for (const double* u : curve_params_) {
+    if (*u < -kParamSlack || *u > 1 + kParamSlack) {
+      sys_.undoSolution();
+      report.status = SolveStatus::Failed;
+      report.diagnostics.add(Diagnostic::error(
+          "sketch.solve.beyond_curve",
+          "A point on a curve, or a tangency with one, would lie beyond the curve's ends",
+          {sketch_ref}));
+      return report;
+    }
+  }
+
   write_back();
   report.applied = true;
 

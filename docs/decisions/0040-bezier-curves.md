@@ -20,13 +20,21 @@ needing a tangent constraint to stay smooth, and dimensions on them mean
 little. General NURBS were rejected for now: knots and weights are hard
 to constrain and SVG doesn't need them.
 
-**The solver sees points, not curves (until phase 4).** A Bézier adds no
-unknowns: its shape is its four points, so Fix, Coincident, distances,
-Symmetric and drags work on its handles unchanged. Tangent at a shared
-end keeps the handle on the line's line, square to the arc's radius at the
-joint, or in line with the other Bézier's handle; tangency anywhere else,
-point on curve, Equal, Radius, Diameter and length on a Bézier are
-`sketch.constraint.bad_form` until PlaneGCS's B-spline joins in phase 4.
+**The solver sees points, and curves only where it must.** A Bézier adds
+no unknowns of its own: its shape is its four points, so Fix, Coincident,
+distances, Symmetric and drags work on its handles unchanged. Tangent at a
+shared end keeps the handle on the line's line, square to the arc's radius
+at the joint, or in line with the other Bézier's handle (better
+conditioned than a contact found by the solver). Point on curve, and
+tangency with a line, circle or arc anywhere along it (phase 4), make it a
+one-span PlaneGCS `BSpline` over the same point unknowns, with the curve
+parameter, and for a tangency the contact point, as hidden unknowns owned
+by the Bézier; the contact lies on both curves with their normals
+parallel. A solved parameter outside [0, 1] is a point on the extension,
+so the solve fails (`sketch.solve.beyond_curve`). Equal, Radius, Diameter
+and length on a Bézier, and two Béziers tangent away from a shared end,
+stay `sketch.constraint.bad_form`: arc length has no closed form, and two
+free contacts on two curves are poorly conditioned.
 
 **Profiles sample Béziers like arcs.** Equal steps in t, as many as keep
 every chord within the minimum feature size
