@@ -69,15 +69,18 @@ class ContextBar : public QWidget {
 
  protected:
   void resizeEvent(QResizeEvent* event) override;
+  void showEvent(QShowEvent* event) override;
 
  private:
   // Labels under the icons when the current toolbar has room, else icons only.
   void fit_page();
+  void fit_minimum_width();
   // The buttons of `page` with labels under their icons, or icons only.
   static void set_page_style(QWidget* page, Qt::ToolButtonStyle style);
   QWidget* make_page(Context context, const ToolActions& actions);
 
   Context context_ = Context::Layout;
+  bool measured_ = false;
   std::array<QToolButton*, std::size(kContexts)> tabs_{};
   QLabel* detail_ = nullptr;
   QHBoxLayout* corner_ = nullptr;

@@ -90,6 +90,28 @@ ContextBar::ContextBar(const ToolActions& actions, QWidget* parent) : QWidget(pa
   pages_->setMinimumWidth(0);
   for (Context c : kContexts) pages_->addWidget(make_page(c, actions));
   outer->addWidget(pages_);
+  fit_minimum_width();
+  set_context(Context::Layout);
+}
+
+void ContextBar::set_page_style(QWidget* page, Qt::ToolButtonStyle style) {
+  const bool compact = style == Qt::ToolButtonIconOnly;
+  for (QToolButton* b : page->findChildren<QToolButton*>()) {
+    b->ensurePolished();
+    if (b->toolButtonStyle() == style) continue;
+    b->setToolButtonStyle(style);
+    // More buttons keep the style's own look.
+    if (b->defaultAction() != nullptr) b->setStyleSheet(QString::fromLatin1(compact ? kCompactStyle : kToolStyle));
+  }
+  // Every group's layout caches its size hint: drop them all, or the page
+  // measures the buttons as they were.
+  for (QWidget* w : page->findChildren<QWidget*>()) {
+    if (w->layout() != nullptr) w->layout()->invalidate();
+  }
+  page->layout()->invalidate();
+}
+
+void ContextBar::fit_minimum_width() {
   // The bar is never narrower than the widest toolbar with icons only, so
   // the window's narrowest width always fits every context's buttons.
   int widest = 0;
@@ -98,20 +120,18 @@ ContextBar::ContextBar(const ToolActions& actions, QWidget* parent) : QWidget(pa
     set_page_style(page, Qt::ToolButtonIconOnly);
     widest = std::max(widest, page->layout()->sizeHint().width());
   }
-  const QMargins m = outer->contentsMargins();
+  const QMargins m = layout()->contentsMargins();
   setMinimumWidth(widest + m.left() + m.right());
-  set_context(Context::Layout);
 }
 
-void ContextBar::set_page_style(QWidget* page, Qt::ToolButtonStyle style) {
-  const bool compact = style == Qt::ToolButtonIconOnly;
-  for (QToolButton* b : page->findChildren<QToolButton*>()) {
-    if (b->toolButtonStyle() == style) continue;
-    b->setToolButtonStyle(style);
-    // More buttons keep the style's own look.
-    if (b->defaultAction() != nullptr) b->setStyleSheet(QString::fromLatin1(compact ? kCompactStyle : kToolStyle));
+void ContextBar::showEvent(QShowEvent* event) {
+  QWidget::showEvent(event);
+  // Measured again once the style sheets are in effect.
+  if (!measured_) {
+    measured_ = true;
+    fit_minimum_width();
+    fit_page();
   }
-  page->layout()->invalidate();
 }
 
 QWidget* ContextBar::make_page(Context context, const ToolActions& actions) {
