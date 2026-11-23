@@ -995,6 +995,15 @@ so they are registered. A new library must also be added to
   (`set_remember_layout()`, off in tests and captures). Plan:
   `docs/plans/U1-context-toolbar.md`. Tests: `test_tool_catalog.cpp`,
   `test_context_bar_ui.cpp`, `test_browser_ui.cpp`, `test_problems_ui.cpp`.
+- **Béziers and SVG** (S1, decision 0040): the Sketch tab's Curve tool
+  (`SketchTool::Bezier`, `sketch_bezier`: start, two handles, end,
+  chained like lines) and its Insert group's SVG tool (`import_svg`):
+  `MainWindow::import_svg(path)` opens `SvgImportDialog`
+  (`svg_import_dialog.*`), which previews on the sketch
+  (`SketchMode::preview_import()`, each preview replacing the last via
+  `SketchEditor::undo_and_forget()`); OK keeps one sketch step, Cancel
+  takes it out. Tests: `test_sketch_editor.cpp` (core),
+  `test_svg_import_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

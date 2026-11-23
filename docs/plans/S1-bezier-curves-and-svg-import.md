@@ -64,6 +64,15 @@ Bézier entity first.
    (`import_svg`), its dialog previewing through `History::try_apply()`
    and one undo step; icons. Tests in `vs_app_core_tests` and a `[gui]`
    import-and-extrude test.
+
+   As built: the Curve tool takes the control polygon in order (start,
+   handle, handle, end) and chains like lines; only its ends snap. The
+   import runs inside sketch mode, so it previews on the sketch through
+   `SketchEditor::import_svg()` (each preview replaces the last with
+   `undo_and_forget()`) and OK keeps one sketch step, which Finish hands
+   to History with the rest of the sketch; `History::try_apply()` isn't
+   involved. `MainWindow::import_svg(path)` is the entry point tests
+   drive; Finish with the dialog open keeps what it shows.
 4. **Curves in the solver.** Béziers as one-span PlaneGCS `BSpline`s;
    point on curve with Béziers; tangency to a circle or arc anywhere along
    one; dof and conflicts reported as for other curves.

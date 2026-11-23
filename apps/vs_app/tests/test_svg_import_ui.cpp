@@ -128,7 +128,9 @@ TEST_CASE("Import SVG previews on the sketch, keeps one step and extrudes", "[ap
     feature::ExtrudeFeature e;
     e.sketch = sketch_id;
     e.depth = feature::Param::of(5);
-    REQUIRE_FALSE(w.apply(app::add_feature({}, e)).has_errors());
+    feature::Feature extrude;
+    extrude.definition = e;
+    REQUIRE_FALSE(w.apply(app::add_feature({}, extrude)).has_errors());
     settle(w);
     const auto built = feature::rebuild(w.history().project().document.layout, w.session().settings());
     REQUIRE(built.ok());

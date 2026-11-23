@@ -3056,6 +3056,8 @@ void MainWindow::run_tool(ToolId id) {
   refresh_tools();
 }
 
+SvgImportDialog* MainWindow::svg_import_dialog() const { return svg_dialog_.data(); }
+
 SvgImportDialog* MainWindow::import_svg(QString path) {
   if (sketch_mode_ == nullptr) return nullptr;
   if (svg_dialog_) svg_dialog_->reject();  // one import at a time

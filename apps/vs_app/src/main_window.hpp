@@ -260,7 +260,7 @@ class MainWindow : public QMainWindow {
   // one sketch step, Cancel takes it out. Null when no sketch is open, no
   // file was chosen, or the file can't be read (said in the status bar).
   SvgImportDialog* import_svg(QString path = {});
-  [[nodiscard]] SvgImportDialog* svg_import_dialog() const { return svg_dialog_; }
+  [[nodiscard]] SvgImportDialog* svg_import_dialog() const;
   // The dock holding the open sketch's status and constraint list (U1).
   [[nodiscard]] QDockWidget& sketch_dock() { return *sketch_dock_; }
 
