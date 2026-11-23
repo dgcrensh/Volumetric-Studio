@@ -32,6 +32,8 @@ add_library(vs_app_core STATIC
   src/guidance.hpp
   src/history.cpp
   src/history.hpp
+  src/icons.cpp
+  src/icons.hpp
   src/node_preview.cpp
   src/node_preview.hpp
   src/outline.cpp
@@ -45,7 +47,9 @@ add_library(vs_app_core STATIC
   src/ship.cpp
   src/ship.hpp
   src/sketch_editor.cpp
-  src/sketch_editor.hpp)
+  src/sketch_editor.hpp
+  src/tool_catalog.cpp
+  src/tool_catalog.hpp)
 target_include_directories(vs_app_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(vs_app_core PUBLIC cxx_std_20)
 target_link_libraries(vs_app_core
@@ -77,7 +81,8 @@ if(VS_BUILD_TESTS)
     tests/test_outline.cpp
     tests/test_scene.cpp
     tests/test_ship.cpp
-    tests/test_sketch_editor.cpp)
+    tests/test_sketch_editor.cpp
+    tests/test_tool_catalog.cpp)
   target_link_libraries(vs_app_core_tests PRIVATE vs_app_core Catch2::Catch2WithMain)
   target_compile_definitions(vs_app_core_tests PRIVATE
     VS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

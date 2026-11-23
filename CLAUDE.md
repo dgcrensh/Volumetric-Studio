@@ -806,8 +806,8 @@ so they are registered. A new library must also be added to
   `app` feature; its first build compiles qtbase twice, for the host tools
   and the target). CI doesn't build the app. The Qt-free files
   (`authoring`, `configurations`, `dimension_drag`, `drawings`, `exporter`, `graph_edit`, `guidance`,
-  `history`, `node_preview`, `outline`, `picking`, `reference_choices`,
-  `scene`, `ship`, `sketch_editor`) are `vs_app_core`, built on every
+  `history`, `icons`, `node_preview`, `outline`, `picking`, `reference_choices`,
+  `scene`, `ship`, `sketch_editor`, `tool_catalog`) are `vs_app_core`, built on every
   platform and tested by `vs_app_core_tests` on every CI job (plan H1);
   keep Qt and OCCT's visualisation out of them. The rest but `main.cpp` is
   `vs_app_ui`; `vs_app_tests` drives it (`tests/wait.*` waits on Qt's
@@ -937,6 +937,15 @@ so they are registered. A new library must also be added to
   `add_drawing_view()`, `add_drawing_dimension()`,
   `export_drawing_to()`. Tests: `test_drawings.cpp` (core),
   `test_drawings_ui.cpp`.
+- **Context toolbar** (U1, decision 0039, in progress): `tool_catalog.*`
+  (no Qt) is every tool as a catalogue row (name, label, tooltip,
+  shortcut, icon), each context's groups (Layout, Contents, Sketch, Graph,
+  Drawing), `current_context()` derived from what the window has open,
+  and `tab_availability()` / `availability()` with a reason when
+  something can't be used; `icons.*` (no Qt) is every icon as strokes on
+  a 24-unit grid. The window will share one `QAction` per tool between
+  the toolbar and the menus (phases 2 to 6, `docs/plans/U1-context-toolbar.md`).
+  Tests: `test_tool_catalog.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]
