@@ -448,7 +448,7 @@ void MainWindow::build_docks() {
   volumes_->setIndentation(14);
   volumes_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   volumes_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-  volumes_->setMinimumWidth(360);
+  volumes_->setMinimumWidth(220);
   volumes_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(volumes_, &QTreeWidget::itemSelectionChanged, this, [this] {
     if (syncing_) return;
@@ -533,7 +533,7 @@ void MainWindow::build_docks() {
   inspector_->setAlternatingRowColors(false);
   inspector_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   inspector_->setIndentation(12);
-  inspector_->setMinimumWidth(300);
+  inspector_->setMinimumWidth(220);
   // A selected node of the graph being edited shows its settings form
   // instead (M15: "parameter editing in the inspector").
   inspector_stack_ = new QStackedWidget;
@@ -631,6 +631,14 @@ void MainWindow::build_docks() {
   drawings_dock_ = dock(tr("Browser"), "browser", browser_, Qt::LeftDockWidgetArea);
   drawings_dock_->setTitleBarWidget(new QWidget);  // the Browser has its own header
   fold_dock_with_panel(drawings_dock_, browser_);
+  // The Browser and the Inspector run the window's full height; the bottom
+  // docks sit between them, under the viewport, and start short. The Graph
+  // dock shows when a graph is edited (edit_graph()).
+  setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+  setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+  graph_dock_->hide();
+  resizeDocks({drawings_dock_, inspector_dock}, {300, 300}, Qt::Horizontal);
+  resizeDocks({diagnostics_dock}, {140}, Qt::Vertical);
   connect(new_drawing_button, &QPushButton::clicked, this, [this] { new_drawing(); });
   connect(add_button, &QPushButton::clicked, this, [this] {
     const DrawingItem item = current_drawing_item();

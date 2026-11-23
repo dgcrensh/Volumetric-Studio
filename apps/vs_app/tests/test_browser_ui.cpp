@@ -160,3 +160,18 @@ TEST_CASE("Sketch mode folds the Browser while it is open", "[app][gui][browser]
   QApplication::processEvents();
   CHECK(b.folded());
 }
+
+TEST_CASE("The side panels run the full height and the viewport gets the middle", "[app][gui][browser]") {
+  app::MainWindow w;
+  w.show();
+  w.resize(1440, 900);
+  QApplication::processEvents();
+  // Nothing below holds the window taller than a 768-line screen allows.
+  CHECK(w.minimumSizeHint().height() <= 720);
+  CHECK(w.minimumSize().height() <= 720);
+  // The Browser and the Inspector take the full height under the toolbar;
+  // the diagnostics start short, so the viewport keeps most of the height.
+  CHECK(w.drawings_dock().height() > w.height() / 2 + 150);
+  CHECK(w.viewport().height() >= w.height() / 2);
+  CHECK(w.viewport().width() >= 1440 - 2 * 300 - 40);
+}
