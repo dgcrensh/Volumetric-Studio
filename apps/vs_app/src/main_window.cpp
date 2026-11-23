@@ -494,6 +494,12 @@ void MainWindow::build_docks() {
   features_ = make_tree({tr("Feature"), tr("Kind"), tr("Status")});
   features_->setRootIsDecorated(false);
   features_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  // Narrow Browser: names elide rather than the list scrolling sideways.
+  features_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  features_->setTextElideMode(Qt::ElideRight);
+  features_->header()->setStretchLastSection(false);
+  features_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+  features_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
   features_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   features_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(features_, &QTreeWidget::itemSelectionChanged, this, [this] {
@@ -557,6 +563,7 @@ void MainWindow::build_docks() {
   inspector_ = make_tree({tr("Property"), tr("Value")});
   inspector_->setAlternatingRowColors(false);
   inspector_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  inspector_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // values elide; tooltips hold them whole
   inspector_->setIndentation(12);
   inspector_->setMinimumWidth(220);
   // A selected node of the graph being edited shows its settings form

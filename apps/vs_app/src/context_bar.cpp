@@ -35,7 +35,7 @@ std::size_t index_of(Context c) { return static_cast<std::size_t>(c); }
 // The tab row's buttons: the current tab underlined in the accent colour.
 constexpr auto kTabStyle =
     "QToolButton { border: none; border-bottom: 2px solid transparent; padding: 4px 12px; }"
-    "QToolButton:checked { border-bottom: 2px solid palette(highlight); font-weight: bold; }"
+    "QToolButton:checked { border-bottom: 2px solid #2563eb; font-weight: bold; }"  // theme::kAccent
     "QToolButton:hover:!checked { border-bottom: 2px solid palette(mid); }"
     "QToolButton:disabled { color: palette(mid); }";
 
