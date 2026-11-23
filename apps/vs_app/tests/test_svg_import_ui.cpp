@@ -54,7 +54,7 @@ constexpr const char* kSvg = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width
 
 }  // namespace
 
-TEST_CASE("Import SVG previews on the sketch, keeps one step and extrudes", "[app][gui][svg]") {
+TEST_CASE("Import SVG previews on the sketch, keeps one step and extrudes", "[app][gui][svg][bezier]") {
   QTemporaryDir dir;
   REQUIRE(dir.isValid());
   const QString path = dir.filePath(QStringLiteral("drop.svg"));

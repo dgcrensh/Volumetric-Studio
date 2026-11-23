@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows U1 (context toolbar) · decision record:
 `docs/decisions/0040-bezier-curves.md`
 
-Status: phases 1 and 2 done.
+Status: phases 1 to 3 done.
 
 ## Goal
 
@@ -59,7 +59,7 @@ Bézier entity first.
    `sketch.import.open` (warning), so they can be recovered. Options:
    Keep smooth joints (tangent where handles are collinear, on), Fix
    imported geometry (off).
-3. **App.** A Curve tool (`sketch_bezier`) in the Sketch context's Draw
+3. **App (done).** A Curve tool (`sketch_bezier`) in the Sketch context's Draw
    group, handle display and dragging; an Insert group with Import SVG
    (`import_svg`), its dialog previewing through `History::try_apply()`
    and one undo step; icons. Tests in `vs_app_core_tests` and a `[gui]`
