@@ -69,6 +69,8 @@ ContextBar::ContextBar(const ToolActions& actions, QWidget* parent) : QWidget(pa
   detail_ = new QLabel;
   detail_->setObjectName(QStringLiteral("context_detail"));
   detail_->setStyleSheet(QStringLiteral("QLabel { padding: 0 10px; color: palette(dark); }"));
+  // Long details are cut at the edge, never widening the window.
+  detail_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   row->addWidget(detail_, 1);
   corner_ = new QHBoxLayout;
   corner_->setSpacing(4);
@@ -81,6 +83,9 @@ ContextBar::ContextBar(const ToolActions& actions, QWidget* parent) : QWidget(pa
   outer->addWidget(line);
 
   pages_ = new QStackedWidget;
+  // The pages never set the window's width: fit_page() fits them to it.
+  pages_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  pages_->setMinimumWidth(0);
   for (Context c : kContexts) pages_->addWidget(make_page(c, actions));
   outer->addWidget(pages_);
   set_context(Context::Layout);
@@ -88,6 +93,7 @@ ContextBar::ContextBar(const ToolActions& actions, QWidget* parent) : QWidget(pa
 
 QWidget* ContextBar::make_page(Context context, const ToolActions& actions) {
   auto* page = new QWidget;
+  page->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   page->setObjectName(QStringLiteral("page_") + qs(to_string(context)));
   auto* h = new QHBoxLayout(page);
   h->setContentsMargins(0, 2, 0, 0);
@@ -161,6 +167,28 @@ void ContextBar::set_context(Context context) {
   context_ = context;
   for (Context c : kContexts) tabs_.at(index_of(c))->setChecked(c == context);
   pages_->setCurrentIndex(static_cast<int>(index_of(context)));
+  fit_page();
+}
+
+void ContextBar::resizeEvent(QResizeEvent* event) {
+  QWidget::resizeEvent(event);
+  fit_page();
+}
+
+void ContextBar::fit_page() {
+  QWidget* page = pages_->currentWidget();
+  if (page == nullptr || page->layout() == nullptr) return;
+  const auto buttons = page->findChildren<QToolButton*>();
+  const auto style = [&](Qt::ToolButtonStyle s) {
+    for (QToolButton* b : buttons) {
+      if (b->toolButtonStyle() != s) b->setToolButtonStyle(s);
+    }
+    page->layout()->invalidate();
+  };
+  style(Qt::ToolButtonTextUnderIcon);
+  const QMargins m = layout()->contentsMargins();
+  const int room = width() - m.left() - m.right();
+  if (page->layout()->sizeHint().width() > room) style(Qt::ToolButtonIconOnly);
 }
 
 void ContextBar::set_tab(Context tab, const Availability& availability) {

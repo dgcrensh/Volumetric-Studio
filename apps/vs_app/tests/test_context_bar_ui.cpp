@@ -249,22 +249,40 @@ TEST_CASE("A sketch selects the Sketch tab, and Finish and Cancel go back", "[ap
   CHECK(bar.context() == Context::Layout);
 }
 
-TEST_CASE("Every toolbar fits the narrowest window without shortening a label", "[app][gui][tools]") {
+TEST_CASE("Every toolbar fits the window without shortening a label or widening it", "[app][gui][tools]") {
   app::MainWindow w;
   w.show();
+  w.resize(1440, 900);
   QApplication::processEvents();
-  const int narrowest = w.minimumSizeHint().width();
-  INFO("narrowest window " << narrowest);
-  for (Context c : app::kContexts) {
+  app::ContextBar& bar = w.context_bar();
+  // Wide: every toolbar but Sketch has its labels.
+  for (Context c : {Context::Layout, Context::Contents, Context::Graph, Context::Drawing}) {
+    bar.set_context(c);
+    QApplication::processEvents();
     INFO(app::to_string(c));
-    QWidget* page = w.context_bar().page(c);
-    REQUIRE(page != nullptr);
-    // The page with its margins, inside the window's.
-    CHECK(page->sizeHint().width() + 24 <= narrowest);
-    for (QToolButton* b : page->findChildren<QToolButton*>()) {
-      CHECK(b->sizePolicy().horizontalPolicy() == QSizePolicy::Fixed);
+    for (QToolButton* b : bar.page(c)->findChildren<QToolButton*>()) {
+      CHECK(b->toolButtonStyle() == Qt::ToolButtonTextUnderIcon);
     }
   }
+  // At its narrowest the window keeps its width in every context, and every
+  // button has its full size and lies inside the bar (labels, or icons only).
+  const int narrowest = w.minimumSizeHint().width();
+  w.resize(narrowest, 800);
+  QApplication::processEvents();
+  for (Context c : app::kContexts) {
+    bar.set_context(c);
+    QApplication::processEvents();
+    INFO(app::to_string(c) << " at " << narrowest);
+    CHECK(w.minimumSizeHint().width() == narrowest);
+    CHECK(w.width() == narrowest);
+    QWidget* page = bar.page(c);
+    for (QToolButton* b : page->findChildren<QToolButton*>()) {
+      if (!b->isVisible()) continue;
+      CHECK(b->width() >= b->sizeHint().width());
+      CHECK(b->mapTo(&bar, QPoint(b->width(), 0)).x() <= bar.width());
+    }
+  }
+  bar.set_context(Context::Layout);
 }
 
 TEST_CASE("Tools reach the entry points their menu items did", "[app][gui][tools]") {

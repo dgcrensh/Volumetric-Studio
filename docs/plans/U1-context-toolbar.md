@@ -72,7 +72,10 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
    Browser will fold to a strip instead). The drawing tools are checkable
    and follow `SketchMode::toolChanged()`. The Sketch toolbar fits by
    showing five drawing tools, four constraints and two dimensions with
-   the rest under More, and "H distance" and "V distance" labels.
+   the rest under More, and "H distance" and "V distance" labels; and in
+   any window too narrow for a toolbar's labels (the narrowest is about
+   1050 px, set by the docks) its buttons show icons only, labels in
+   their tooltips, so no toolbar widens the window or elides a label.
 4. **Browser and Inspector.** `browser.*`: one left dock with foldable
    sections holding the existing trees, so `volume_tree()`,
    `feature_tree()` and `variables_table()` keep working. The Inspector

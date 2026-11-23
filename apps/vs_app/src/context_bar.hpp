@@ -11,7 +11,10 @@
 //
 // Each toolbar is the context's groups (tool_groups()): the group's first
 // `shown` tools as buttons with their label under the icon, the rest in the
-// group's "More" menu, and the group's name under them. Every button shows
+// group's "More" menu, and the group's name under them. When the window is
+// too narrow for the labels the buttons show their icons only (the label
+// stays in the tooltip); a toolbar never widens the window and never
+// shortens a label. Every button shows
 // one of ToolActions' actions, so enabling, tooltips and shortcuts follow
 // the actions.
 //
@@ -28,6 +31,7 @@
 
 class QHBoxLayout;
 class QLabel;
+class QResizeEvent;
 class QStackedWidget;
 class QToolButton;
 
@@ -63,7 +67,12 @@ class ContextBar : public QWidget {
  signals:
   void tabRequested(vs::app::Context tab);
 
+ protected:
+  void resizeEvent(QResizeEvent* event) override;
+
  private:
+  // Labels under the icons when the current toolbar has room, else icons only.
+  void fit_page();
   QWidget* make_page(Context context, const ToolActions& actions);
 
   Context context_ = Context::Layout;

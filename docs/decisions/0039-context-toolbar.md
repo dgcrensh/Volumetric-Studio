@@ -36,7 +36,8 @@ the menus had carry over, except Insert > Sketch's Ctrl+Shift+S, which
 File > Save As (`QKeySequence::SaveAs`) also held, so neither worked: the
 Sketch tool takes Ctrl+Shift+K. Toolbar buttons never shrink (Qt would
 elide their labels); a context with too many tools shows fewer and puts
-the rest under More (Sketch's Constrain group shows six).
+the rest under More, and a window too narrow for the labels shows the
+buttons' icons only, with the label in the tooltip.
 
 **Icons are stroke geometry.** `icons.hpp` gives each icon a few strokes
 on a 24-unit grid (polylines with circles and arcs flattened, dots,
