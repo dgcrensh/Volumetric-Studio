@@ -401,3 +401,77 @@ TEST_CASE("A Bezier in a sketch is picked, freed and deleted with its points", "
   CHECK(ed.sketch().find_entity(curve) == nullptr);
   CHECK(count(ed.sketch(), sketch::EntityKind::Bezier) == 0);
 }
+
+TEST_CASE("The curve tool draws chained Beziers that close a profile", "[app][sketch][bezier]") {
+  SketchEditor ed(sketch::Sketch(Id::random(), "Drop"), kSettings);
+  ed.set_tool(SketchTool::Bezier);
+  CHECK(ed.click({0, 0}).empty());
+  CHECK(ed.click({0, 30}).empty());
+  CHECK(ed.click({40, 30}).empty());
+  CHECK(ed.pending().size() == 3);
+  const auto first = ed.click({40, 0});
+  // Start, two handles, end and the curve.
+  CHECK(first.size() == 5);
+  REQUIRE_FALSE(ed.chain_end().is_null());
+  CHECK(*ed.sketch().point(ed.chain_end()) == core::dvec2{40, 0});
+
+  // The next curve starts at the last end; closing on the first point snaps.
+  const Id start = of_kind(ed.sketch(), sketch::EntityKind::Point).front();
+  CHECK(ed.click({40, -30}).empty());
+  CHECK(ed.click({0, -30}).empty());
+  const auto second = ed.click({0, 0}, start);
+  CHECK(second.size() == 3);  // two handles and the curve: both ends were there
+  CHECK(ed.chain_end().is_null());
+  CHECK(count(ed.sketch(), sketch::EntityKind::Bezier) == 2);
+  CHECK(count(ed.sketch(), sketch::EntityKind::Point) == 6);
+  CHECK(profiles(ed.sketch()) == 1);
+  CHECK(ed.status() == SolveStatus::UnderConstrained);
+
+  // A handle drags like any point and reshapes the curve.
+  const auto beziers = of_kind(ed.sketch(), sketch::EntityKind::Bezier);
+  const Id handle = ed.sketch().find_entity(beziers[0])->as<sketch::Bezier>()->control1;
+  CHECK(ed.drag(handle, {0, 50}));
+  CHECK_THAT(ed.sketch().point(handle)->y, WithinAbs(50, 1e-9));
+
+  // One undo step per curve, and per drag.
+  CHECK(ed.undo());
+  CHECK(ed.undo());
+  CHECK(count(ed.sketch(), sketch::EntityKind::Bezier) == 1);
+}
+
+TEST_CASE("A curve with no length draws nothing", "[app][sketch][bezier]") {
+  SketchEditor ed(sketch::Sketch(Id::random(), "S"), kSettings);
+  ed.set_tool(SketchTool::Bezier);
+  for (int i = 0; i < 4; ++i) ed.click({5, 5});
+  CHECK(ed.sketch().entities().empty());
+  CHECK_FALSE(ed.can_undo());
+}
+
+TEST_CASE("Importing an SVG is one undo step", "[app][sketch][svg]") {
+  SketchEditor ed(sketch::Sketch(Id::random(), "Logo"), kSettings);
+  const std::string svg = R"svg(<svg width="40mm" height="40mm" viewBox="0 0 40 40">
+    <path d="M5 20 C5 5 35 5 35 20 S5 35 5 20 Z"/><circle cx="20" cy="20" r="4"/></svg>)svg";
+  auto r = ed.import_svg(svg, {});
+  REQUIRE(r);
+  CHECK(r->curves.size() == 3);
+  CHECK(count(ed.sketch(), ConstraintKind::Tangent) == 1);
+  CHECK(profiles(ed.sketch()) == 1);
+  CHECK(ed.status() == SolveStatus::UnderConstrained);
+  CHECK(ed.undo());
+  CHECK(ed.sketch().entities().empty());
+  CHECK(ed.redo());
+  CHECK(count(ed.sketch(), sketch::EntityKind::Bezier) == 2);
+
+  sketch::SvgImportOptions fixed;
+  fixed.fix = true;
+  ed.undo();
+  REQUIRE(ed.import_svg(svg, fixed));
+  CHECK(ed.status() == SolveStatus::Solved);
+
+  // A refused file changes nothing and leaves no step.
+  const auto before = ed.sketch();
+  CHECK_FALSE(ed.import_svg("<svg><text>no</text></svg>", {}));
+  CHECK(ed.sketch() == before);
+  CHECK(ed.undo());
+  CHECK(ed.sketch().entities().empty());
+}

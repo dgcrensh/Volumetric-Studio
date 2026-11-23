@@ -27,6 +27,13 @@
 //               onto the start's radius)
 //   Slot        the two cap centres, then a point giving the radius: two
 //               lines tangent to two arcs of equal radius
+//   Curve       a cubic Bézier: start, first handle, second handle, end
+//               (the control polygon in order; S1). Chained like lines: the
+//               next curve starts at the last one's end until finish_tool().
+//               Only the ends snap; handles are new points.
+//
+// import_svg() adds an SVG file's outlines (vs_sketch's import_svg()) as one
+// step, like a finished shape.
 //
 // The editor keeps its own undo stack for the session; finishing the
 // sketch hands the result to the app's History as one step.
@@ -40,6 +47,7 @@
 #include "vs/feature/expression.hpp"
 #include "vs/sketch/sketch.hpp"
 #include "vs/sketch/solver.hpp"
+#include "vs/sketch/svg.hpp"
 
 namespace vs::app {
 
@@ -52,7 +60,7 @@ inline constexpr double kMinDraggedDimension = 0.01;  // mm
 using core::dvec2;
 using core::Id;
 
-enum class SketchTool { Select, Point, Line, Rectangle, Circle, Arc, Slot };
+enum class SketchTool { Select, Point, Line, Rectangle, Circle, Arc, Slot, Bezier };
 std::string_view to_string(SketchTool tool);
 
 class SketchEditor {
@@ -100,6 +108,11 @@ class SketchEditor {
   // Distance from `p` to an entity's geometry; infinity for unknown ids.
   [[nodiscard]] double distance_to(const Id& entity, dvec2 p) const;
 
+  // --- importing (S1)
+  // Adds an SVG document's outlines as one undo step and solves. On error
+  // nothing changes. An unfinished shape is dropped first.
+  core::Result<sketch::SvgImport> import_svg(std::string_view svg, const sketch::SvgImportOptions& options);
+
   // --- constraints and dimensions
   // Whether `kind` fits `refs` (sketch.hpp lists the forms).
   [[nodiscard]] bool fits(sketch::ConstraintKind kind, const std::vector<Id>& refs) const;
@@ -138,6 +151,9 @@ class SketchEditor {
   [[nodiscard]] bool can_redo() const { return !redo_.empty(); }
   bool undo();
   bool redo();
+  // Undoes the last step and forgets it (no redo): a preview being
+  // replaced or cancelled.
+  bool undo_and_forget();
 
  private:
   void record();

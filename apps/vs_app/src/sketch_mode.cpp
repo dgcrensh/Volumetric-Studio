@@ -274,7 +274,8 @@ void SketchView::paintEvent(QPaintEvent*) {
 
   // The shape in progress.
   std::vector<dvec2> pending = editor_.pending();
-  if (pending.empty() && editor_.tool() == SketchTool::Line && !editor_.chain_end().is_null()) {
+  if (pending.empty() && (editor_.tool() == SketchTool::Line || editor_.tool() == SketchTool::Bezier) &&
+      !editor_.chain_end().is_null()) {
     pending.push_back(*sk.point(editor_.chain_end()));
   }
   if (!pending.empty()) {
@@ -295,6 +296,20 @@ void SketchView::paintEvent(QPaintEvent*) {
       case SketchTool::Slot:
         for (const auto& q : pending) p.drawLine(to_screen(q), hover_);
         break;
+      case SketchTool::Bezier: {
+        // The control polygon so far, and the curve once both handles are down.
+        QPolygonF polygon;
+        for (const auto& q : pending) polygon << to_screen(q);
+        polygon << hover_;
+        p.drawPolyline(polygon);
+        if (pending.size() == 3) {
+          QPainterPath curve(to_screen(pending[0]));
+          curve.cubicTo(to_screen(pending[1]), to_screen(pending[2]), hover_);
+          p.setPen(QPen(kSelected, 1.5));
+          p.drawPath(curve);
+        }
+        break;
+      }
       default: break;
     }
   }
@@ -609,6 +624,27 @@ void SketchMode::refresh() {
 void SketchMode::update_actions() {
   undo_->setEnabled(editor_->can_undo());
   redo_->setEnabled(editor_->can_redo());
+}
+
+core::Result<sketch::SvgImport> SketchMode::preview_import(std::string_view svg,
+                                                          const sketch::SvgImportOptions& options) {
+  if (import_previewing_) editor_->undo_and_forget();
+  auto imported = editor_->import_svg(svg, options);
+  import_previewing_ = imported.ok();
+  if (import_previewing_) view_->fit();
+  refresh();
+  emit view_->edited();
+  return imported;
+}
+
+void SketchMode::keep_import() { import_previewing_ = false; }
+
+void SketchMode::drop_import() {
+  if (!import_previewing_) return;
+  import_previewing_ = false;
+  editor_->undo_and_forget();
+  refresh();
+  emit view_->edited();
 }
 
 }  // namespace vs::app

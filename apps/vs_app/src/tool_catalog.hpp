@@ -82,6 +82,9 @@ enum class ToolId {
   SketchCircle,
   SketchArc,
   SketchSlot,
+  SketchBezier,
+  // Sketch: insert
+  ImportSvg,
   // Sketch: constrain and dimension (one per sketch::ConstraintKind)
   Coincident,
   PointOnCurve,

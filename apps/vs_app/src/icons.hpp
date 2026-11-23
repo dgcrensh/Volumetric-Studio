@@ -87,6 +87,9 @@ enum class Icon {
   ChevronDown,
   Browser,
   Variables,
+  // S1
+  Bezier,
+  ImportSvg,
 };
 
 inline constexpr double kIconGrid = 24.0;
