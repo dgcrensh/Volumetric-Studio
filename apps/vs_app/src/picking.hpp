@@ -64,18 +64,21 @@ struct PickResolution {
 std::vector<std::pair<Id, ItemRole>> pickable_items(const eval::Evaluation& evaluation, const Id& context_volume);
 
 // The surface a named face lies on, in this evaluation: a plane (normal out
-// of the material) or a cylinder. Nullopt when the reference doesn't
-// resolve to a built face.
+// of the material), a cylinder, or for any other surface (an extruded
+// Bézier's side, decision 0040) sample points and normals on it. Nullopt
+// when the reference doesn't resolve to a built face.
 struct NamedSurface {
   kernel::Plane plane;
   std::optional<kernel::Cylinder> cylinder;
+  std::vector<feature::SurfacePoint> samples;  // set: neither plane nor cylinder
   bool patch = false;  // a connection surface's patch: either side matches
 };
 std::optional<NamedSurface> named_surface(const eval::Evaluation& evaluation, const Id& tree_volume,
                                           const feature::FaceRef& ref);
 
 // Whether two surfaces are the same (and face the same way), within
-// `tolerance` mm and a matching angle tolerance.
+// `tolerance` mm and a matching angle tolerance. Sampled surfaces are the
+// same when their samples are; neither is ever a plane or cylinder.
 bool same_surface(const NamedSurface& a, const NamedSurface& b, double tolerance = 1e-4);
 
 // The surface a face of a displayed B-rep lies on (nullopt for faces that

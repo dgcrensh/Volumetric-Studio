@@ -56,7 +56,9 @@ facing the same way; planes and cylinders are skipped first. Patterns
 move the samples with their copies, and fillets and chamfers find edges
 by them. A sampled face is curved: a sketch or datum on it is
 `feature.reference.wrong_kind`, the app lists it as a face but not as a
-plane, and drawings don't anchor on it. Drafted extrusions don't name
+plane, and drawings don't anchor on it. Picking in the viewport names a
+clicked curved face (and so an edge beside it, for a fillet or chamfer)
+by the same sample test (`picking.cpp`). Drafted extrusions don't name
 Bézier sides, as for arcs.
 
 **Files and hashes keep their bytes.** The sketch JSON gains a `bezier`
