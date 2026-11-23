@@ -78,9 +78,9 @@ constexpr std::array kTools = {
     // Sketch: dimension
     Tool{T::Distance, "distance", "Distance", "Distance between points, a point and a line, or a line's length", "",
          Icon::Distance},
-    Tool{T::HorizontalDistance, "horizontal_distance", "Horizontal", "Horizontal distance between two points", "",
+    Tool{T::HorizontalDistance, "horizontal_distance", "H distance", "Horizontal distance between two points", "",
          Icon::HorizontalDistance},
-    Tool{T::VerticalDistance, "vertical_distance", "Vertical", "Vertical distance between two points", "",
+    Tool{T::VerticalDistance, "vertical_distance", "V distance", "Vertical distance between two points", "",
          Icon::VerticalDistance},
     Tool{T::Angle, "angle", "Angle", "Angle of a line, or between two lines", "", Icon::Angle},
     Tool{T::Radius, "radius", "Radius", "Radius of a circle or arc", "", Icon::Radius},
@@ -133,12 +133,12 @@ std::vector<ToolGroup> make_groups(Context context) {
       };
     case Context::Sketch:
       return {
-          {"Draw", {T::SketchSelect, T::SketchPoint, T::SketchLine, T::SketchRectangle, T::SketchCircle, T::SketchArc,
-                    T::SketchSlot}, kAll},
+          {"Draw", {T::SketchSelect, T::SketchLine, T::SketchRectangle, T::SketchCircle, T::SketchArc, T::SketchPoint,
+                    T::SketchSlot}, 5},
           {"Constrain", {T::Coincident, T::PointOnCurve, T::Horizontal, T::Vertical, T::Parallel, T::Perpendicular,
-                         T::Tangent, T::Equal, T::Symmetric, T::Fix}, 6},
+                         T::Tangent, T::Equal, T::Symmetric, T::Fix}, 4},
           {"Dimension", {T::Distance, T::HorizontalDistance, T::VerticalDistance, T::Angle, T::Radius, T::Diameter},
-           3},
+           2},
           {"Edit", {T::Construction, T::DeleteSketchItems}, kAll},
           {"Finish", {T::CancelSketch, T::FinishSketch}, kAll},
       };

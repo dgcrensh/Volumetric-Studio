@@ -5,9 +5,13 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDockWidget>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPushButton>
+#include <QToolBar>
 #include <QToolButton>
+#include <QTreeWidget>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -185,11 +189,29 @@ TEST_CASE("A sketch selects the Sketch tab, and Finish and Cancel go back", "[ap
   const Id sketch = first_layout_sketch(w);
   REQUIRE_FALSE(sketch.is_null());
 
+  w.resize(1440, 900);
+  QApplication::processEvents();
+  const QSize before = w.size();
+  const bool volumes_shown = w.volume_tree().isVisible();
+  REQUIRE(volumes_shown);
+
   w.select(Selection::of_feature(sketch));
   CHECK(bar.tab(Context::Sketch)->isEnabled());
   REQUIRE(w.enter_context(Context::Sketch));
   REQUIRE(w.sketch_mode() != nullptr);
+  QApplication::processEvents();
   CHECK(bar.context() == Context::Sketch);
+  // Phase 3: the tab is the only toolbar (sketch mode has no buttons of its
+  // own), the status and constraints are in the right-hand dock, the left
+  // docks fold away, and the window keeps its size.
+  CHECK(w.sketch_mode()->findChildren<QToolBar*>().isEmpty());
+  CHECK(w.sketch_mode()->findChildren<QPushButton*>().isEmpty());
+  CHECK(w.sketch_dock().isVisible());
+  CHECK(w.sketch_dock().widget() == w.sketch_mode()->side_panel());
+  CHECK(w.sketch_mode()->constraint_list().isVisible());
+  CHECK_FALSE(w.volume_tree().isVisible());
+  CHECK(w.size() == before);
+  CHECK(w.tool_action(ToolId::SketchSelect).isChecked());
   // Every other tab waits for Finish or Cancel.
   for (Context c : {Context::Layout, Context::Contents, Context::Graph, Context::Drawing}) {
     CHECK_FALSE(bar.tab(c)->isEnabled());
@@ -202,12 +224,22 @@ TEST_CASE("A sketch selects the Sketch tab, and Finish and Cancel go back", "[ap
   CHECK(w.tool_action(ToolId::SketchLine).isEnabled());
   w.tool_action(ToolId::SketchLine).trigger();
   CHECK(w.sketch_mode()->editor().tool() == app::SketchTool::Line);
+  CHECK(w.tool_action(ToolId::SketchLine).isChecked());
+  CHECK_FALSE(w.tool_action(ToolId::SketchSelect).isChecked());
+  // Set from the canvas's side too.
+  w.sketch_mode()->set_tool(app::SketchTool::Circle);
+  CHECK(w.tool_action(ToolId::SketchCircle).isChecked());
+  CHECK_FALSE(w.tool_action(ToolId::SketchLine).isChecked());
 
   w.tool_action(ToolId::CancelSketch).trigger();
   drop_deleted();
+  QApplication::processEvents();
   CHECK(w.sketch_mode() == nullptr);
   CHECK(w.context() == Context::Layout);
   CHECK(bar.context() == Context::Layout);
+  CHECK_FALSE(w.sketch_dock().isVisible());
+  CHECK(w.volume_tree().isVisible());
+  CHECK_FALSE(w.tool_action(ToolId::SketchSelect).isChecked());
 
   w.select(Selection::of_feature(sketch));
   REQUIRE(w.enter_context(Context::Sketch));
@@ -215,6 +247,24 @@ TEST_CASE("A sketch selects the Sketch tab, and Finish and Cancel go back", "[ap
   drop_deleted();
   CHECK(w.sketch_mode() == nullptr);
   CHECK(bar.context() == Context::Layout);
+}
+
+TEST_CASE("Every toolbar fits the narrowest window without shortening a label", "[app][gui][tools]") {
+  app::MainWindow w;
+  w.show();
+  QApplication::processEvents();
+  const int narrowest = w.minimumSizeHint().width();
+  INFO("narrowest window " << narrowest);
+  for (Context c : app::kContexts) {
+    INFO(app::to_string(c));
+    QWidget* page = w.context_bar().page(c);
+    REQUIRE(page != nullptr);
+    // The page with its margins, inside the window's.
+    CHECK(page->sizeHint().width() + 24 <= narrowest);
+    for (QToolButton* b : page->findChildren<QToolButton*>()) {
+      CHECK(b->sizePolicy().horizontalPolicy() == QSizePolicy::Fixed);
+    }
+  }
 }
 
 TEST_CASE("Tools reach the entry points their menu items did", "[app][gui][tools]") {

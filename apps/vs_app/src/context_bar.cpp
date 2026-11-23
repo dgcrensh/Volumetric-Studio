@@ -177,6 +177,8 @@ void ContextBar::add_corner_widget(QWidget* widget) { corner_->addWidget(widget)
 
 QToolButton* ContextBar::tab(Context context) const { return tabs_.at(index_of(context)); }
 
+QWidget* ContextBar::page(Context context) const { return pages_->widget(static_cast<int>(index_of(context))); }
+
 QToolButton* ContextBar::button(Context context, ToolId id) const {
   return pages_->findChild<QToolButton*>(button_name(context, id));
 }

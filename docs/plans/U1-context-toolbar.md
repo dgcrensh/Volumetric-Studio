@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows L6 (drawings) · decision record:
 `docs/decisions/0039-context-toolbar.md`
 
-Status: phases 1 and 2 done; phases 3 to 6 to do.
+Status: phases 1 to 3 done; phases 4 to 6 to do.
 
 ## Goal
 
@@ -66,6 +66,13 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
    narrower windows Qt still elides its longest labels, so this phase
    makes it fit the window's 1284 px minimum (shorter labels or icon-only
    constraint buttons), and sketch mode stops growing the window 55 px.
+   **Done.** The panel (status, constraint list, hint) is
+   `SketchMode::side_panel()`, shown in a Sketch dock tabbed with the
+   Inspector; the left docks fold until Finish or Cancel (phase 4's
+   Browser will fold to a strip instead). The drawing tools are checkable
+   and follow `SketchMode::toolChanged()`. The Sketch toolbar fits by
+   showing five drawing tools, four constraints and two dimensions with
+   the rest under More, and "H distance" and "V distance" labels.
 4. **Browser and Inspector.** `browser.*`: one left dock with foldable
    sections holding the existing trees, so `volume_tree()`,
    `feature_tree()` and `variables_table()` keep working. The Inspector

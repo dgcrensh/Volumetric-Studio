@@ -950,7 +950,10 @@ so they are registered. A new library must also be added to
   Table… and Regenerate on its right) over one toolbar per context.
   `MainWindow::refresh_tools()` follows what is open and selected;
   `enter_context()` is a tab click, `run_tool()` a button. The menus keep
-  File, Edit, View and Help. Phases 3 to 6 are in
+  File, Edit, View and Help. Sketch mode (phase 3) is only the canvas:
+  the Sketch tab drives it, its status and constraint list
+  (`SketchMode::side_panel()`) sit in the Sketch dock on the right, and
+  the left docks fold while sketching. Phases 4 to 6 are in
   `docs/plans/U1-context-toolbar.md`. Tests: `test_tool_catalog.cpp`,
   `test_context_bar_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]

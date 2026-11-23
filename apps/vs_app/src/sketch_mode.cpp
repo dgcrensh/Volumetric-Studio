@@ -431,70 +431,34 @@ void SketchView::keyPressEvent(QKeyEvent* event) {
 SketchMode::SketchMode(std::unique_ptr<SketchEditor> editor, const QString& title, QWidget* parent)
     : QWidget(parent), editor_(std::move(editor)) {
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(4, 4, 4, 4);
-  auto* heading = new QLabel(tr("Sketch: %1").arg(title));
+  layout->setContentsMargins(0, 0, 0, 0);
+  view_ = new SketchView(*editor_);
+  layout->addWidget(view_, 1);
+
+  // Undo and redo of the sketch's own steps, with the keys while sketch
+  // mode has focus (the window's are set aside meanwhile, H7).
+  undo_ = new QAction(tr("Undo"), this);
+  undo_->setShortcut(QKeySequence::Undo);
+  undo_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  connect(undo_, &QAction::triggered, this, &SketchMode::undo);
+  redo_ = new QAction(tr("Redo"), this);
+  redo_->setShortcut(QKeySequence::Redo);
+  redo_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  connect(redo_, &QAction::triggered, this, &SketchMode::redo);
+  addAction(undo_);
+  addAction(redo_);
+
+  // The side panel: parentless until the window docks it; deleted with us.
+  side_ = new QWidget;
+  side_->setObjectName(QStringLiteral("sketch_panel"));
+  auto* sv = new QVBoxLayout(side_);
+  sv->setContentsMargins(4, 4, 4, 4);
+  auto* heading = new QLabel(title);
   QFont hf = heading->font();
   hf.setBold(true);
   heading->setFont(hf);
-  layout->addWidget(heading);
-
-  auto* tools = new QToolBar;
-  tools->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  const std::pair<SketchTool, const char*> tool_list[] = {
-      {SketchTool::Select, "Select"}, {SketchTool::Point, "Point"},   {SketchTool::Line, "Line"},
-      {SketchTool::Rectangle, "Rectangle"}, {SketchTool::Circle, "Circle"}, {SketchTool::Arc, "Arc"},
-      {SketchTool::Slot, "Slot"}};
-  for (const auto& [tool, label] : tool_list) {
-    QAction* a = tools->addAction(tr(label));
-    a->setCheckable(true);
-    const SketchTool t = tool;
-    connect(a, &QAction::triggered, this, [this, t] { set_tool(t); });
-    tool_actions_.push_back({tool, a});
-  }
-  tools->addSeparator();
-  undo_ = tools->addAction(tr("Undo"), this, &SketchMode::undo);
-  undo_->setShortcut(QKeySequence::Undo);
-  undo_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-  redo_ = tools->addAction(tr("Redo"), this, &SketchMode::redo);
-  redo_->setShortcut(QKeySequence::Redo);
-  redo_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-  addAction(undo_);
-  addAction(redo_);
-  tools->addAction(tr("Construction"), this, &SketchMode::toggle_construction);
-  tools->addAction(tr("Delete"), this, &SketchMode::remove_selection);
-  layout->addWidget(tools);
-
-  auto* constraints = new QToolBar;
-  constraints->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  const std::pair<ConstraintKind, const char*> constraint_list[] = {
-      {ConstraintKind::Coincident, "Coincident"},     {ConstraintKind::PointOnCurve, "On curve"},
-      {ConstraintKind::Horizontal, "Horizontal"},     {ConstraintKind::Vertical, "Vertical"},
-      {ConstraintKind::Parallel, "Parallel"},         {ConstraintKind::Perpendicular, "Perpendicular"},
-      {ConstraintKind::Tangent, "Tangent"},           {ConstraintKind::Equal, "Equal"},
-      {ConstraintKind::Symmetric, "Symmetric"},       {ConstraintKind::Fix, "Fix"},
-      {ConstraintKind::Distance, "Distance"},         {ConstraintKind::HorizontalDistance, "H distance"},
-      {ConstraintKind::VerticalDistance, "V distance"}, {ConstraintKind::Angle, "Angle"},
-      {ConstraintKind::Radius, "Radius"},             {ConstraintKind::Diameter, "Diameter"}};
-  for (const auto& [kind, label] : constraint_list) {
-    if (kind == ConstraintKind::Distance) {
-      layout->addWidget(constraints);
-      constraints = new QToolBar;
-      constraints->setToolButtonStyle(Qt::ToolButtonTextOnly);
-      constraints->addWidget(new QLabel(tr("Dimensions: ")));
-    }
-    QAction* a = constraints->addAction(tr(label));
-    const ConstraintKind k = kind;
-    connect(a, &QAction::triggered, this, [this, k] { constrain(k); });
-    constraint_actions_.push_back({kind, a});
-  }
-  layout->addWidget(constraints);
-
-  auto* split = new QSplitter;
-  view_ = new SketchView(*editor_);
-  split->addWidget(view_);
-  auto* side = new QWidget;
-  auto* sv = new QVBoxLayout(side);
-  sv->setContentsMargins(0, 0, 0, 0);
+  heading->setWordWrap(true);
+  sv->addWidget(heading);
   status_ = new QLabel;
   status_->setWordWrap(true);
   QFont sf = status_->font();
@@ -511,22 +475,6 @@ SketchMode::SketchMode(std::unique_ptr<SketchEditor> editor, const QString& titl
   hint_->setWordWrap(true);
   hint_->setStyleSheet(QStringLiteral("color: #666;"));
   sv->addWidget(hint_);
-  split->addWidget(side);
-  split->setStretchFactor(0, 3);
-  split->setStretchFactor(1, 1);
-  split->setSizes({700, 300});
-  layout->addWidget(split, 1);
-
-  auto* buttons = new QHBoxLayout;
-  buttons->addStretch(1);
-  auto* cancel = new QPushButton(tr("Cancel"));
-  auto* done = new QPushButton(tr("Finish sketch"));
-  done->setDefault(true);
-  buttons->addWidget(cancel);
-  buttons->addWidget(done);
-  layout->addLayout(buttons);
-  connect(done, &QPushButton::clicked, this, [this] { finish(true); });
-  connect(cancel, &QPushButton::clicked, this, [this] { finish(false); });
 
   connect(view_, &SketchView::edited, this, &SketchMode::refresh);
   connect(view_, &SketchView::message, this, [this](const QString& text) { status_->setText(text); });
@@ -559,15 +507,15 @@ SketchMode::SketchMode(std::unique_ptr<SketchEditor> editor, const QString& titl
   refresh();
 }
 
-SketchMode::~SketchMode() = default;
+SketchMode::~SketchMode() { delete side_.data(); }
 
 QString SketchMode::status_text() const { return status_->text(); }
 
 void SketchMode::set_tool(SketchTool tool) {
   editor_->set_tool(tool);
-  for (const auto& [t, a] : tool_actions_) a->setChecked(t == tool);
   view_->setCursor(tool == SketchTool::Select ? Qt::ArrowCursor : Qt::CrossCursor);
   view_->update();
+  emit toolChanged();
 }
 
 bool SketchMode::constrain(ConstraintKind kind) {
@@ -649,10 +597,6 @@ void SketchMode::refresh() {
 }
 
 void SketchMode::update_actions() {
-  const auto fits = editor_->applicable(view_->selection());
-  for (const auto& [kind, a] : constraint_actions_) {
-    a->setEnabled(std::find(fits.begin(), fits.end(), kind) != fits.end());
-  }
   undo_->setEnabled(editor_->can_undo());
   redo_->setEnabled(editor_->can_redo());
 }

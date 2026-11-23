@@ -540,7 +540,15 @@ void MainWindow::build_docks() {
   inspector_stack_->addWidget(inspector_);
   node_form_ = new NodeForm;
   inspector_stack_->addWidget(node_form_);
-  dock(tr("Inspector"), "inspector", inspector_stack_, Qt::RightDockWidgetArea);
+  QDockWidget* inspector_dock = dock(tr("Inspector"), "inspector", inspector_stack_, Qt::RightDockWidgetArea);
+  // U1: the open sketch's status and constraints, tabbed with the inspector
+  // and shown only while sketching (sketch mode hands over its panel).
+  sketch_dock_empty_ = new QWidget;
+  sketch_dock_ = dock(tr("Sketch"), "sketch", sketch_dock_empty_, Qt::RightDockWidgetArea);
+  tabifyDockWidget(inspector_dock, sketch_dock_);
+  sketch_dock_->toggleViewAction()->setVisible(false);
+  sketch_dock_->hide();
+  inspector_dock->raise();
   connect(node_form_, &NodeForm::settingEdited, this, [this](core::Id node, const QString& key, const QString& text) {
     node_editor_->set_setting_text(node, sstr(key), text);
   });
@@ -2125,14 +2133,27 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
   sketch_mode_ = new SketchMode(std::move(editor), title);
   central_->addWidget(sketch_mode_);
   central_->setCurrentWidget(sketch_mode_);
+  // U1: the panel goes to the right-hand dock; the left docks fold away
+  // until Finish or Cancel, so the canvas gets the room.
+  sketch_dock_->setWidget(sketch_mode_->side_panel());
+  sketch_dock_->show();
+  sketch_dock_->raise();
+  folded_docks_.clear();
+  for (QDockWidget* d : findChildren<QDockWidget*>()) {
+    if (d->isVisible() && dockWidgetArea(d) == Qt::LeftDockWidgetArea) {
+      folded_docks_.push_back(d);
+      d->hide();
+    }
+  }
   sketch_session_ = SketchSession{volume, std::move(f), is_new};
   connect(sketch_mode_, &SketchMode::finished, this, &MainWindow::finish_sketch);
   // U1: the Sketch tab's constraint tools follow the sketch's selection.
   connect(&sketch_mode_->view(), &SketchView::selectionChanged, this, &MainWindow::refresh_tools);
   connect(&sketch_mode_->view(), &SketchView::edited, this, &MainWindow::refresh_tools);
+  connect(sketch_mode_, &SketchMode::toolChanged, this, &MainWindow::refresh_tools);
   refresh_tools();
   sketch_mode_->view().setFocus();
-  status_label_->setText(tr("Sketch mode: draw, constrain, then Finish sketch"));
+  status_label_->setText(tr("Sketching: draw and constrain from the Sketch tab, then Finish"));
   return sketch_mode_;
 }
 
@@ -2152,6 +2173,10 @@ void MainWindow::finish_sketch(bool accept) {
   }
   central_->setCurrentWidget(viewport_);
   central_->removeWidget(sketch_mode_);
+  sketch_dock_->hide();
+  sketch_dock_->setWidget(sketch_dock_empty_);  // the panel goes with sketch mode
+  for (QDockWidget* d : folded_docks_) d->show();
+  folded_docks_.clear();
   sketch_mode_->deleteLater();
   sketch_mode_ = nullptr;
   suspend_window_shortcuts(false);
@@ -2603,6 +2628,11 @@ void MainWindow::report(const core::Diagnostics& diagnostics, const QString& wha
 
 void MainWindow::build_context_bar() {
   tool_actions_ = new ToolActions(this);
+  // The Sketch tab's drawing tools show which one is in use (U1 phase 3).
+  for (ToolId t : {ToolId::SketchSelect, ToolId::SketchPoint, ToolId::SketchLine, ToolId::SketchRectangle,
+                   ToolId::SketchCircle, ToolId::SketchArc, ToolId::SketchSlot}) {
+    tool_actions_->action(t)->setCheckable(true);
+  }
   connect(tool_actions_, &ToolActions::triggered, this, &MainWindow::run_tool);
   context_bar_ = new ContextBar(*tool_actions_);
   connect(context_bar_, &ContextBar::tabRequested, this, [this](Context tab) { enter_context(tab); });
@@ -2675,6 +2705,14 @@ void MainWindow::refresh_tools() {
       state.selection_generated && snapshot ? snapshot->evaluation.document : history_.project().document;
   const Context now = current_context(doc, state);
   tool_actions_->refresh(doc, state);
+  const std::pair<ToolId, SketchTool> draw_tools[] = {
+      {ToolId::SketchSelect, SketchTool::Select}, {ToolId::SketchPoint, SketchTool::Point},
+      {ToolId::SketchLine, SketchTool::Line},     {ToolId::SketchRectangle, SketchTool::Rectangle},
+      {ToolId::SketchCircle, SketchTool::Circle}, {ToolId::SketchArc, SketchTool::Arc},
+      {ToolId::SketchSlot, SketchTool::Slot}};
+  for (const auto& [id, t] : draw_tools) {
+    tool_actions_->action(id)->setChecked(sketch_mode_ != nullptr && sketch_mode_->editor().tool() == t);
+  }
   context_bar_->set_context(now);
   for (Context c : kContexts) context_bar_->set_tab(c, tab_availability(c, doc, state));
 

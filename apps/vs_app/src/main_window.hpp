@@ -227,6 +227,8 @@ class MainWindow : public QMainWindow {
   SketchMode* new_sketch(const feature::PlaneRef& plane, const std::string& name = {});
   SketchMode* edit_sketch(const Id& volume, const Id& feature);
   [[nodiscard]] SketchMode* sketch_mode() const { return sketch_mode_; }
+  // The dock holding the open sketch's status and constraint list (U1).
+  [[nodiscard]] QDockWidget& sketch_dock() { return *sketch_dock_; }
 
   VolumeDialog* new_volume();
   VolumeDialog* edit_volume(const Id& volume);
@@ -541,6 +543,11 @@ class MainWindow : public QMainWindow {
   std::uint64_t drawn_ticket_ = 0;  // the newest redraw that came back
 
   SketchMode* sketch_mode_ = nullptr;
+  // U1 phase 3: the sketch's status and constraints in a right-hand dock
+  // while sketching, and the left docks folded away meanwhile.
+  QDockWidget* sketch_dock_ = nullptr;
+  QWidget* sketch_dock_empty_ = nullptr;  // the dock's widget between sketches
+  std::vector<QDockWidget*> folded_docks_;
   struct SketchSession {
     Id volume;
     feature::Feature feature;

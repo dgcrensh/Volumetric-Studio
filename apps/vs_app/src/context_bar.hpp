@@ -52,6 +52,8 @@ class ContextBar : public QWidget {
   void add_corner_widget(QWidget* widget);
 
   [[nodiscard]] QToolButton* tab(Context context) const;
+  // A context's toolbar.
+  [[nodiscard]] QWidget* page(Context context) const;
   // The button showing `id` on `context`'s toolbar; null when the tool is
   // in a "More" menu there, or not on that toolbar.
   [[nodiscard]] QToolButton* button(Context context, ToolId id) const;
