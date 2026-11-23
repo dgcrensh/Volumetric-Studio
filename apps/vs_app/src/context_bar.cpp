@@ -4,6 +4,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLayout>
 #include <QMenu>
 #include <QPalette>
 #include <QStackedWidget>
@@ -103,11 +104,11 @@ void ContextBar::set_page_style(QWidget* page, Qt::ToolButtonStyle style) {
     // More buttons keep the style's own look.
     if (b->defaultAction() != nullptr) b->setStyleSheet(QString::fromLatin1(compact ? kCompactStyle : kToolStyle));
   }
-  // Every group's layout caches its size hint: drop them all, or the page
-  // measures the buttons as they were.
-  for (QWidget* w : page->findChildren<QWidget*>()) {
-    if (w->layout() != nullptr) w->layout()->invalidate();
-  }
+  // Every layout and widget item caches its size hint (the groups' button
+  // rows are layouts of no widget): drop them all, or the page measures the
+  // buttons as they were.
+  for (QWidget* w : page->findChildren<QWidget*>()) w->updateGeometry();
+  for (QLayout* l : page->findChildren<QLayout*>()) l->invalidate();
   page->layout()->invalidate();
 }
 
