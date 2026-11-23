@@ -53,15 +53,22 @@
 //   - Pick in view: feature dialogs' Pick buttons let the viewport pick a
 //     face or edge (picking.hpp), within edit-in-context's rules.
 //
-// Configurations (L5): the Configuration box on the toolbar shows the
-// authored values or one configuration; Model > Design Table… edits them
-// all as a grid (design_table_dialog.hpp); the inspector marks a parameter
-// or variable the shown configuration drives (configurations.hpp).
+// Configurations (L5): the Configuration box on the context bar's top row
+// shows the authored values or one configuration; its Design Table… button
+// edits them all as a grid (design_table_dialog.hpp); the inspector marks a
+// parameter or variable the shown configuration drives (configurations.hpp).
 //
 // Drawings (L6): the Drawings dock lists drawings, views and dimensions;
 // the drawing window shows one drawing's sheet (drawing_window.hpp),
 // recomputed from every evaluation; view and dimension dialogs
-// (drawing_dialogs.hpp); Model > New Drawing and File > Export Drawing…
+// (drawing_dialogs.hpp); the Drawing tab's New and File > Export Drawing…
+//
+// The context bar (U1, decision 0039): tabs for the context the window is
+// in (Layout, Contents, Sketch, Graph, Drawing; tool_catalog.hpp derives it
+// from what is open) above that context's toolbar (context_bar.hpp). Every
+// tool is one shared QAction (actions.hpp), enabled by what is selected;
+// the menus keep File, Edit, View and Help. Clicking a tab enters that
+// context the way the tools do (enter_context()).
 
 #include <QMainWindow>
 #include <QKeySequence>
@@ -77,6 +84,7 @@
 #include <vector>
 
 #include "authoring.hpp"
+#include "tool_catalog.hpp"
 #include "dimension_drag.hpp"
 #include "exporter.hpp"
 #include "guidance.hpp"
@@ -106,6 +114,8 @@ class QTreeWidgetItem;
 namespace vs::app {
 
 class ConnectionDialog;
+class ContextBar;
+class ToolActions;
 class DesignTableDialog;
 class DimensionDialog;
 class DrawingWindow;
@@ -340,6 +350,21 @@ class MainWindow : public QMainWindow {
   // Whether the newest redraw hasn't come back from the worker yet.
   [[nodiscard]] bool drawing_pending() const { return drawn_ticket_ < draw_requested_->load(); }
 
+  // --- the context bar (U1, decision 0039)
+  [[nodiscard]] ContextBar& context_bar() { return *context_bar_; }
+  // The one action of a catalogue tool, shared by the toolbar and menus.
+  [[nodiscard]] QAction& tool_action(ToolId id);
+  // The context the window is in now (current_context() of what is open).
+  [[nodiscard]] Context context() const;
+  // What the window has open and selected, as the tool rules see it.
+  [[nodiscard]] ToolState tool_state() const;
+  // Clicking a tab: enters `tab` from here (leaving a drawing, graph or
+  // contents edited in context as needed); false with the reason in the
+  // status bar when tab_availability() refuses it.
+  bool enter_context(Context tab);
+  // Runs a tool as its button does (nothing when it isn't enabled).
+  void run_tool(ToolId id);
+
   // Pick in view: the last pick a feature dialog was given.
   [[nodiscard]] const std::optional<PickResolution>& last_pick() const { return last_pick_; }
 
@@ -357,9 +382,18 @@ class MainWindow : public QMainWindow {
 
  protected:
   void closeEvent(QCloseEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
   void build_menus();
+  // U1: the tool actions and the context bar, with the configuration box
+  // and Regenerate on its top row.
+  void build_context_bar();
+  // Enables tools and tabs and shows the current context (cheap; called
+  // after anything that changes what is open or selected).
+  void refresh_tools();
+  // Asks for a file and imports it into `volume`'s contents.
+  void import_contents_dialog(const Id& volume);
   // Sketch mode has its own undo, redo and Esc; the window's shortcuts for
   // those (and F, fit) are set aside meanwhile (H7).
   void suspend_window_shortcuts(bool suspend);
@@ -430,9 +464,10 @@ class MainWindow : public QMainWindow {
   std::vector<std::pair<QAction*, QKeySequence>> suspended_shortcuts_;
   std::function<UnsavedChoice()> unsaved_prompt_;
   QAction* redo_action_ = nullptr;
-  QAction* leave_context_action_ = nullptr;
-  QToolBar* context_bar_ = nullptr;
-  QLabel* context_label_ = nullptr;
+  QAction* regenerate_action_ = nullptr;
+  ToolActions* tool_actions_ = nullptr;
+  ContextBar* context_bar_ = nullptr;
+  QToolBar* context_toolbar_ = nullptr;  // holds the context bar
 
   Selection selection_;
   bool syncing_ = false;          // updating widgets from selection_
@@ -481,7 +516,6 @@ class MainWindow : public QMainWindow {
 
   // L5.
   void refresh_configurations();
-  QToolBar* configuration_bar_ = nullptr;
   QComboBox* configuration_box_ = nullptr;
 
   // L6.

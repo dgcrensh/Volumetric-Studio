@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDockWidget>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -29,6 +30,7 @@
 #include <QTableWidget>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
@@ -39,8 +41,10 @@
 #include <fstream>
 #include <iterator>
 
+#include "actions.hpp"
 #include "authoring.hpp"
 #include "configurations.hpp"
+#include "context_bar.hpp"
 #include "design_table_dialog.hpp"
 #include "drawing_dialogs.hpp"
 #include "drawing_window.hpp"
@@ -215,34 +219,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   build_docks();
   build_menus();
 
-  // L5: which configuration is shown.
-  configuration_bar_ = new QToolBar(tr("Configuration"), this);
-  configuration_bar_->setObjectName(QStringLiteral("configuration"));
-  configuration_bar_->addWidget(new QLabel(tr(" Configuration: ")));
-  configuration_box_ = new QComboBox;
-  configuration_box_->setObjectName(QStringLiteral("configuration_box"));
-  configuration_box_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-  configuration_box_->setMinimumContentsLength(16);
-  configuration_box_->setToolTip(tr("The configuration shown: the authored values, or one of the project's "
-                                    "configurations (Model > Design Table… edits them)"));
-  configuration_bar_->addWidget(configuration_box_);
-  connect(configuration_box_, &QComboBox::currentIndexChanged, this, [this](int index) {
-    if (index < 0) return;
-    const auto id = Id::parse(sstr(configuration_box_->itemData(index).toString()));
-    show_configuration(id ? *id : Id::null());
-  });
-  addToolBar(Qt::TopToolBarArea, configuration_bar_);
-  refresh_configurations();
-
-  context_bar_ = new QToolBar(tr("Editing in context"), this);
-  context_bar_->setObjectName(QStringLiteral("context"));
-  context_bar_->setMovable(false);
-  context_label_ = new QLabel;
-  context_label_->setStyleSheet(QStringLiteral("QLabel { padding: 2px 8px; font-weight: bold; color: #1d4f91; }"));
-  context_bar_->addWidget(context_label_);
-  context_bar_->addAction(leave_context_action_);
-  addToolBar(Qt::TopToolBarArea, context_bar_);
-  context_bar_->setVisible(false);
+  build_context_bar();
 
   // M16: inline guidance for CAD habits, under the context bar.
   addToolBarBreak(Qt::TopToolBarArea);
@@ -284,6 +261,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   connect(preview_timer_, &QTimer::timeout, this, &MainWindow::run_preview);
 
   connect(session_, &Session::evaluated, this, &MainWindow::show_snapshot);
+  connect(session_, &Session::evaluated, this, &MainWindow::refresh_tools);
   connect(session_, &Session::evaluationStarted, this, [this] {
     status_label_->setText(tr("Regenerating…"));
     cancel_action_->setEnabled(true);
@@ -313,7 +291,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     node_editor_->clear();
     clear_node_preview();
     viewport_->set_context({}, {});
-    context_bar_->setVisible(false);
     drag_.reset();
     dismiss_guidance();
     fitted_ = false;
@@ -323,6 +300,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     open_drawing({});
     refresh_drawings();
     update_title();
+    refresh_tools();
   });
   connect(viewport_, &Viewport::picked, this, [this](core::Id subject) {
     const SnapshotPtr s = session_->latest();
@@ -400,69 +378,22 @@ void MainWindow::build_menus() {
   undo_action_ = edit->addAction(tr("&Undo"), QKeySequence::Undo, this, &MainWindow::undo);
   redo_action_ = edit->addAction(tr("&Redo"), QKeySequence::Redo, this, &MainWindow::redo);
 
-  QMenu* insert = menuBar()->addMenu(tr("&Insert"));
-  using K = feature::FeatureKind;
-  auto add_kind = [&](K kind, const QKeySequence& key = {}) {
-    QAction* a = insert->addAction(qstr(kind_title(kind)) + QStringLiteral("…"), this,
-                                   [this, kind] { insert_feature(kind); });
-    if (!key.isEmpty()) a->setShortcut(key);
-  };
-  add_kind(K::Sketch, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-  insert->addSeparator();
-  add_kind(K::DatumPlane);
-  add_kind(K::DatumAxis);
-  add_kind(K::DatumPoint);
-  insert->addSeparator();
-  add_kind(K::Extrude, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
-  add_kind(K::Revolve);
-  add_kind(K::Sweep);
-  add_kind(K::Loft);
-  insert->addSeparator();
-  add_kind(K::Shell);
-  add_kind(K::Fillet);
-  add_kind(K::Chamfer);
-  insert->addSeparator();
-  add_kind(K::LinearPattern);
-  add_kind(K::CircularPattern);
-
-  QMenu* volume = menuBar()->addMenu(tr("&Volume"));
-  volume->addAction(tr("New &volume…"), this, [this] { new_volume(); });
-  volume->addAction(tr("New &connection surface…"), this, [this] { new_connection(); });
-  volume->addAction(tr("New &keep-out region…"), this, [this] { new_keep_out(); });
-  volume->addAction(tr("New &link…"), this, [this] { new_link(); });
-  volume->addSeparator();
-  volume->addAction(tr("&Edit contents in context"), QKeySequence(Qt::CTRL | Qt::Key_E), this, [this] {
-    if (selection_.kind == Selection::Kind::Volume) edit_in_context(selection_.id);
-  });
-  leave_context_action_ = volume->addAction(tr("&Done editing contents"), this, &MainWindow::leave_context);
-  leave_context_action_->setEnabled(false);
-  volume->addSeparator();
-  volume->addAction(tr("Edit &graph"), QKeySequence(Qt::CTRL | Qt::Key_G), this, [this] {
-    if (selection_.kind == Selection::Kind::Volume || selection_.kind == Selection::Kind::Node) {
-      edit_graph(selection_.volume.is_null() ? selection_.id : selection_.volume);
-    }
-  });
-  volume->addAction(tr("Attach &template…"), this, [this] {
-    const Id v = selection_.kind == Selection::Kind::Volume ? selection_.id : graph_volume_;
-    if (!v.is_null()) attach_template(v);
-  });
-  volume->addAction(tr("&Bake"), this, [this] {
-    const Id v = selection_.kind == Selection::Kind::Volume ? selection_.id : graph_volume_;
-    if (!v.is_null()) bake(v);
-  });
-  volume->addAction(tr("&Unbake"), this, [this] {
-    if (selection_.kind == Selection::Kind::Volume) unbake(selection_.id);
-  });
-
-  QMenu* model = menuBar()->addMenu(tr("&Model"));
-  model->addAction(tr("&Regenerate"), QKeySequence(Qt::Key_F5), session_, &Session::regenerate);
-  cancel_action_ = model->addAction(tr("&Cancel"), QKeySequence(Qt::Key_Escape), session_, &Session::cancel);
+  // U1: the Insert, Volume and Model menus' tools are on the context bar
+  // (one shared action each, actions.hpp). Regenerate and Cancel are the
+  // window's own: Regenerate is on the bar's top row, Cancel in the status
+  // bar while an evaluation runs.
+  regenerate_action_ = new QAction(tr("&Regenerate"), this);
+  regenerate_action_->setObjectName(QStringLiteral("regenerate"));
+  regenerate_action_->setShortcut(QKeySequence(Qt::Key_F5));
+  regenerate_action_->setToolTip(tr("Regenerate everything that is out of date (F5)"));
+  connect(regenerate_action_, &QAction::triggered, session_, &Session::regenerate);
+  addAction(regenerate_action_);
+  cancel_action_ = new QAction(tr("&Cancel"), this);
+  cancel_action_->setObjectName(QStringLiteral("cancel"));
+  cancel_action_->setShortcut(QKeySequence(Qt::Key_Escape));
+  connect(cancel_action_, &QAction::triggered, session_, &Session::cancel);
   cancel_action_->setEnabled(false);
-  model->addAction(tr("&Validate"), QKeySequence(Qt::CTRL | Qt::Key_R), this, [this] { validate(); });
-  model->addSeparator();
-  model->addAction(tr("&Design Table…"), this, [this] { open_design_table(); });
-  model->addSeparator();
-  model->addAction(tr("New &Drawing"), this, [this] { new_drawing(); });
+  addAction(cancel_action_);
 
   QMenu* view = menuBar()->addMenu(tr("V&iew"));
   fit_action_ = view->addAction(tr("&Fit All"), QKeySequence(Qt::Key_F), viewport_, &Viewport::fit_all);
@@ -712,6 +643,7 @@ void MainWindow::build_docks() {
     }
   });
   drawing_window_ = new DrawingWindow(this);
+  drawing_window_->installEventFilter(this);  // U1: closing it leaves the Drawing tab
   connect(drawing_window_, &DrawingWindow::exportRequested, this, &MainWindow::export_drawing_dialog);
 }
 
@@ -743,6 +675,7 @@ void MainWindow::show_project() {
   refresh_configurations();
   refresh_drawings();
   redraw();
+  refresh_tools();
   emit historyChanged();
 }
 
@@ -860,6 +793,7 @@ void MainWindow::select(const Selection& selection) {
     clear_node_preview();
   }
   refresh_handles();
+  refresh_tools();
 }
 
 void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
@@ -1345,17 +1279,7 @@ void MainWindow::volume_context_menu(const QPoint& pos) {
     }
     if (procedural) menu.addAction(tr("Bake"), this, [this, vid] { bake(vid); });
     if (proc::is_baked(*v)) menu.addAction(tr("Unbake"), this, [this, vid] { unbake(vid); });
-    menu.addAction(tr("Import contents…"), this, [this, vid] {
-      const QString path = QFileDialog::getOpenFileName(this, tr("Import contents"), QString(),
-                                                        tr("Geometry (*.step *.stp *.iges *.igs *.stl *.3mf *.obj)"));
-      if (path.isEmpty()) return;
-      std::ifstream f(fspath(path), std::ios::binary);
-      const std::vector<char> chars((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-      std::vector<std::byte> bytes(chars.size());
-      std::transform(chars.begin(), chars.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
-      const std::string format(eval::import_format(sstr(QFileInfo(path).suffix())));
-      apply(import_contents(vid, std::move(bytes), format, session_->settings()));
-    });
+    menu.addAction(tr("Import contents…"), this, [this, vid] { import_contents_dialog(vid); });
     if (!v->contents_empty()) menu.addAction(tr("Clear contents"), this, [this, vid] { apply(make_placeholder(vid)); });
     // M16: swap the contents' kind, nothing outside the volume touched.
     QMenu* swap = menu.addMenu(tr("Swap contents"));
@@ -1407,21 +1331,9 @@ bool MainWindow::edit_in_context(const Id& volume) {
   editing_volume_ = volume;
   const auto& doc = history_.project().document;
   viewport_->set_context(volume, context_inputs(doc, volume), context_inside(doc, volume));
-  if (v->composite()) {
-    // L3: a composite's layout, where its children and the surfaces and
-    // keep-outs between them are added.
-    context_label_->setText(tr("Editing the layout of %1: add child volumes and the surfaces between them; only "
-                               "its boundary and connection surfaces can be referenced")
-                                .arg(qstr(v->name)));
-  } else {
-    context_label_->setText(tr("Editing the contents of %1: only its boundary and connection surfaces can be "
-                               "referenced")
-                                .arg(qstr(v->name)));
-  }
-  context_bar_->setVisible(true);
-  leave_context_action_->setEnabled(true);
   select(Selection::of_volume(volume));
   refresh_volume_tree();
+  refresh_tools();
   return true;
 }
 
@@ -1459,10 +1371,9 @@ void MainWindow::leave_context() {
   const Id was = editing_volume_;
   editing_volume_ = {};
   viewport_->set_context({}, {});
-  context_bar_->setVisible(false);
-  leave_context_action_->setEnabled(false);
   select(Selection::of_volume(was));
   refresh_volume_tree();
+  refresh_tools();
 }
 
 // --- dialogs ---------------------------------------------------------------------------------------
@@ -1830,6 +1741,7 @@ bool MainWindow::open_drawing(const Id& drawing) {
     drawing_window_->set_drawing({}, {});
     drawing_window_->hide();
     refresh_drawings();
+    refresh_tools();
     return true;
   }
   const model::Drawing* d = history_.project().document.find_drawing(drawing);
@@ -1839,6 +1751,7 @@ bool MainWindow::open_drawing(const Id& drawing) {
   drawing_window_->raise();
   refresh_drawings();
   redraw();
+  refresh_tools();
   return true;
 }
 
@@ -1986,7 +1899,7 @@ void MainWindow::export_drawing_dialog() {
   const model::Drawing* d = doc.find_drawing(drawing);
   if (d == nullptr) {
     QMessageBox::information(this, tr("Export Drawing"),
-                             tr("The project has no drawing yet: Model > New Drawing makes one."));
+                             tr("The project has no drawing yet: the Drawing tab's New makes one."));
     return;
   }
   const QString name = qstr(d->name);
@@ -2084,6 +1997,7 @@ bool MainWindow::edit_graph(const Id& volume) {
   resizeDocks({graph_dock_}, {std::max(320, height() / 3)}, Qt::Vertical);
   if (!(selection_.kind == Selection::Kind::Node && selection_.volume == volume)) select(Selection::of_volume(volume));
   status_label_->setText(tr("Editing the graph of %1").arg(qstr(history_.project().document.find_volume(volume)->name)));
+  refresh_tools();
   return true;
 }
 
@@ -2095,6 +2009,7 @@ void MainWindow::leave_graph() {
   node_editor_->clear();
   if (selection_.kind == Selection::Kind::Node && selection_.volume == was) select(Selection::of_volume(was));
   refresh_inspector();
+  refresh_tools();
 }
 
 TemplateDialog* MainWindow::attach_template(const Id& volume) {
@@ -2212,6 +2127,10 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
   central_->setCurrentWidget(sketch_mode_);
   sketch_session_ = SketchSession{volume, std::move(f), is_new};
   connect(sketch_mode_, &SketchMode::finished, this, &MainWindow::finish_sketch);
+  // U1: the Sketch tab's constraint tools follow the sketch's selection.
+  connect(&sketch_mode_->view(), &SketchView::selectionChanged, this, &MainWindow::refresh_tools);
+  connect(&sketch_mode_->view(), &SketchView::edited, this, &MainWindow::refresh_tools);
+  refresh_tools();
   sketch_mode_->view().setFocus();
   status_label_->setText(tr("Sketch mode: draw, constrain, then Finish sketch"));
   return sketch_mode_;
@@ -2238,6 +2157,7 @@ void MainWindow::finish_sketch(bool accept) {
   suspend_window_shortcuts(false);
   sketch_session_.reset();
   refresh_edit_actions();
+  refresh_tools();
 }
 
 // --- interactive regeneration and guidance (M16) -----------------------------------------------------
@@ -2677,6 +2597,239 @@ void MainWindow::report(const core::Diagnostics& diagnostics, const QString& wha
   } else if (!what.isEmpty()) {
     status_label_->setText(what);
   }
+}
+
+// --- the context bar (U1, decision 0039) -----------------------------------------------------------
+
+void MainWindow::build_context_bar() {
+  tool_actions_ = new ToolActions(this);
+  connect(tool_actions_, &ToolActions::triggered, this, &MainWindow::run_tool);
+  context_bar_ = new ContextBar(*tool_actions_);
+  connect(context_bar_, &ContextBar::tabRequested, this, [this](Context tab) { enter_context(tab); });
+
+  // L5: which configuration is shown, and the design table, on the top row.
+  auto* configuration_label = new QLabel(tr("Configuration"));
+  configuration_box_ = new QComboBox;
+  configuration_box_->setObjectName(QStringLiteral("configuration_box"));
+  configuration_box_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+  configuration_box_->setMinimumContentsLength(16);
+  configuration_box_->setToolTip(tr("The configuration shown: the authored values, or one of the project's "
+                                    "configurations (Design Table… edits them)"));
+  connect(configuration_box_, &QComboBox::currentIndexChanged, this, [this](int index) {
+    if (index < 0) return;
+    const auto id = Id::parse(sstr(configuration_box_->itemData(index).toString()));
+    show_configuration(id ? *id : Id::null());
+  });
+  auto* table = new QToolButton;
+  table->setObjectName(QStringLiteral("design_table"));
+  table->setText(tr("Design Table…"));
+  table->setToolTip(tr("Every configuration as a grid of the numbers it drives"));
+  table->setAutoRaise(true);
+  connect(table, &QToolButton::clicked, this, [this] { open_design_table(); });
+  auto* regenerate = new QToolButton;
+  regenerate->setDefaultAction(regenerate_action_);
+  regenerate->setAutoRaise(true);
+  context_bar_->add_corner_widget(configuration_label);
+  context_bar_->add_corner_widget(configuration_box_);
+  context_bar_->add_corner_widget(table);
+  context_bar_->add_corner_widget(regenerate);
+
+  context_toolbar_ = new QToolBar(tr("Tools"), this);
+  context_toolbar_->setObjectName(QStringLiteral("tools"));
+  context_toolbar_->setMovable(false);
+  context_toolbar_->setFloatable(false);
+  context_toolbar_->toggleViewAction()->setVisible(false);  // always shown
+  context_toolbar_->addWidget(context_bar_);
+  addToolBar(Qt::TopToolBarArea, context_toolbar_);
+  refresh_configurations();
+  refresh_tools();
+}
+
+QAction& MainWindow::tool_action(ToolId id) { return *tool_actions_->action(id); }
+
+ToolState MainWindow::tool_state() const {
+  ToolState s;
+  if (sketch_mode_ != nullptr) {
+    s.sketch_open = true;
+    const std::vector<Id>& picked = sketch_mode_->view().selection();
+    s.sketch_selection = picked.size();
+    s.applicable_constraints = sketch_mode_->editor().applicable(picked);
+  }
+  s.drawing_shown = drawing_window_ != nullptr && drawing_window_->isVisible() && !shown_drawing().is_null();
+  s.evaluated = session_->latest() != nullptr;
+  s.graph_volume = graph_volume_;
+  s.editing_volume = editing_volume_;
+  s.selection = selection_;
+  s.selection_generated = selection_.kind == Selection::Kind::Volume && is_generated(selection_.id);
+  return s;
+}
+
+Context MainWindow::context() const { return current_context(history_.project().document, tool_state()); }
+
+void MainWindow::refresh_tools() {
+  if (tool_actions_ == nullptr || context_bar_ == nullptr) return;
+  const ToolState state = tool_state();
+  // A generated volume lives only in the evaluated document (L4).
+  const SnapshotPtr snapshot = session_->latest();
+  const model::Document& doc =
+      state.selection_generated && snapshot ? snapshot->evaluation.document : history_.project().document;
+  const Context now = current_context(doc, state);
+  tool_actions_->refresh(doc, state);
+  context_bar_->set_context(now);
+  for (Context c : kContexts) context_bar_->set_tab(c, tab_availability(c, doc, state));
+
+  // What the context works on, beside the tabs (the old "Editing in
+  // context" bar's sentence).
+  const auto name_of = [&](const Id& id) {
+    const model::Volume* v = history_.project().document.find_volume(id);
+    return v != nullptr ? qstr(v->name) : QString();
+  };
+  QString detail;
+  switch (now) {
+    case Context::Layout:
+      if (!editing_volume_.is_null()) {
+        detail = tr("Layout of %1: its children and the surfaces between them").arg(name_of(editing_volume_));
+      }
+      break;
+    case Context::Contents:
+      detail = tr("Contents of %1: only its boundary and connection surfaces can be referenced")
+                   .arg(name_of(editing_volume_));
+      break;
+    case Context::Sketch:
+      if (sketch_session_) {
+        const auto* sk = sketch_session_->feature.as<feature::SketchFeature>();
+        detail = sk != nullptr && !sk->sketch.name().empty() ? qstr(sk->sketch.name()) : tr("New sketch");
+      }
+      break;
+    case Context::Graph: detail = tr("Procedure of %1").arg(name_of(graph_volume_)); break;
+    case Context::Drawing:
+      if (const model::Drawing* d = history_.project().document.find_drawing(shown_drawing())) detail = qstr(d->name);
+      break;
+  }
+  context_bar_->set_detail(detail);
+}
+
+bool MainWindow::enter_context(Context tab) {
+  const ToolState state = tool_state();
+  const SnapshotPtr snapshot = session_->latest();
+  const model::Document& doc =
+      state.selection_generated && snapshot ? snapshot->evaluation.document : history_.project().document;
+  const Availability can = tab_availability(tab, doc, state);
+  if (!can) {
+    status_label_->setText(qstr(can.reason));
+    refresh_tools();
+    return false;
+  }
+  const Context now = current_context(doc, state);
+  if (tab == now) return true;
+  const Id volume = selected_volume(state);
+  // Leaving the drawing or the graph first: they come before the layout
+  // and contents in current_context()'s order.
+  if (tab != Context::Drawing && state.drawing_shown) open_drawing({});
+  bool ok = true;
+  switch (tab) {
+    case Context::Layout:
+      leave_graph();
+      if (now == Context::Contents) leave_context();
+      break;
+    case Context::Contents:
+      leave_graph();
+      ok = edit_in_context(volume);
+      break;
+    case Context::Sketch: ok = edit_sketch(selection_.volume, selection_.id) != nullptr; break;
+    case Context::Graph: ok = edit_graph(volume); break;
+    case Context::Drawing: {
+      const auto& drawings = history_.project().document.drawings;
+      ok = drawings.empty() ? !new_drawing().is_null() : open_drawing(drawings.front().id);
+      break;
+    }
+  }
+  refresh_tools();
+  return ok && context() == tab;
+}
+
+void MainWindow::run_tool(ToolId id) {
+  QAction& action = tool_action(id);
+  if (!action.isEnabled()) return;
+  if (const auto kind = feature_kind(id)) {
+    insert_feature(*kind);
+    refresh_tools();
+    return;
+  }
+  if (const auto kind = constraint_kind(id)) {
+    if (sketch_mode_ != nullptr) sketch_mode_->constrain(*kind);
+    refresh_tools();
+    return;
+  }
+  const Id volume = selection_.kind == Selection::Kind::Volume ? selection_.id : Id{};
+  const auto sketch_tool = [this](SketchTool t) {
+    if (sketch_mode_ != nullptr) sketch_mode_->set_tool(t);
+  };
+  switch (id) {
+    case ToolId::NewVolume: new_volume(); break;
+    case ToolId::NewConnection: new_connection(); break;
+    case ToolId::NewKeepOut: new_keep_out(); break;
+    case ToolId::NewLink: new_link(); break;
+    case ToolId::EditContents: edit_in_context(volume); break;
+    case ToolId::EditGraph: edit_graph(volume); break;
+    case ToolId::AttachTemplate: attach_template(graph_volume_.is_null() ? volume : graph_volume_); break;
+    case ToolId::ImportContents: import_contents_dialog(volume); break;
+    case ToolId::Bake: bake(graph_volume_.is_null() ? volume : graph_volume_); break;
+    case ToolId::Unbake: unbake(volume); break;
+    case ToolId::MakeComposite: swap_contents(volume, ContentsKind::Composite); break;
+    case ToolId::GenerateChildren: edit_graph(volume); break;
+    case ToolId::Validate: validate(); break;
+    case ToolId::LeaveContext: leave_context(); break;
+    case ToolId::SketchSelect: sketch_tool(SketchTool::Select); break;
+    case ToolId::SketchPoint: sketch_tool(SketchTool::Point); break;
+    case ToolId::SketchLine: sketch_tool(SketchTool::Line); break;
+    case ToolId::SketchRectangle: sketch_tool(SketchTool::Rectangle); break;
+    case ToolId::SketchCircle: sketch_tool(SketchTool::Circle); break;
+    case ToolId::SketchArc: sketch_tool(SketchTool::Arc); break;
+    case ToolId::SketchSlot: sketch_tool(SketchTool::Slot); break;
+    case ToolId::Construction:
+      if (sketch_mode_ != nullptr) sketch_mode_->toggle_construction();
+      break;
+    case ToolId::DeleteSketchItems:
+      if (sketch_mode_ != nullptr) sketch_mode_->remove_selection();
+      break;
+    case ToolId::CancelSketch:
+      if (sketch_mode_ != nullptr) sketch_mode_->finish(false);
+      break;
+    case ToolId::FinishSketch:
+      if (sketch_mode_ != nullptr) sketch_mode_->finish(true);
+      break;
+    case ToolId::LeaveGraph: leave_graph(); break;
+    case ToolId::NewDrawing: new_drawing(); break;
+    case ToolId::AddDrawingView: add_drawing_view(shown_drawing()); break;
+    case ToolId::AddDrawingDimension: add_drawing_dimension(shown_drawing()); break;
+    case ToolId::ExportDrawing: export_drawing_dialog(); break;
+    case ToolId::CloseDrawing: open_drawing({}); break;
+    default: break;  // geometry and constraint tools are handled above
+  }
+  refresh_tools();
+}
+
+void MainWindow::import_contents_dialog(const Id& volume) {
+  if (volume.is_null()) return;
+  const QString path = QFileDialog::getOpenFileName(this, tr("Import contents"), QString(),
+                                                    tr("Geometry (*.step *.stp *.iges *.igs *.stl *.3mf *.obj)"));
+  if (path.isEmpty()) return;
+  std::ifstream f(fspath(path), std::ios::binary);
+  const std::vector<char> chars((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  std::vector<std::byte> bytes(chars.size());
+  std::transform(chars.begin(), chars.end(), bytes.begin(), [](char c) { return static_cast<std::byte>(c); });
+  const std::string format(eval::import_format(sstr(QFileInfo(path).suffix())));
+  apply(import_contents(volume, std::move(bytes), format, session_->settings()));
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  // The drawing window shown or closed (also by its own close button):
+  // the Drawing tab follows.
+  if (watched == drawing_window_ && (event->type() == QEvent::Show || event->type() == QEvent::Hide)) {
+    QTimer::singleShot(0, this, &MainWindow::refresh_tools);
+  }
+  return QMainWindow::eventFilter(watched, event);
 }
 
 }  // namespace vs::app

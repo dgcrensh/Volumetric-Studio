@@ -103,6 +103,10 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 # Everything but main() is vs_app_ui, so the Catch2 suite (vs_app_tests)
 # drives the same code the application runs.
 add_library(vs_app_ui STATIC
+  src/actions.cpp
+  src/actions.hpp
+  src/context_bar.cpp
+  src/context_bar.hpp
   src/design_table_dialog.cpp
   src/design_table_dialog.hpp
   src/drawing_dialogs.cpp
@@ -111,6 +115,8 @@ add_library(vs_app_ui STATIC
   src/drawing_window.hpp
   src/feature_dialog.cpp
   src/feature_dialog.hpp
+  src/icon_painter.cpp
+  src/icon_painter.hpp
   src/main_window.cpp
   src/main_window.hpp
   src/model_dialogs.cpp
@@ -154,6 +160,7 @@ if(VS_BUILD_TESTS)
     tests/wait.hpp
     tests/test_authoring_ui.cpp
     tests/test_configurations_ui.cpp
+    tests/test_context_bar_ui.cpp
     tests/test_dialogs_ui.cpp
     tests/test_drawings_ui.cpp
     tests/test_interactive_ui.cpp
