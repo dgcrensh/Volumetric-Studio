@@ -173,6 +173,9 @@ so they are registered. A new library must also be added to
   `Result<T>` instead of throwing across module boundaries. Tests match on
   codes, never on message text.
 - **Logging.** `vs::core::logger()` (spdlog) is for developers only.
+- **XML.** `vs/core/xml.hpp` is a small reader (element tags and
+  attributes, prefixes stripped; `scan_xml()`, `escape()`, `unescape()`)
+  shared by 3MF (vs_mesh) and SVG (vs_sketch); moved from vs_mesh in S1.
 - **Determinism.** Floating-point contraction (FMA) is off on every compiler.
   Don't hash values that went through libm (`sin`, `cos`, ...) in golden tests;
   they may differ in the last bit between platforms.
@@ -246,6 +249,18 @@ so they are registered. A new library must also be added to
   themselves (`sketch.profile.self_crossing`) are refused; arcs and
   Béziers become polygons within the minimum feature size
   (`BezierGeometry::steps_within()`), compared by box and an x sweep (H2).
+- **SVG import** (S1 phase 2, `svg.hpp`): `import_svg()` /
+  `import_svg_file()` add an SVG file's path and shape outlines to a
+  sketch (fills and styles ignored; transforms, viewBoxes and `use`
+  flattened; units through width and height, px at
+  `pixels_per_inch`; Y flipped). Ends within `gap_mm` share a point,
+  across elements too; curves not on a loop come in as construction
+  (`sketch.import.open`); circular arcs stay arcs (a full loop of them a
+  circle), elliptical ones become Béziers (`.ellipse_approximated`).
+  Smooth joints get Tangent; `fix` holds everything with nothing
+  redundant. On error the sketch is unchanged. Fixtures in
+  `tests/data/svg`; `vstudio-cli sketch-import-svg <file.svg> [--out
+  sketch.json] [--scale k] [--dpi n] [--gap mm] [--fix] [--no-smooth]`.
 - **Files.** `to_json()` / `sketch_from_json()` round-trip exactly, ids
   included; an object's own id may not be null (H2, also in vs_feature and
   vs_model files). `vstudio-cli sketch-solve <file>` solves one from the

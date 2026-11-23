@@ -27,6 +27,7 @@ vs_add_library(vs_core
     src/log.cpp
     src/settings.cpp
     src/units.cpp
+    src/xml.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/version.cpp"
   PUBLIC_LINKS
     fmt::fmt

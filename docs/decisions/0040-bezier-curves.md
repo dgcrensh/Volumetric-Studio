@@ -56,6 +56,34 @@ type; sketches without one write exactly what they did, so content
 hashes and cache keys of existing documents are unchanged. A named face's
 samples enter the cache key only when present.
 
+**SVG import (phase 2).** `import_svg()` (`vs/sketch/svg.hpp`) reads
+geometry only, with the XML reader that 3MF uses (moved to
+`vs/core/xml.hpp`). Paths, shapes, groups, nested viewports and `use` are
+flattened through their transforms into millimetres (width and height
+units through the viewBox; px and bare numbers at a px-per-inch value, 96
+by default), Y flipped so the drawing reads the same way up. An
+elliptical arc that is circular after every transform becomes a sketch
+arc, otherwise Béziers within the minimum feature size; quadratics are
+raised exactly. Ends within a gap (0.01 mm) share a point across paths
+and elements, so outlines drawn in pieces join; then curves with a free
+end are peeled off repeatedly, and what is left lies on loops. The
+peeled curves come in as construction geometry with
+`sketch.import.open`, so an open stroke never reaches a profile but can
+be recovered (Dallas). Arcs meeting end to end on one circle share their
+centre, and a loop of them all the way round becomes a circle (exported
+circles are often two or four arcs, and a tangent between concentric
+arcs is degenerate for the solver).
+
+Smooth joints (directions within 0.01 rad) get Tangent where a form
+exists. "Fix imported geometry" fixes every point and circle rather than
+each curve, since fixing two curves that share a point is redundant. An
+arc whose ends are fixed can still move its centre along the chord's
+bisector; a Radius would hold it but is degenerate for a half circle, so
+the import holds the centre with a horizontal or vertical distance from
+the start, along whichever axis the bisector leans to. Arcs sharing a
+centre need none: three fixed points already place it. The solve after
+an import with Fix is fully constrained with nothing redundant.
+
 **Limitation.** Connection surfaces are planes or cylinders, so a layout
 boundary may have Bézier sides but no surface can join one. Out of scope
 (Dallas).

@@ -55,6 +55,17 @@ if(VS_BUILD_TESTS)
             "${CMAKE_CURRENT_BINARY_DIR}/bracket.solved.json")
   set_tests_properties("vstudio-cli: sketch-solve solves the sample bracket" PROPERTIES
     PASS_REGULAR_EXPRESSION "status +solved.*profiles +1.*1 hole, face valid.*wrote ")
+  add_test(NAME "vstudio-cli: sketch-import-svg imports the sample logo"
+    COMMAND vstudio-cli sketch-import-svg
+            "${PROJECT_SOURCE_DIR}/libs/vs_sketch/tests/data/svg/logo.svg"
+            --out "${CMAKE_CURRENT_BINARY_DIR}/logo.vsketch.json")
+  set_tests_properties("vstudio-cli: sketch-import-svg imports the sample logo" PROPERTIES
+    PASS_REGULAR_EXPRESSION "curves 2, construction 0.*profiles +1.*2 holes, face valid.*wrote ")
+  add_test(NAME "vstudio-cli: sketch-import-svg with --fix solves fully"
+    COMMAND vstudio-cli sketch-import-svg
+            "${PROJECT_SOURCE_DIR}/libs/vs_sketch/tests/data/svg/logo.svg" --fix --dpi 72)
+  set_tests_properties("vstudio-cli: sketch-import-svg with --fix solves fully" PROPERTIES
+    PASS_REGULAR_EXPRESSION "status +solved.*dof +0")
 endif()
 
 if(VS_BUILD_TESTS)

@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows U1 (context toolbar) · decision record:
 `docs/decisions/0040-bezier-curves.md`
 
-Status: phase 1 done.
+Status: phases 1 and 2 done.
 
 ## Goal
 
@@ -36,7 +36,7 @@ Bézier entity first.
    or Bézier (handle collinearity); Fix fixes the four points; point on
    curve, Equal, Radius and length on a Bézier refused. The app draws,
    picks and deletes Béziers but can't create them yet.
-2. **SVG import library and CLI.** Move the 3MF XML reader to `vs_core`;
+2. **SVG import library and CLI (done).** Move the 3MF XML reader to `vs_core`;
    `vs_sketch/svg.hpp` (`import_svg()`), `sketch.import.*` diagnostics;
    `vstudio-cli sketch-import-svg <file.svg> [--out sketch.json]
    [--scale k] [--dpi n] [--gap mm] [--fix]`. Scope:
