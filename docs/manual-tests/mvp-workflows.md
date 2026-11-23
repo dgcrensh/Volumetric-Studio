@@ -1,6 +1,6 @@
 # Manual test: the MVP workflows in the app
 
-Nov 20, 2026 · M17
+Nov 20, 2026 · M17 (updated Nov 23, 2026 for U1's context toolbar)
 
 This walks the spec's five workflows (block out, fill, iterate, swap,
 ship) in `vs_app`, the way a user would. The same walk runs headless through
@@ -16,26 +16,27 @@ when it behaves as described. Times are rough, on a 4-core machine.
 ## 1. Block out
 
 1. [ ] File > New. The volume tree is empty; the title says Untitled.
-2. [ ] In the Variables panel, add `w` = `40 mm`.
-3. [ ] Insert > Datum Point twice: `Body min` at (0, 0, 0) and `Body max` at
+2. [ ] In the Browser's Variables section, add `w` = `40 mm`.
+3. [ ] Layout toolbar > Point (Layout geometry) twice: `Body min` at (0, 0, 0) and `Body max` at
    (`w`, 30, 20). Then `Infill min` at (`w`, 0, 0) and `Infill max` at
    (`w + 40 mm`, 30, 20).
-4. [ ] Volume > New Volume: `Body`, a box between `Body min` and `Body max`.
+4. [ ] Layout toolbar > Volume (Create): `Body`, a box between `Body min` and `Body max`.
    Again for `Infill`. Both appear in the tree as placeholders, Current.
-5. [ ] Insert > Datum Plane `Joint`: offset from YZ by `w`.
-6. [ ] Volume > New Connection Surface: `Bond`, bonded, on `Joint`, 10 x 10
+5. [ ] Layout toolbar > Plane `Joint`: offset from YZ by `w`.
+6. [ ] Layout toolbar > Surface: `Bond`, bonded, on `Joint`, 10 x 10
    centred at (15, 10), joining Body and Infill. The viewport highlights it.
-7. [ ] Model > Validate (Ctrl+R): the dialog says "Ready to export"; the
-   Diagnostics panel is empty or has infos only.
-8. [ ] Move `Infill min` to (`w - 5 mm`, 0, 0): Validate now reports
-   `validate.overlap` naming both volumes, and Export STEP refuses with the
+7. [ ] Layout toolbar > Validate (Ctrl+R): the dialog says "Ready to export";
+   the status bar says "No problems" (or the Problems drawer lists infos only).
+8. [ ] Move `Infill min` to (`w - 5 mm`, 0, 0): Validate now opens the
+   Problems drawer under the viewport with `validate.overlap` naming both
+   volumes (a background evaluation only shows the count in the status bar), and Export STEP refuses with the
    summary. Undo (Ctrl+Z); Validate passes again.
 
 ## 2. Fill
 
-1. [ ] Right-click Body > Fill by modelling, then Insert > Sketch on its top
-   face (`+z`): a 40 x 30 rectangle from the corner. Insert > Extrude it
-   down 20 mm. Done editing contents. Body turns from placeholder to
+1. [ ] Right-click Body > Fill by modelling (the Contents tab opens), then
+   Sketch on its top face (`+z`): the Sketch tab draws a 40 x 30 rectangle
+   from the corner; Finish. Extrude it down 20 mm. Done. Body turns from placeholder to
    modelled, Current.
 2. [ ] Right-click Infill > Attach Template > `gyroid_infill`, cell size 1.
    The viewport shows the infill after a few seconds; the progress bar runs
@@ -76,7 +77,7 @@ when it behaves as described. Times are rough, on a 4-core machine.
 
 ## 5. Ship
 
-1. [ ] Model > Validate: "Ready to export", with any warnings listed.
+1. [ ] Validate: "Ready to export", with any warnings listed.
 2. [ ] File > Export STEP…: keep "Mesh bodies", tick both "Also include"
    boxes, save. The status bar reports the parts (B-rep, mesh, boundary).
    Open the file in another CAD tool or viewer (FreeCAD, an online STEP
@@ -102,6 +103,23 @@ when it behaves as described. Times are rough, on a 4-core machine.
    `libs/vs_model/tests/data/bracket.vsproj` with a `gyroid_infill` in the
    Base), export the 3MF, slice it and print it. It prints without slicer
    repairs and the infill is where the design put it.
+
+## 7. The window (U1)
+
+1. [ ] At 1440 x 900 the tab row reads Layout, Contents, Sketch, Graph,
+   Drawing over one labelled toolbar; tabs that can't be used are dimmed
+   and their tooltips say why. Narrow the window to its minimum: the
+   toolbar shows icons only, nothing is cut off.
+2. [ ] The Browser on the left folds to a strip (its chevron) and the
+   viewport widens; a strip icon opens it on that section. The Inspector
+   folds the same way. Sections fold to their header.
+3. [ ] Opening a sketch folds the Browser; Finish brings it back.
+4. [ ] A volume with an error shows a red dot and "Volumes (1)"; the
+   status bar counts the problems and opens the drawer when clicked.
+5. [ ] Model a drawing (Drawing tab): the sheet shows in place of the
+   viewport, in the same window; Close goes back to the layout.
+6. [ ] Resize the Browser, fold the Inspector, close a section, quit and
+   start again: the panels come back as they were.
 
 ## The MVP, bullet by bullet
 

@@ -32,6 +32,8 @@ add_library(vs_app_core STATIC
   src/guidance.hpp
   src/history.cpp
   src/history.hpp
+  src/icons.cpp
+  src/icons.hpp
   src/node_preview.cpp
   src/node_preview.hpp
   src/outline.cpp
@@ -45,7 +47,9 @@ add_library(vs_app_core STATIC
   src/ship.cpp
   src/ship.hpp
   src/sketch_editor.cpp
-  src/sketch_editor.hpp)
+  src/sketch_editor.hpp
+  src/tool_catalog.cpp
+  src/tool_catalog.hpp)
 target_include_directories(vs_app_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(vs_app_core PUBLIC cxx_std_20)
 target_link_libraries(vs_app_core
@@ -77,7 +81,8 @@ if(VS_BUILD_TESTS)
     tests/test_outline.cpp
     tests/test_scene.cpp
     tests/test_ship.cpp
-    tests/test_sketch_editor.cpp)
+    tests/test_sketch_editor.cpp
+    tests/test_tool_catalog.cpp)
   target_link_libraries(vs_app_core_tests PRIVATE vs_app_core Catch2::Catch2WithMain)
   target_compile_definitions(vs_app_core_tests PRIVATE
     VS_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -98,6 +103,16 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 # Everything but main() is vs_app_ui, so the Catch2 suite (vs_app_tests)
 # drives the same code the application runs.
 add_library(vs_app_ui STATIC
+  src/actions.cpp
+  src/actions.hpp
+  src/browser.cpp
+  src/browser.hpp
+  src/problems.cpp
+  src/problems.hpp
+  src/theme.cpp
+  src/theme.hpp
+  src/context_bar.cpp
+  src/context_bar.hpp
   src/design_table_dialog.cpp
   src/design_table_dialog.hpp
   src/drawing_dialogs.cpp
@@ -106,6 +121,8 @@ add_library(vs_app_ui STATIC
   src/drawing_window.hpp
   src/feature_dialog.cpp
   src/feature_dialog.hpp
+  src/icon_painter.cpp
+  src/icon_painter.hpp
   src/main_window.cpp
   src/main_window.hpp
   src/model_dialogs.cpp
@@ -149,12 +166,15 @@ if(VS_BUILD_TESTS)
     tests/wait.hpp
     tests/test_authoring_ui.cpp
     tests/test_configurations_ui.cpp
+    tests/test_browser_ui.cpp
+    tests/test_context_bar_ui.cpp
     tests/test_dialogs_ui.cpp
     tests/test_drawings_ui.cpp
     tests/test_interactive_ui.cpp
     tests/test_nested.cpp
     tests/test_generated.cpp
     tests/test_node_editor.cpp
+    tests/test_problems_ui.cpp
     tests/test_session.cpp
     tests/test_viewport_ui.cpp
     tests/test_ship_ui.cpp

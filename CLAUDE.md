@@ -806,8 +806,8 @@ so they are registered. A new library must also be added to
   `app` feature; its first build compiles qtbase twice, for the host tools
   and the target). CI doesn't build the app. The Qt-free files
   (`authoring`, `configurations`, `dimension_drag`, `drawings`, `exporter`, `graph_edit`, `guidance`,
-  `history`, `node_preview`, `outline`, `picking`, `reference_choices`,
-  `scene`, `ship`, `sketch_editor`) are `vs_app_core`, built on every
+  `history`, `icons`, `node_preview`, `outline`, `picking`, `reference_choices`,
+  `scene`, `ship`, `sketch_editor`, `tool_catalog`) are `vs_app_core`, built on every
   platform and tested by `vs_app_core_tests` on every CI job (plan H1);
   keep Qt and OCCT's visualisation out of them. The rest but `main.cpp` is
   `vs_app_ui`; `vs_app_tests` drives it (`tests/wait.*` waits on Qt's
@@ -888,7 +888,7 @@ so they are registered. A new library must also be added to
   child into a template (keeping its id; origin from its built box).
 - **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
   `check_for_export()`: `validate()`, the shown evaluation's volume
-  diagnostics, volumes not current, and the weld; Model > Validate and every
+  diagnostics, volumes not current, and the weld; Validate (Ctrl+R) and every
   export run it first (errors stop, warnings ask). A weld error stops
   STL and 3MF but not STEP (`ok_for(ShipTarget)`), and export reuses
   the check's weld (`ShipCheck::combined`, H5). `MainWindow::validate()`,
@@ -913,8 +913,8 @@ so they are registered. A new library must also be added to
   set the design table) and what the toolbar, the design table dialog
   and the inspector show (`configuration_choices()`, `active_value()`,
   `table_for_editing()`, `addable_columns()`). In the window: the
-  toolbar's Configuration box (`MainWindow::configuration_box()`,
-  `show_configuration()`; one undo step, follows the history), Model >
+  tab row's Configuration box (`MainWindow::configuration_box()`,
+  `show_configuration()`; one undo step, follows the history), the
   Design Table… (`design_table_dialog.*`, `open_design_table()`: a grid
   of configurations by driven numbers, add / copy / remove rows, add
   columns, CSV import and export; OK is one `set_design_table()` step, a
@@ -923,13 +923,13 @@ so they are registered. A new library must also be added to
   (configuration: <expr>)`. Tests: `test_configurations_ui.cpp`.
 - **Drawings** (L6, decision 0038): `drawings.*` (no Qt) holds the
   commands (add, rename, remove drawings; add, change, remove views and
-  dimensions; move a dimension's line) and what the dock and dialogs
+  dimensions; move a dimension's line) and what the Browser and dialogs
   list (`drawing_rows()`, `anchor_choices()`: stable anchors first,
-  disposable ones in parentheses). In the window: a Drawings dock
-  (tabbed with Variables), a drawing window (`drawing_window.*`,
+  disposable ones in parentheses). In the window: the Browser's Drawings
+  section, the drawing page in place of the viewport (`drawing_window.*`,
   `SheetView` paints the `Sheet` with QPainter, redrawn on the session's
   worker after every shown evaluation and history change), modeless
-  `ViewDialog` and `DimensionDialog`, Model > New Drawing (a
+  `ViewDialog` and `DimensionDialog`, the Drawing toolbar's New (a
   `standard_drawing()` of the shown evaluation) and File > Export
   Drawing… (SVG, PDF, DXF by extension, after the shipping check as
   for STEP). Entry points: `new_drawing()`, `open_drawing()`,
@@ -937,6 +937,39 @@ so they are registered. A new library must also be added to
   `add_drawing_view()`, `add_drawing_dimension()`,
   `export_drawing_to()`. Tests: `test_drawings.cpp` (core),
   `test_drawings_ui.cpp`.
+- **Context toolbar** (U1, decision 0039): `tool_catalog.*`
+  (no Qt) is every tool as a catalogue row (name, label, tooltip,
+  shortcut, icon), each context's groups (Layout, Contents, Sketch, Graph,
+  Drawing), `current_context()` derived from what the window has open,
+  and `tab_availability()` / `availability()` with a reason when
+  something can't be used; `icons.*` (no Qt) is every icon as strokes on
+  a 24-unit grid. In the window (phase 2): `actions.*` makes one
+  `QAction` per tool (object name `tool_<name>`, added to the window so
+  shortcuts work from any toolbar), `icon_painter.*` paints the icons,
+  and `context_bar.*` is the tab row (with the configuration box, Design
+  Table… and Regenerate on its right) over one toolbar per context.
+  `MainWindow::refresh_tools()` follows what is open and selected;
+  `enter_context()` is a tab click, `run_tool()` a button. The menus keep
+  File, Edit, View and Help. Sketch mode (phase 3) is only the canvas:
+  the Sketch tab drives it, its status and constraint list
+  (`SketchMode::side_panel()`) sit in the Sketch dock on the right, and
+  the Browser folds while sketching. Phase 4: `browser.*` is the left
+  panel, one `Browser` (a `FoldPanel`) with Volumes, Features, Variables
+  and Drawings sections that fold to a line (`MainWindow::browser()`, in
+  the dock `drawings_dock()` returns); the Browser and the Inspector
+  (`inspector_panel()`) fold to a strip and the viewport takes the room.
+  Phase 5: `problems.*` is the status bar's count (`problems_button()`)
+  and the Problems drawer under the viewport (`problems_drawer()`, in a
+  splitter, holding `diagnostics_list()`); it opens itself only when
+  something the person started reports problems (`show_diagnostics(...,
+  started)`), never for a background evaluation; the Graph dock follows
+  the Graph context. Phase 6: the drawing is a page of the central stack
+  (the Drawing tab shows it in place of the viewport); `theme.*` is one
+  palette and style sheet on the main window (colours and borders only);
+  `save_layout()` / `restore_layout()` keep the panels between runs
+  (`set_remember_layout()`, off in tests and captures). Plan:
+  `docs/plans/U1-context-toolbar.md`. Tests: `test_tool_catalog.cpp`,
+  `test_context_bar_ui.cpp`, `test_browser_ui.cpp`, `test_problems_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

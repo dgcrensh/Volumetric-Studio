@@ -22,9 +22,16 @@
 //     dimension's direction, solving as it goes (one drag one undo step);
 //     a dimension an expression drives says so instead.
 //
-// SketchMode, the panel around it, ends with finished(true) (Finish) or
-// finished(false) (Cancel); the main window commits the sketch on Finish.
+// SketchMode, the canvas and the sketch's side panel, ends with
+// finished(true) (Finish) or finished(false) (Cancel); the main window
+// commits the sketch on Finish. Since U1 (decision 0039) the tools, the
+// constraints and Finish and Cancel are the window's Sketch tab, which
+// calls set_tool(), constrain(), toggle_construction(), remove_selection()
+// and finish(); the side panel (the solver's status and the constraint
+// list with editable dimensions) is shown by the window in its right-hand
+// dock while sketching. SketchMode deletes the panel with itself.
 
+#include <QPointer>
 #include <QWidget>
 
 #include <memory>
@@ -34,7 +41,6 @@
 
 class QAction;
 class QLabel;
-class QToolBar;
 class QTreeWidget;
 
 namespace vs::app {
@@ -102,6 +108,8 @@ class SketchMode : public QWidget {
   [[nodiscard]] SketchEditor& editor() { return *editor_; }
   [[nodiscard]] SketchView& view() { return *view_; }
   [[nodiscard]] QTreeWidget& constraint_list() { return *constraints_; }
+  // The status, constraint list and hint, for the window's right-hand dock.
+  [[nodiscard]] QWidget* side_panel() const { return side_; }
   [[nodiscard]] QString status_text() const;
 
   // The buttons' actions, callable directly.
@@ -122,17 +130,18 @@ class SketchMode : public QWidget {
 
  signals:
   void finished(bool accept);
+  // The drawing tool changed (set_tool()).
+  void toolChanged();
 
  private:
   void update_actions();
 
   std::unique_ptr<SketchEditor> editor_;
   SketchView* view_ = nullptr;
+  QPointer<QWidget> side_;  // the side panel, wherever the window put it
   QTreeWidget* constraints_ = nullptr;
   QLabel* status_ = nullptr;
   QLabel* hint_ = nullptr;
-  std::vector<std::pair<sketch::ConstraintKind, QAction*>> constraint_actions_;
-  std::vector<std::pair<SketchTool, QAction*>> tool_actions_;
   QAction* undo_ = nullptr;
   QAction* redo_ = nullptr;
   bool refreshing_ = false;

@@ -1,7 +1,10 @@
 #pragma once
 
 // The main window: the viewport in the middle and dockable panels around
-// it (plan, M13), and from M14 everything that authors a project:
+// it (plan, M13), and from M14 everything that authors a project. Since U1
+// phase 4 the Volumes, Features, Variables and Drawings panels are sections
+// of one Browser on the left (browser.hpp), and the Browser and the
+// Inspector fold to a strip:
 //
 //   Volumes      the volume tree (kind icons, status badges) and the
 //                connection surfaces, coloured by type; its context menu
@@ -23,19 +26,19 @@
 // OK commits it, Cancel puts the project back. Sketch mode replaces the
 // viewport with the sketch canvas until Finish or Cancel.
 //
-// Edit in context: editing a parametric volume's contents (Volume > Edit
-// contents) makes its feature tree the one Insert adds to, dims every other
-// volume in the viewport and keeps them from being picked, and the
+// Edit in context: editing a parametric volume's contents (the Contents
+// tab, or Model on the Layout tab) makes its feature tree the one the
+// geometry tools add to, dims every other volume in the viewport and keeps
+// them from being picked, and the
 // feature dialogs then offer only the volume's boundary, its connection
 // surfaces and its own features as references.
 //
 // Procedural graphs (M15). The Graph dock (node_editor.hpp) edits one
-// procedural volume's graph (Volume > Edit graph, or "Fill by procedure"
+// procedural volume's graph (the Graph tab or the Procedure tool, also
 // on a placeholder); every change is a set_graph() Command through the
 // same History. Selecting a node shows its settings in the inspector and
 // draws its output in the viewport (node_preview.hpp). The template
-// library, bake and unbake are in the Volume menu and the volume's
-// context menu.
+// library, bake and unbake are tools, and in the volume's context menu.
 //
 // Interactive regeneration and guidance (M16):
 //
@@ -53,15 +56,22 @@
 //   - Pick in view: feature dialogs' Pick buttons let the viewport pick a
 //     face or edge (picking.hpp), within edit-in-context's rules.
 //
-// Configurations (L5): the Configuration box on the toolbar shows the
-// authored values or one configuration; Model > Design Table… edits them
-// all as a grid (design_table_dialog.hpp); the inspector marks a parameter
-// or variable the shown configuration drives (configurations.hpp).
+// Configurations (L5): the Configuration box on the context bar's top row
+// shows the authored values or one configuration; its Design Table… button
+// edits them all as a grid (design_table_dialog.hpp); the inspector marks a
+// parameter or variable the shown configuration drives (configurations.hpp).
 //
-// Drawings (L6): the Drawings dock lists drawings, views and dimensions;
+// Drawings (L6): the Browser's Drawings section lists drawings, views and dimensions;
 // the drawing window shows one drawing's sheet (drawing_window.hpp),
 // recomputed from every evaluation; view and dimension dialogs
-// (drawing_dialogs.hpp); Model > New Drawing and File > Export Drawing…
+// (drawing_dialogs.hpp); the Drawing tab's New and File > Export Drawing…
+//
+// The context bar (U1, decision 0039): tabs for the context the window is
+// in (Layout, Contents, Sketch, Graph, Drawing; tool_catalog.hpp derives it
+// from what is open) above that context's toolbar (context_bar.hpp). Every
+// tool is one shared QAction (actions.hpp), enabled by what is selected;
+// the menus keep File, Edit, View and Help. Clicking a tab enters that
+// context the way the tools do (enter_context()).
 
 #include <QMainWindow>
 #include <QKeySequence>
@@ -77,6 +87,7 @@
 #include <vector>
 
 #include "authoring.hpp"
+#include "tool_catalog.hpp"
 #include "dimension_drag.hpp"
 #include "exporter.hpp"
 #include "guidance.hpp"
@@ -96,6 +107,8 @@ class QLabel;
 class QMenu;
 class QProgressBar;
 class QPushButton;
+class QSettings;
+class QSplitter;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
@@ -106,6 +119,12 @@ class QTreeWidgetItem;
 namespace vs::app {
 
 class ConnectionDialog;
+class Browser;
+class ProblemsButton;
+class ProblemsDrawer;
+class ContextBar;
+class FoldPanel;
+class ToolActions;
 class DesignTableDialog;
 class DimensionDialog;
 class DrawingWindow;
@@ -151,7 +170,25 @@ class MainWindow : public QMainWindow {
   [[nodiscard]] QTreeWidget& volume_tree() { return *volumes_; }
   [[nodiscard]] QTreeWidget& feature_tree() { return *features_; }
   [[nodiscard]] QTreeWidget& inspector() { return *inspector_; }
+  // U1 phase 4: the left Browser (Volumes, Features, Variables, Drawings
+  // sections) and the Inspector's panel, each folding to a strip.
+  [[nodiscard]] Browser& browser() { return *browser_; }
+  [[nodiscard]] FoldPanel& inspector_panel() { return *inspector_panel_; }
   [[nodiscard]] QTreeWidget& diagnostics_list() { return *diagnostics_; }
+  // U1 phase 5: the Problems drawer under the viewport (holding
+  // diagnostics_list()) and its count in the status bar.
+  [[nodiscard]] ProblemsDrawer& problems_drawer() { return *problems_drawer_; }
+  [[nodiscard]] ProblemsButton& problems_button() { return *problems_button_; }
+  void set_problems_open(bool open);
+  [[nodiscard]] bool problems_open() const;
+  // U1 phase 6: the panels' layout (Browser and Inspector widths and
+  // folds, open Browser sections, the drawer's height) to and from
+  // settings, under "layout/". The app remembers it between runs
+  // (set_remember_layout(true): restored now, saved on close); tests pass
+  // their own settings file.
+  void save_layout(QSettings& settings) const;
+  void restore_layout(const QSettings& settings);
+  void set_remember_layout(bool remember);
   [[nodiscard]] QTableWidget& variables_table() { return *variables_; }
 
   // Exports what is shown, on the worker thread; `done` gets the result
@@ -217,6 +254,8 @@ class MainWindow : public QMainWindow {
   SketchMode* new_sketch(const feature::PlaneRef& plane, const std::string& name = {});
   SketchMode* edit_sketch(const Id& volume, const Id& feature);
   [[nodiscard]] SketchMode* sketch_mode() const { return sketch_mode_; }
+  // The dock holding the open sketch's status and constraint list (U1).
+  [[nodiscard]] QDockWidget& sketch_dock() { return *sketch_dock_; }
 
   VolumeDialog* new_volume();
   VolumeDialog* edit_volume(const Id& volume);
@@ -244,6 +283,8 @@ class MainWindow : public QMainWindow {
   void leave_graph();
   [[nodiscard]] const Id& graph_volume() const { return graph_volume_; }
   [[nodiscard]] NodeEditor& node_editor() { return *node_editor_; }
+  // The dock holding the node editor: shown in the Graph context only (U1).
+  [[nodiscard]] QDockWidget& graph_dock() { return *graph_dock_; }
   [[nodiscard]] NodeForm& node_form() { return *node_form_; }
   // The template library for `volume` (a placeholder or procedural one):
   // OK attaches the chosen template's graph, previewed live meanwhile.
@@ -300,9 +341,10 @@ class MainWindow : public QMainWindow {
   DesignTableDialog* open_design_table();
 
   // --- drawings (L6, decision 0038)
-  // The Drawings dock: drawings, their views, their dimensions
+  // The Browser's Drawings section: drawings, their views, their dimensions
   // (drawing_rows(); disposable dimensions marked), with add / remove
   // buttons and a context menu. Every change is one undoable step.
+  // The Browser's dock: since U1 the drawings are one of its sections.
   [[nodiscard]] QDockWidget& drawings_dock() { return *drawings_dock_; }
   [[nodiscard]] QTreeWidget& drawings_tree() { return *drawings_; }
   // The drawing window and its sheet; it shows the open drawing, redrawn
@@ -340,6 +382,21 @@ class MainWindow : public QMainWindow {
   // Whether the newest redraw hasn't come back from the worker yet.
   [[nodiscard]] bool drawing_pending() const { return drawn_ticket_ < draw_requested_->load(); }
 
+  // --- the context bar (U1, decision 0039)
+  [[nodiscard]] ContextBar& context_bar() { return *context_bar_; }
+  // The one action of a catalogue tool, shared by the toolbar and menus.
+  [[nodiscard]] QAction& tool_action(ToolId id);
+  // The context the window is in now (current_context() of what is open).
+  [[nodiscard]] Context context() const;
+  // What the window has open and selected, as the tool rules see it.
+  [[nodiscard]] ToolState tool_state() const;
+  // Clicking a tab: enters `tab` from here (leaving a drawing, graph or
+  // contents edited in context as needed); false with the reason in the
+  // status bar when tab_availability() refuses it.
+  bool enter_context(Context tab);
+  // Runs a tool as its button does (nothing when it isn't enabled).
+  void run_tool(ToolId id);
+
   // Pick in view: the last pick a feature dialog was given.
   [[nodiscard]] const std::optional<PickResolution>& last_pick() const { return last_pick_; }
 
@@ -357,9 +414,20 @@ class MainWindow : public QMainWindow {
 
  protected:
   void closeEvent(QCloseEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
   void build_menus();
+  // U1: the tool actions and the context bar, with the configuration box
+  // and Regenerate on its top row.
+  void build_context_bar();
+  // Resizes `dock` when `panel` (its widget) folds or unfolds.
+  void fold_dock_with_panel(QDockWidget* dock, FoldPanel* panel);
+  // Enables tools and tabs and shows the current context (cheap; called
+  // after anything that changes what is open or selected).
+  void refresh_tools();
+  // Asks for a file and imports it into `volume`'s contents.
+  void import_contents_dialog(const Id& volume);
   // Sketch mode has its own undo, redo and Esc; the window's shortcuts for
   // those (and F, fit) are set aside meanwhile (H7).
   void suspend_window_shortcuts(bool suspend);
@@ -371,7 +439,10 @@ class MainWindow : public QMainWindow {
   void refresh_variables();
   void refresh_inspector();
   void refresh_edit_actions();
-  void show_diagnostics(const core::Diagnostics& diagnostics, const QString& source);
+  // Fills the Problems list. `started`: the person started what produced
+  // them (an open, an edit, Validate, an export...), so the drawer opens
+  // when there is anything to show.
+  void show_diagnostics(const core::Diagnostics& diagnostics, const QString& source, bool started = false);
   void sync_tree_selection();
   void update_title();
   void add_recent(const std::filesystem::path& path);
@@ -410,6 +481,11 @@ class MainWindow : public QMainWindow {
   History history_;
   Viewport* viewport_ = nullptr;
   QStackedWidget* central_ = nullptr;
+  QSplitter* split_ = nullptr;  // central_ over the Problems drawer
+  ProblemsDrawer* problems_drawer_ = nullptr;
+  ProblemsButton* problems_button_ = nullptr;
+  QAction* problems_action_ = nullptr;  // View > Problems
+  bool remember_layout_ = false;
   QTreeWidget* volumes_ = nullptr;
   QTreeWidget* features_ = nullptr;
   QTableWidget* variables_ = nullptr;
@@ -430,9 +506,10 @@ class MainWindow : public QMainWindow {
   std::vector<std::pair<QAction*, QKeySequence>> suspended_shortcuts_;
   std::function<UnsavedChoice()> unsaved_prompt_;
   QAction* redo_action_ = nullptr;
-  QAction* leave_context_action_ = nullptr;
-  QToolBar* context_bar_ = nullptr;
-  QLabel* context_label_ = nullptr;
+  QAction* regenerate_action_ = nullptr;
+  ToolActions* tool_actions_ = nullptr;
+  ContextBar* context_bar_ = nullptr;
+  QToolBar* context_toolbar_ = nullptr;  // holds the context bar
 
   Selection selection_;
   bool syncing_ = false;          // updating widgets from selection_
@@ -481,7 +558,6 @@ class MainWindow : public QMainWindow {
 
   // L5.
   void refresh_configurations();
-  QToolBar* configuration_bar_ = nullptr;
   QComboBox* configuration_box_ = nullptr;
 
   // L6.
@@ -499,7 +575,9 @@ class MainWindow : public QMainWindow {
     Id drawing;
   };
   [[nodiscard]] DrawingItem current_drawing_item() const;
-  QDockWidget* drawings_dock_ = nullptr;
+  QDockWidget* drawings_dock_ = nullptr;  // the Browser's dock (U1)
+  Browser* browser_ = nullptr;
+  FoldPanel* inspector_panel_ = nullptr;
   QTreeWidget* drawings_ = nullptr;
   DrawingWindow* drawing_window_ = nullptr;
   std::shared_ptr<std::atomic<std::uint64_t>> draw_requested_ = std::make_shared<std::atomic<std::uint64_t>>(0);
@@ -507,6 +585,11 @@ class MainWindow : public QMainWindow {
   std::uint64_t drawn_ticket_ = 0;  // the newest redraw that came back
 
   SketchMode* sketch_mode_ = nullptr;
+  // U1 phase 3: the sketch's status and constraints in a right-hand dock
+  // while sketching, and the left docks folded away meanwhile.
+  QDockWidget* sketch_dock_ = nullptr;
+  QWidget* sketch_dock_empty_ = nullptr;  // the dock's widget between sketches
+  bool sketch_folded_browser_ = false;  // sketch mode folded it; unfold after
   struct SketchSession {
     Id volume;
     feature::Feature feature;
