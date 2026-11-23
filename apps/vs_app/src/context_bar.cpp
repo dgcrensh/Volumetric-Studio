@@ -39,6 +39,8 @@ constexpr auto kTabStyle =
     "QToolButton:disabled { color: palette(mid); }";
 
 constexpr auto kToolStyle = "QToolButton { padding: 2px 4px; min-width: 44px; }";
+// Icons only, in a window too narrow for the labels.
+constexpr auto kCompactStyle = "QToolButton { padding: 2px; }";
 
 }  // namespace
 
@@ -180,8 +182,14 @@ void ContextBar::fit_page() {
   if (page == nullptr || page->layout() == nullptr) return;
   const auto buttons = page->findChildren<QToolButton*>();
   const auto style = [&](Qt::ToolButtonStyle s) {
+    const bool compact = s == Qt::ToolButtonIconOnly;
     for (QToolButton* b : buttons) {
-      if (b->toolButtonStyle() != s) b->setToolButtonStyle(s);
+      if (b->toolButtonStyle() == s) continue;
+      b->setToolButtonStyle(s);
+      // More buttons keep the style's own look.
+      if (b->defaultAction() != nullptr) {
+        b->setStyleSheet(QString::fromLatin1(compact ? kCompactStyle : kToolStyle));
+      }
     }
     page->layout()->invalidate();
   };
