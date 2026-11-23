@@ -4,6 +4,9 @@
 // sketch mode folds the Browser for as long as it is open.
 
 #include <QApplication>
+#include <QPalette>
+#include <QSettings>
+#include <QTreeWidgetItemIterator>
 #include <QDockWidget>
 #include <QTableWidget>
 #include <QToolButton>
@@ -15,9 +18,11 @@
 #include <filesystem>
 
 #include "browser.hpp"
+#include "drawing_window.hpp"
 #include "main_window.hpp"
 #include "samples.hpp"
 #include "sketch_mode.hpp"
+#include "theme.hpp"
 #include "viewport.hpp"
 #include "wait.hpp"
 
@@ -174,4 +179,93 @@ TEST_CASE("The side panels run the full height and the viewport gets the middle"
   CHECK(w.drawings_dock().height() > w.height() / 2 + 150);
   CHECK(w.viewport().height() >= w.height() / 2);
   CHECK(w.viewport().width() >= 1440 - 2 * 300 - 40);
+}
+
+// --- U1 phase 6 --------------------------------------------------------------------------------
+
+TEST_CASE("The panels' layout comes back from settings", "[app][gui][browser]") {
+  const auto file = std::filesystem::temp_directory_path() / "vs_app_layout_test.ini";
+  std::filesystem::remove(file);
+  const QString path = QString::fromStdWString(file.wstring());
+  int browser_width = 0;
+  {
+    app::MainWindow w;
+    w.show();
+    w.resize(1440, 900);
+    QApplication::processEvents();
+    w.resizeDocks({&w.drawings_dock()}, {380}, Qt::Horizontal);
+    QApplication::processEvents();
+    browser_width = w.drawings_dock().width();
+    w.browser().set_section_open(1, false);
+    w.browser().set_section_open(3, true);
+    w.inspector_panel().set_folded(true);
+    w.set_problems_open(true);
+    QApplication::processEvents();
+    QSettings settings(path, QSettings::IniFormat);
+    w.save_layout(settings);
+  }
+  app::MainWindow w;
+  w.show();
+  w.resize(1440, 900);
+  QApplication::processEvents();
+  // The defaults first.
+  CHECK(w.browser().section_open(1));
+  CHECK_FALSE(w.inspector_panel().folded());
+  {
+    const QSettings settings(path, QSettings::IniFormat);
+    w.restore_layout(settings);
+  }
+  QApplication::processEvents();
+  CHECK(std::abs(w.drawings_dock().width() - browser_width) <= 8);
+  CHECK_FALSE(w.browser().section_open(1));
+  CHECK(w.browser().section_open(3));
+  CHECK(w.inspector_panel().folded());
+  // The drawer stays closed, but opens at the height it had.
+  CHECK_FALSE(w.problems_open());
+  // Unfolding the Inspector gives back its width, not the strip's.
+  w.inspector_panel().unfold_button().click();
+  QApplication::processEvents();
+  CHECK(w.inspector().width() > 150);
+  std::filesystem::remove(file);
+}
+
+TEST_CASE("A drawing shows in place of the viewport", "[app][gui][browser]") {
+  app::MainWindow w;
+  w.show();
+  w.resize(1440, 900);
+  REQUIRE(w.open_project(bracket_path()));
+  settle(w);
+  const QSize before = w.size();
+  const Id drawing = w.new_drawing("Sheet");
+  REQUIRE_FALSE(drawing.is_null());
+  QApplication::processEvents();
+  // One window: the sheet is a page of the central stack.
+  CHECK_FALSE(w.drawing_window().isWindow());
+  CHECK(w.drawing_window().window() == &w);
+  CHECK(w.drawing_window().isVisible());
+  CHECK_FALSE(w.viewport().isVisible());
+  CHECK(w.context() == app::Context::Drawing);
+  CHECK(w.size() == before);
+  // Back to the layout: the viewport again.
+  REQUIRE(w.enter_context(app::Context::Layout));
+  QApplication::processEvents();
+  CHECK_FALSE(w.drawing_window().isVisible());
+  CHECK(w.viewport().isVisible());
+  // And the tab brings it back.
+  REQUIRE(w.enter_context(app::Context::Drawing));
+  QApplication::processEvents();
+  CHECK(w.drawing_window().isVisible());
+  CHECK(w.shown_drawing() == drawing);
+}
+
+TEST_CASE("Rows show the evaluation's statuses once it is done, in the window's colours", "[app][gui][browser]") {
+  app::MainWindow w;
+  w.show();
+  CHECK(w.palette().color(QPalette::Highlight) == app::theme::kAccent);
+  REQUIRE(w.open_project(samples::source_dir() / "libs" / "vs_proc" / "tests" / "data" / "bolt_bosses.vsproj"));
+  settle(w);
+  for (QTreeWidgetItemIterator it(&w.volume_tree()); *it != nullptr; ++it) {
+    if ((*it)->parent() == nullptr) continue;
+    CHECK_FALSE((*it)->text(2).startsWith(QStringLiteral("Regenerating")));
+  }
 }

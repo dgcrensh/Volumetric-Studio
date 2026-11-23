@@ -189,22 +189,20 @@ QImage SheetView::render_image(const QSize& size) const {
 
 // --- DrawingWindow -----------------------------------------------------------------------
 
-DrawingWindow::DrawingWindow(QWidget* parent) : QWidget(parent, Qt::Window) {
+DrawingWindow::DrawingWindow(QWidget* parent) : QWidget(parent) {
   setObjectName(QStringLiteral("drawing_window"));
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
-  auto* bar = new QToolBar;
-  bar->addAction(tr("Export…"), this, &DrawingWindow::exportRequested);
-  layout->addWidget(bar);
   view_ = new SheetView;
+  // Like the viewport: never the reason the window is as big as it is.
+  view_->setMinimumSize(320, 240);
   layout->addWidget(view_, 1);
   status_ = new QLabel;
   status_->setContentsMargins(8, 3, 8, 3);
   status_->setWordWrap(true);
   layout->addWidget(status_);
   set_title({});
-  resize(1100, 820);
 }
 
 void DrawingWindow::set_title(const QString& name) {

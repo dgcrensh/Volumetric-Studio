@@ -888,7 +888,7 @@ so they are registered. A new library must also be added to
   child into a template (keeping its id; origin from its built box).
 - **Shipping** (M17, decision 0017): `ship.*` (no Qt) is
   `check_for_export()`: `validate()`, the shown evaluation's volume
-  diagnostics, volumes not current, and the weld; Model > Validate and every
+  diagnostics, volumes not current, and the weld; Validate (Ctrl+R) and every
   export run it first (errors stop, warnings ask). A weld error stops
   STL and 3MF but not STEP (`ok_for(ShipTarget)`), and export reuses
   the check's weld (`ShipCheck::combined`, H5). `MainWindow::validate()`,
@@ -913,8 +913,8 @@ so they are registered. A new library must also be added to
   set the design table) and what the toolbar, the design table dialog
   and the inspector show (`configuration_choices()`, `active_value()`,
   `table_for_editing()`, `addable_columns()`). In the window: the
-  toolbar's Configuration box (`MainWindow::configuration_box()`,
-  `show_configuration()`; one undo step, follows the history), Model >
+  tab row's Configuration box (`MainWindow::configuration_box()`,
+  `show_configuration()`; one undo step, follows the history), the
   Design Table… (`design_table_dialog.*`, `open_design_table()`: a grid
   of configurations by driven numbers, add / copy / remove rows, add
   columns, CSV import and export; OK is one `set_design_table()` step, a
@@ -923,13 +923,13 @@ so they are registered. A new library must also be added to
   (configuration: <expr>)`. Tests: `test_configurations_ui.cpp`.
 - **Drawings** (L6, decision 0038): `drawings.*` (no Qt) holds the
   commands (add, rename, remove drawings; add, change, remove views and
-  dimensions; move a dimension's line) and what the dock and dialogs
+  dimensions; move a dimension's line) and what the Browser and dialogs
   list (`drawing_rows()`, `anchor_choices()`: stable anchors first,
-  disposable ones in parentheses). In the window: a Drawings dock
-  (tabbed with Variables), a drawing window (`drawing_window.*`,
+  disposable ones in parentheses). In the window: the Browser's Drawings
+  section, the drawing page in place of the viewport (`drawing_window.*`,
   `SheetView` paints the `Sheet` with QPainter, redrawn on the session's
   worker after every shown evaluation and history change), modeless
-  `ViewDialog` and `DimensionDialog`, Model > New Drawing (a
+  `ViewDialog` and `DimensionDialog`, the Drawing toolbar's New (a
   `standard_drawing()` of the shown evaluation) and File > Export
   Drawing… (SVG, PDF, DXF by extension, after the shipping check as
   for STEP). Entry points: `new_drawing()`, `open_drawing()`,
@@ -937,7 +937,7 @@ so they are registered. A new library must also be added to
   `add_drawing_view()`, `add_drawing_dimension()`,
   `export_drawing_to()`. Tests: `test_drawings.cpp` (core),
   `test_drawings_ui.cpp`.
-- **Context toolbar** (U1, decision 0039, in progress): `tool_catalog.*`
+- **Context toolbar** (U1, decision 0039): `tool_catalog.*`
   (no Qt) is every tool as a catalogue row (name, label, tooltip,
   shortcut, icon), each context's groups (Layout, Contents, Sketch, Graph,
   Drawing), `current_context()` derived from what the window has open,
@@ -963,9 +963,13 @@ so they are registered. A new library must also be added to
   splitter, holding `diagnostics_list()`); it opens itself only when
   something the person started reports problems (`show_diagnostics(...,
   started)`), never for a background evaluation; the Graph dock follows
-  the Graph context. Phase 6 is in `docs/plans/U1-context-toolbar.md`.
-  Tests: `test_tool_catalog.cpp`, `test_context_bar_ui.cpp`,
-  `test_browser_ui.cpp`, `test_problems_ui.cpp`.
+  the Graph context. Phase 6: the drawing is a page of the central stack
+  (the Drawing tab shows it in place of the viewport); `theme.*` is one
+  palette and style sheet on the main window (colours and borders only);
+  `save_layout()` / `restore_layout()` keep the panels between runs
+  (`set_remember_layout()`, off in tests and captures). Plan:
+  `docs/plans/U1-context-toolbar.md`. Tests: `test_tool_catalog.cpp`,
+  `test_context_bar_ui.cpp`, `test_browser_ui.cpp`, `test_problems_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

@@ -11,10 +11,12 @@
 // dimensions thin, and disposable dimensions (on generated contents) in a
 // colour of their own. Texts keep their alignment and quarter turns.
 //
-// DrawingWindow is a top-level window (owned by the main window) holding a
-// SheetView, an Export button and a line saying what draw() reported. The
-// main window computes the sheet (draw::draw() on the session's worker,
-// after each evaluation and each edit of the drawing) and hands it over
+// DrawingWindow is one page of the main window's central stack (U1 phase
+// 6: the Drawing tab shows it in place of the viewport), holding a
+// SheetView and a line saying what draw() reported; the Drawing toolbar
+// exports it. The main window computes the sheet (draw::draw() on the
+// session's worker, after each evaluation and each edit of the drawing)
+// and hands it over
 // with show_result(); nothing here evaluates or edits anything.
 
 #include <QWidget>
@@ -48,7 +50,7 @@ class SheetView : public QWidget {
   // The sheet as the view paints it, rendered off screen at `size`.
   [[nodiscard]] QImage render_image(const QSize& size) const;
 
-  [[nodiscard]] QSize sizeHint() const override { return {1100, 800}; }
+  [[nodiscard]] QSize sizeHint() const override { return {800, 600}; }
 
  protected:
   void paintEvent(QPaintEvent* event) override;
@@ -78,7 +80,7 @@ class DrawingWindow : public QWidget {
   [[nodiscard]] QString status_text() const;
 
  signals:
-  // The toolbar's Export… button.
+  // Export asked for (the main window's Drawing toolbar exports too).
   void exportRequested();
 
  private:

@@ -107,6 +107,7 @@ class QLabel;
 class QMenu;
 class QProgressBar;
 class QPushButton;
+class QSettings;
 class QSplitter;
 class QStackedWidget;
 class QTableWidget;
@@ -180,6 +181,14 @@ class MainWindow : public QMainWindow {
   [[nodiscard]] ProblemsButton& problems_button() { return *problems_button_; }
   void set_problems_open(bool open);
   [[nodiscard]] bool problems_open() const;
+  // U1 phase 6: the panels' layout (Browser and Inspector widths and
+  // folds, open Browser sections, the drawer's height) to and from
+  // settings, under "layout/". The app remembers it between runs
+  // (set_remember_layout(true): restored now, saved on close); tests pass
+  // their own settings file.
+  void save_layout(QSettings& settings) const;
+  void restore_layout(const QSettings& settings);
+  void set_remember_layout(bool remember);
   [[nodiscard]] QTableWidget& variables_table() { return *variables_; }
 
   // Exports what is shown, on the worker thread; `done` gets the result
@@ -476,6 +485,7 @@ class MainWindow : public QMainWindow {
   ProblemsDrawer* problems_drawer_ = nullptr;
   ProblemsButton* problems_button_ = nullptr;
   QAction* problems_action_ = nullptr;  // View > Problems
+  bool remember_layout_ = false;
   QTreeWidget* volumes_ = nullptr;
   QTreeWidget* features_ = nullptr;
   QTableWidget* variables_ = nullptr;

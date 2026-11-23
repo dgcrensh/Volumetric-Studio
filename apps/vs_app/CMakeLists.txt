@@ -109,6 +109,8 @@ add_library(vs_app_ui STATIC
   src/browser.hpp
   src/problems.cpp
   src/problems.hpp
+  src/theme.cpp
+  src/theme.hpp
   src/context_bar.cpp
   src/context_bar.hpp
   src/design_table_dialog.cpp

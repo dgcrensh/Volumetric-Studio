@@ -15,8 +15,8 @@
 // --node selects and previews one of its nodes (--slice: fields as a slice).
 // --drawing opens a drawing by name (L6; a standard one of that name is made
 // when the project has none); --drawing-image saves its sheet (rendered off
-// screen) once drawn, and --screenshot then grabs the drawing window too, as
-// <out>-drawing-window.bmp.
+// screen) once drawn; the drawing shows in the main window (U1), so
+// --screenshot grabs it there.
 //
 // With --screenshot or --viewport-image the app opens the project, waits
 // for its evaluation to reach the screen, saves the window (as the screen
@@ -114,6 +114,9 @@ int main(int argc, char** argv) {
   }
 
   vs::app::MainWindow window;
+  // The panels come back as they were left (U1), except in captures, which
+  // must look the same on every run.
+  if (screenshot.isEmpty() && viewport_image.isEmpty() && drawing_image.isEmpty()) window.set_remember_layout(true);
   if (size) window.resize(*size);
   window.show();
 
@@ -207,12 +210,6 @@ int main(int argc, char** argv) {
           QString out = screenshot;
           out.replace(QStringLiteral(".bmp"), QStringLiteral("-dialog.bmp"));
           if (QScreen* screen = dialog->screen()) screen->grabWindow(dialog->winId()).save(out);
-        }
-        if (drawing_open) {
-          QString out = screenshot;
-          out.replace(QStringLiteral(".bmp"), QStringLiteral("-drawing-window.bmp"));
-          auto& dw = window.drawing_window();
-          if (QScreen* screen = dw.screen()) screen->grabWindow(dw.winId()).save(out);
         }
       }
       QApplication::quit();

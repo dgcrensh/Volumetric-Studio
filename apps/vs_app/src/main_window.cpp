@@ -56,6 +56,7 @@
 #include "node_editor.hpp"
 #include "node_preview.hpp"
 #include "problems.hpp"
+#include "theme.hpp"
 #include "reference_choices.hpp"
 #include "sketch_mode.hpp"
 #include "viewport.hpp"
@@ -217,6 +218,7 @@ std::string first_error(const core::Diagnostics& d) {
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+  theme::apply(*this);  // first, so what is built below takes its colours
   session_ = new Session({}, this);
   session_->set_preparer(&Viewport::prepare);
   viewport_ = new Viewport;
@@ -465,6 +467,10 @@ void MainWindow::build_docks() {
   volumes_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   volumes_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   volumes_->setMinimumWidth(220);
+  // Names give way first: the kind and status columns keep their words.
+  volumes_->header()->setStretchLastSection(false);
+  volumes_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+  volumes_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
   volumes_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(volumes_, &QTreeWidget::itemSelectionChanged, this, [this] {
     if (syncing_) return;
@@ -511,7 +517,10 @@ void MainWindow::build_docks() {
   vl->setContentsMargins(0, 0, 0, 0);
   variables_ = new QTableWidget(0, 3);
   variables_->setHorizontalHeaderLabels({tr("Name"), tr("Expression"), tr("Value")});
-  variables_->horizontalHeader()->setStretchLastSection(true);
+  variables_->horizontalHeader()->setStretchLastSection(false);
+  variables_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  variables_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  variables_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
   variables_->verticalHeader()->setVisible(false);
   vl->addWidget(variables_);
   auto* vb = new QHBoxLayout;
@@ -691,8 +700,10 @@ void MainWindow::build_docks() {
       open_drawing(item.drawing);
     }
   });
-  drawing_window_ = new DrawingWindow(this);
-  drawing_window_->installEventFilter(this);  // U1: closing it leaves the Drawing tab
+  // U1 phase 6: the drawing is a page of the central stack, in place of
+  // the viewport while the Drawing tab is open.
+  drawing_window_ = new DrawingWindow;
+  central_->addWidget(drawing_window_);
   connect(drawing_window_, &DrawingWindow::exportRequested, this, &MainWindow::export_drawing_dialog);
 }
 
@@ -887,6 +898,13 @@ void MainWindow::show_snapshot(const SnapshotPtr& snapshot) {
                              context_inside(doc, editing_volume_));
     }
   }
+  if (!snapshot->preview) {
+    // The final result: the live states of the regeneration are over, so
+    // the rows show the evaluation's statuses, not the last "Regenerating"
+    // the timer saw.
+    state_timer_->stop();
+    last_states_.clear();
+  }
   refresh_volume_tree();
   refresh_features();
   refresh_variables();
@@ -945,12 +963,22 @@ void MainWindow::refresh_volume_tree() {
       item->setText(0, qstr(r.name));
       item->setIcon(0, kind_icon(r, i));
       item->setText(1, qstr(kind_label(r)));
+      // Short, so the Browser needn't scroll sideways (U1 phase 6): the
+      // counts are the dot's colour and the tooltip.
       QString status = qstr(status_label(r.status));
-      if (r.stale_contents) status += tr(" (showing stale)");
-      if (r.errors > 0) status += tr(" — %n error(s)", nullptr, static_cast<int>(r.errors));
-      else if (r.warnings > 0) status += tr(" — %n warning(s)", nullptr, static_cast<int>(r.warnings));
+      if (r.stale_contents) status += tr(" (stale)");
+      QString tip = qstr(status_label(r.status)) + (r.stale_contents ? tr(", showing its last valid contents") : QString());
+      QColor colour = status_color(r.status);
+      if (r.errors > 0) {
+        tip += tr(" — %n error(s)", nullptr, static_cast<int>(r.errors));
+        colour = severity_color(core::Severity::Error);
+      } else if (r.warnings > 0) {
+        tip += tr(" — %n warning(s)", nullptr, static_cast<int>(r.warnings));
+        colour = severity_color(core::Severity::Warning);
+      }
       item->setText(2, status);
-      item->setIcon(2, dot(status_color(r.status)));
+      item->setToolTip(2, tip);
+      item->setIcon(2, dot(colour));
       item->setData(0, kRoleKind, 0);
       item->setData(0, kRoleId, qstr(r.id.to_string()));
       if (r.id == editing_volume_) {
@@ -1184,6 +1212,74 @@ void MainWindow::set_problems_open(bool open) {
 }
 
 bool MainWindow::problems_open() const { return problems_drawer_->isVisible(); }
+
+// --- the panels' layout between runs (U1 phase 6) ------------------------------------------------
+
+namespace {
+
+QDockWidget* dock_holding(QWidget* w) {
+  for (QWidget* p = w; p != nullptr; p = p->parentWidget()) {
+    if (auto* d = qobject_cast<QDockWidget*>(p)) return d;
+  }
+  return nullptr;
+}
+
+int unfolded_width(const FoldPanel& panel, const QDockWidget& dock) {
+  const int remembered = panel.property("unfolded_width").toInt();
+  return panel.folded() ? remembered : dock.width();
+}
+
+}  // namespace
+
+void MainWindow::save_layout(QSettings& settings) const {
+  QDockWidget* inspector = dock_holding(inspector_panel_);
+  settings.beginGroup(QStringLiteral("layout"));
+  settings.setValue(QStringLiteral("browser_width"), unfolded_width(*browser_, *drawings_dock_));
+  // Folded by the person, not by sketch mode.
+  const bool sketch_folded = sketch_mode_ != nullptr && sketch_folded_browser_;
+  settings.setValue(QStringLiteral("browser_folded"), browser_->folded() && !sketch_folded);
+  if (inspector != nullptr) {
+    settings.setValue(QStringLiteral("inspector_width"), unfolded_width(*inspector_panel_, *inspector));
+  }
+  settings.setValue(QStringLiteral("inspector_folded"), inspector_panel_->folded());
+  QVariantList open;
+  for (int i = 0; i < browser_->section_count(); ++i) open << browser_->section_open(i);
+  settings.setValue(QStringLiteral("sections_open"), open);
+  const int drawer = problems_drawer_->isVisible() ? problems_drawer_->height()
+                                                   : problems_drawer_->property("open_height").toInt();
+  if (drawer > 0) settings.setValue(QStringLiteral("drawer_height"), drawer);
+  settings.endGroup();
+}
+
+void MainWindow::restore_layout(const QSettings& settings) {
+  const auto value = [&](const char* key) { return settings.value(QStringLiteral("layout/") + QLatin1String(key)); };
+  QDockWidget* inspector = dock_holding(inspector_panel_);
+  const auto restore = [&](FoldPanel& panel, QDockWidget* dock, const char* width_key, const char* folded_key) {
+    if (dock == nullptr) return;
+    const int width = std::max(value(width_key).toInt(), 0);
+    if (width > FoldPanel::strip_width()) {
+      panel.set_folded(false);
+      resizeDocks({dock}, {width}, Qt::Horizontal);
+    }
+    const bool folded = value(folded_key).toBool();
+    panel.set_folded(folded);
+    if (folded && width > FoldPanel::strip_width()) panel.setProperty("unfolded_width", width);
+  };
+  restore(*browser_, drawings_dock_, "browser_width", "browser_folded");
+  restore(*inspector_panel_, inspector, "inspector_width", "inspector_folded");
+  const QVariantList open = value("sections_open").toList();
+  for (int i = 0; i < browser_->section_count() && i < open.size(); ++i) {
+    browser_->set_section_open(i, open[i].toBool());
+  }
+  if (const int drawer = value("drawer_height").toInt(); drawer > 0) {
+    problems_drawer_->setProperty("open_height", drawer);
+  }
+}
+
+void MainWindow::set_remember_layout(bool remember) {
+  remember_layout_ = remember;
+  if (remember) restore_layout(QSettings(QStringLiteral("Volumetric Studio"), QStringLiteral("vs_app")));
+}
 
 void MainWindow::activate_diagnostic(int row) {
   const SnapshotPtr s = session_->latest();
@@ -1746,7 +1842,7 @@ void MainWindow::refresh_drawings() {
   // The drawing shown was removed (an edit, or undone to before it).
   if (!shown.is_null() && doc.find_drawing(shown) == nullptr) {
     drawing_window_->set_drawing({}, {});
-    drawing_window_->hide();
+    if (central_->currentWidget() == drawing_window_) central_->setCurrentWidget(viewport_);
   } else if (!shown.is_null()) {
     drawing_window_->set_title(qstr(doc.find_drawing(shown)->name));
   }
@@ -1822,7 +1918,7 @@ void MainWindow::redraw(SnapshotPtr snapshot, const model::Drawing* definition) 
 bool MainWindow::open_drawing(const Id& drawing) {
   if (drawing.is_null()) {
     drawing_window_->set_drawing({}, {});
-    drawing_window_->hide();
+    if (central_->currentWidget() == drawing_window_) central_->setCurrentWidget(viewport_);
     refresh_drawings();
     refresh_tools();
     return true;
@@ -1831,8 +1927,7 @@ bool MainWindow::open_drawing(const Id& drawing) {
   if (d == nullptr) return false;
   drawing_window_->set_drawing(drawing, qstr(d->name));
   browser_->set_section_open(kDrawingsSection, true);  // its views and dimensions, listed
-  drawing_window_->show();
-  drawing_window_->raise();
+  if (sketch_mode_ == nullptr) central_->setCurrentWidget(drawing_window_);
   refresh_drawings();
   redraw();
   refresh_tools();
@@ -2466,6 +2561,10 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     event->ignore();
     return;
   }
+  if (remember_layout_) {
+    QSettings settings(QStringLiteral("Volumetric Studio"), QStringLiteral("vs_app"));
+    save_layout(settings);
+  }
   QMainWindow::closeEvent(event);
 }
 
@@ -2772,7 +2871,7 @@ ToolState MainWindow::tool_state() const {
     s.sketch_selection = picked.size();
     s.applicable_constraints = sketch_mode_->editor().applicable(picked);
   }
-  s.drawing_shown = drawing_window_ != nullptr && drawing_window_->isVisible() && !shown_drawing().is_null();
+  s.drawing_shown = drawing_window_ != nullptr && central_->currentWidget() == drawing_window_ && !shown_drawing().is_null();
   s.evaluated = session_->latest() != nullptr;
   s.graph_volume = graph_volume_;
   s.editing_volume = editing_volume_;
@@ -2953,11 +3052,6 @@ void MainWindow::import_contents_dialog(const Id& volume) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
-  // The drawing window shown or closed (also by its own close button):
-  // the Drawing tab follows.
-  if (watched == drawing_window_ && (event->type() == QEvent::Show || event->type() == QEvent::Hide)) {
-    QTimer::singleShot(0, this, &MainWindow::refresh_tools);
-  }
   return QMainWindow::eventFilter(watched, event);
 }
 

@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows L6 (drawings) · decision record:
 `docs/decisions/0039-context-toolbar.md`
 
-Status: phases 1 to 5 done; phase 6 to do.
+Status: done (phases 1 to 6).
 
 ## Goal
 
@@ -113,6 +113,19 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
    stylesheet with the mockup's colours; `QSettings` for panel widths,
    folded sections and the drawer height; `docs/manual-tests/
    mvp-workflows.md`, `CLAUDE.md`, this plan and the status table.
+   **Done.** `DrawingWindow` is a page of `central_` (no window of its
+   own, no toolbar: the Drawing toolbar exports); the Drawing tab shows
+   it and leaving the tab shows the viewport. `theme.*` sets one palette
+   and style sheet on the main window (cool greys, blue accent #2563eb),
+   colours and borders only, so no toolbar measures differently.
+   `save_layout()` / `restore_layout()` keep the Browser's and the
+   Inspector's widths and folds, open sections and the drawer's height
+   under `layout/`; the app restores them at start and saves on close
+   (`set_remember_layout()`, not in captures). Also: the Browser's lists
+   no longer scroll sideways (names give way; a volume's counts are its
+   dot's colour and tooltip), and rows no longer keep "Regenerating"
+   after an evaluation ends (the live states were cleared after the
+   rows were filled). Manual walk: section 7.
 
 ## Tests
 
