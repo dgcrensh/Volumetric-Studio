@@ -2131,10 +2131,9 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
   auto editor = std::make_unique<SketchEditor>(sk, session_->settings(), lookup);
   suspend_window_shortcuts(true);
   sketch_mode_ = new SketchMode(std::move(editor), title);
-  central_->addWidget(sketch_mode_);
-  central_->setCurrentWidget(sketch_mode_);
   // U1: the panel goes to the right-hand dock; the left docks fold away
-  // until Finish or Cancel, so the canvas gets the room.
+  // until Finish or Cancel, so the canvas gets the room. Folded
+  // before the canvas shows, or its minimum width would widen the window.
   sketch_dock_->setWidget(sketch_mode_->side_panel());
   sketch_dock_->show();
   sketch_dock_->raise();
@@ -2145,6 +2144,8 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
       d->hide();
     }
   }
+  central_->addWidget(sketch_mode_);
+  central_->setCurrentWidget(sketch_mode_);
   sketch_session_ = SketchSession{volume, std::move(f), is_new};
   connect(sketch_mode_, &SketchMode::finished, this, &MainWindow::finish_sketch);
   // U1: the Sketch tab's constraint tools follow the sketch's selection.

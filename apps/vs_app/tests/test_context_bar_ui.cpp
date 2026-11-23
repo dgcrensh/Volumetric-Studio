@@ -285,6 +285,25 @@ TEST_CASE("Every toolbar fits the window without shortening a label or widening 
   bar.set_context(Context::Layout);
 }
 
+TEST_CASE("Sketching in the narrowest window keeps its width", "[app][gui][tools]") {
+  app::MainWindow w;
+  w.show();
+  REQUIRE(w.open_project(bracket_path()));
+  settle(w);
+  w.resize(w.minimumSizeHint().width(), 800);
+  QApplication::processEvents();
+  const int width = w.width();
+  const Id sketch = first_layout_sketch(w);
+  REQUIRE_FALSE(sketch.is_null());
+  REQUIRE(w.edit_sketch({}, sketch) != nullptr);
+  QApplication::processEvents();
+  CHECK(w.width() == width);
+  w.sketch_mode()->finish(false);
+  drop_deleted();
+  QApplication::processEvents();
+  CHECK(w.width() == width);
+}
+
 TEST_CASE("Tools reach the entry points their menu items did", "[app][gui][tools]") {
   app::MainWindow w;
   w.show();

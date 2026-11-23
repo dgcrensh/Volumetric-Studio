@@ -93,7 +93,7 @@ QString dimension_text(const sketch::Constraint& c) {
 SketchView::SketchView(SketchEditor& editor, QWidget* parent) : QWidget(parent), editor_(editor) {
   setMouseTracking(true);
   setFocusPolicy(Qt::StrongFocus);
-  setMinimumSize(400, 300);
+  setMinimumSize(320, 240);  // the viewport's, so sketching never widens the window
   setAutoFillBackground(false);
 }
 
