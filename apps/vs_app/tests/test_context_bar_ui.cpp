@@ -117,7 +117,7 @@ TEST_CASE("The menus keep File, Edit, View and Help", "[app][gui][tools]") {
     for (QAction* a : w.findChildren<QAction*>()) n += a->shortcut() == key ? 1 : 0;
     return n;
   };
-  for (const char* key : {"Ctrl+Shift+S", "Ctrl+Shift+E", "Ctrl+E", "Ctrl+G", "Ctrl+R", "F5", "Esc"}) {
+  for (const char* key : {"Ctrl+Shift+K", "Ctrl+Shift+S", "Ctrl+Shift+E", "Ctrl+E", "Ctrl+G", "Ctrl+R", "F5", "Esc"}) {
     INFO(key);
     CHECK(holder(QKeySequence(QString::fromLatin1(key))) == 1);
   }

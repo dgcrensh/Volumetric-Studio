@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows L6 (drawings) · decision record:
 `docs/decisions/0039-context-toolbar.md`
 
-Status: phase 1 done; phases 2 to 6 to do.
+Status: phases 1 and 2 done; phases 3 to 6 to do.
 
 ## Goal
 
@@ -53,7 +53,10 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
    and one toolbar per context (text under icon, group captions, a "More"
    menu past `ToolGroup::shown`). `build_menus()` keeps File, Edit, View
    and Help; the "Editing in context" bar goes; the Configuration box and
-   Regenerate move to the top row.
+   Regenerate move to the top row. **Done.** The Design Table moved there
+   too; Cancel (Esc) stays a window action behind the status bar's
+   button. Sketch tools already drive `SketchMode` here; its own
+   toolbars go in phase 3.
 3. **Sketch tab.** `SketchMode` loses its toolbars and buttons; the Sketch
    tab's actions call `set_tool()`, `constrain()`, `toggle_construction()`,
    `remove_selection()` and `finish()`. Constraint tools are enabled by

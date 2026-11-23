@@ -80,7 +80,7 @@ TEST_CASE("Every tool is one catalogue row with a name, label, tooltip and icon"
 
 TEST_CASE("Shortcuts are unique, and the window's own keys stay free", "[app][tools]") {
   // The window and sketch mode keep these (H7: one holder per shortcut).
-  const std::set<std::string_view> window = {"Ctrl+Z", "Ctrl+Y", "Ctrl+N", "Ctrl+O", "Ctrl+S", "Ctrl+Q", "Ctrl+I",
+  const std::set<std::string_view> window = {"Ctrl+Z", "Ctrl+Y", "Ctrl+N", "Ctrl+O", "Ctrl+S", "Ctrl+Shift+S", "Ctrl+Q", "Ctrl+I",
                                              "F", "F5", "Esc", "Del", "Return", "Enter"};
   std::set<std::string_view> seen;
   for (const Tool& t : all_tools()) {
@@ -89,8 +89,8 @@ TEST_CASE("Shortcuts are unique, and the window's own keys stay free", "[app][to
     CHECK(seen.insert(t.shortcut).second);
     CHECK(window.count(t.shortcut) == 0);
   }
-  // The menus' shortcuts carried over.
-  CHECK(tool(ToolId::Sketch).shortcut == "Ctrl+Shift+S");
+  // The menus' shortcuts carried over, but Sketch: Ctrl+Shift+S is Save As.
+  CHECK(tool(ToolId::Sketch).shortcut == "Ctrl+Shift+K");
   CHECK(tool(ToolId::Extrude).shortcut == "Ctrl+Shift+E");
   CHECK(tool(ToolId::EditContents).shortcut == "Ctrl+E");
   CHECK(tool(ToolId::EditGraph).shortcut == "Ctrl+G");

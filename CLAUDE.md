@@ -943,9 +943,16 @@ so they are registered. A new library must also be added to
   Drawing), `current_context()` derived from what the window has open,
   and `tab_availability()` / `availability()` with a reason when
   something can't be used; `icons.*` (no Qt) is every icon as strokes on
-  a 24-unit grid. The window will share one `QAction` per tool between
-  the toolbar and the menus (phases 2 to 6, `docs/plans/U1-context-toolbar.md`).
-  Tests: `test_tool_catalog.cpp`.
+  a 24-unit grid. In the window (phase 2): `actions.*` makes one
+  `QAction` per tool (object name `tool_<name>`, added to the window so
+  shortcuts work from any toolbar), `icon_painter.*` paints the icons,
+  and `context_bar.*` is the tab row (with the configuration box, Design
+  Table… and Regenerate on its right) over one toolbar per context.
+  `MainWindow::refresh_tools()` follows what is open and selected;
+  `enter_context()` is a tab click, `run_tool()` a button. The menus keep
+  File, Edit, View and Help. Phases 3 to 6 are in
+  `docs/plans/U1-context-toolbar.md`. Tests: `test_tool_catalog.cpp`,
+  `test_context_bar_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

@@ -32,7 +32,11 @@ the toolbar, the remaining menus and right-click menus, so a shortcut
 never has two holders (H7) and tests that find actions by text still find
 them. The Insert, Volume and Model menus go: the toolbar and the
 right-click menus cover them, and two copies would drift. The shortcuts
-the menus had carry over.
+the menus had carry over, except Insert > Sketch's Ctrl+Shift+S, which
+File > Save As (`QKeySequence::SaveAs`) also held, so neither worked: the
+Sketch tool takes Ctrl+Shift+K. Toolbar buttons never shrink (Qt would
+elide their labels); a context with too many tools shows fewer and puts
+the rest under More (Sketch's Constrain group shows six).
 
 **Icons are stroke geometry.** `icons.hpp` gives each icon a few strokes
 on a 24-unit grid (polylines with circles and arcs flattened, dots,

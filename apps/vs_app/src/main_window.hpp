@@ -23,19 +23,19 @@
 // OK commits it, Cancel puts the project back. Sketch mode replaces the
 // viewport with the sketch canvas until Finish or Cancel.
 //
-// Edit in context: editing a parametric volume's contents (Volume > Edit
-// contents) makes its feature tree the one Insert adds to, dims every other
-// volume in the viewport and keeps them from being picked, and the
+// Edit in context: editing a parametric volume's contents (the Contents
+// tab, or Model on the Layout tab) makes its feature tree the one the
+// geometry tools add to, dims every other volume in the viewport and keeps
+// them from being picked, and the
 // feature dialogs then offer only the volume's boundary, its connection
 // surfaces and its own features as references.
 //
 // Procedural graphs (M15). The Graph dock (node_editor.hpp) edits one
-// procedural volume's graph (Volume > Edit graph, or "Fill by procedure"
+// procedural volume's graph (the Graph tab or the Procedure tool, also
 // on a placeholder); every change is a set_graph() Command through the
 // same History. Selecting a node shows its settings in the inspector and
 // draws its output in the viewport (node_preview.hpp). The template
-// library, bake and unbake are in the Volume menu and the volume's
-// context menu.
+// library, bake and unbake are tools, and in the volume's context menu.
 //
 // Interactive regeneration and guidance (M16):
 //

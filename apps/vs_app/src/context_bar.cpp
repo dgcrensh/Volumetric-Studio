@@ -115,6 +115,9 @@ QWidget* ContextBar::make_page(Context context, const ToolActions& actions) {
       b->setAutoRaise(true);
       b->setFocusPolicy(Qt::NoFocus);
       b->setStyleSheet(QString::fromLatin1(kToolStyle));
+      // Never squeezed (Qt would elide the label): a toolbar too wide for
+      // the window needs fewer buttons, not shorter words.
+      b->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
       buttons->addWidget(b);
     }
     if (shown < group.tools.size()) {
@@ -122,7 +125,11 @@ QWidget* ContextBar::make_page(Context context, const ToolActions& actions) {
       more->setObjectName(more_name(context, g));
       more->setText(tr("More"));
       more->setToolTip(tr("More %1 tools").arg(qs(group.name).toLower()));
-      more->setToolButtonStyle(Qt::ToolButtonTextOnly);
+      // An arrow where the icon goes, so the label lines up with its neighbours'.
+      more->setArrowType(Qt::DownArrow);
+      more->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+      more->setIconSize(QSize(24, 24));
+      more->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
       more->setPopupMode(QToolButton::InstantPopup);
       more->setAutoRaise(true);
       more->setFocusPolicy(Qt::NoFocus);

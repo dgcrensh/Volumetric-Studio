@@ -24,7 +24,7 @@ constexpr std::array kTools = {
          Icon::KeepOut},
     Tool{T::NewLink, "new_link", "Link", "Drive a layout number from a volume's published output", "", Icon::Link},
     // Geometry of the tree being edited
-    Tool{T::Sketch, "sketch", "Sketch", "New sketch on a plane", "Ctrl+Shift+S", Icon::Sketch},
+    Tool{T::Sketch, "sketch", "Sketch", "New sketch on a plane", "Ctrl+Shift+K", Icon::Sketch},
     Tool{T::DatumPlane, "datum_plane", "Plane", "Datum plane", "", Icon::Plane},
     Tool{T::DatumAxis, "datum_axis", "Axis", "Datum axis", "", Icon::Axis},
     Tool{T::DatumPoint, "datum_point", "Point", "Datum point", "", Icon::Point},
@@ -136,7 +136,7 @@ std::vector<ToolGroup> make_groups(Context context) {
           {"Draw", {T::SketchSelect, T::SketchPoint, T::SketchLine, T::SketchRectangle, T::SketchCircle, T::SketchArc,
                     T::SketchSlot}, kAll},
           {"Constrain", {T::Coincident, T::PointOnCurve, T::Horizontal, T::Vertical, T::Parallel, T::Perpendicular,
-                         T::Tangent, T::Equal, T::Symmetric, T::Fix}, kAll},
+                         T::Tangent, T::Equal, T::Symmetric, T::Fix}, 6},
           {"Dimension", {T::Distance, T::HorizontalDistance, T::VerticalDistance, T::Angle, T::Radius, T::Diameter},
            3},
           {"Edit", {T::Construction, T::DeleteSketchItems}, kAll},
