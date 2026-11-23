@@ -62,6 +62,10 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
    `remove_selection()` and `finish()`. Constraint tools are enabled by
    `SketchEditor::applicable()` on the sketch selection. The constraint
    list and solve status move to the right panel; the Browser folds.
+   Also from phase 2: the Sketch toolbar fits from about 1440 px wide; in
+   narrower windows Qt still elides its longest labels, so this phase
+   makes it fit the window's 1284 px minimum (shorter labels or icon-only
+   constraint buttons), and sketch mode stops growing the window 55 px.
 4. **Browser and Inspector.** `browser.*`: one left dock with foldable
    sections holding the existing trees, so `volume_tree()`,
    `feature_tree()` and `variables_table()` keep working. The Inspector

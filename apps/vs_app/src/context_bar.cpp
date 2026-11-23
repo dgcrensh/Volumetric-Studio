@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPalette>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -12,6 +13,7 @@
 #include <algorithm>
 
 #include "actions.hpp"
+#include "icon_painter.hpp"
 
 namespace vs::app {
 
@@ -125,8 +127,10 @@ QWidget* ContextBar::make_page(Context context, const ToolActions& actions) {
       more->setObjectName(more_name(context, g));
       more->setText(tr("More"));
       more->setToolTip(tr("More %1 tools").arg(qs(group.name).toLower()));
-      // An arrow where the icon goes, so the label lines up with its neighbours'.
-      more->setArrowType(Qt::DownArrow);
+      // A chevron where the icon goes, so the label lines up with its
+      // neighbours' (QToolButton's own arrow isn't drawn under every style).
+      more->setIcon(tool_icon(Icon::ChevronDown, palette().color(QPalette::Active, QPalette::ButtonText),
+                              palette().color(QPalette::Disabled, QPalette::ButtonText)));
       more->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
       more->setIconSize(QSize(24, 24));
       more->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
