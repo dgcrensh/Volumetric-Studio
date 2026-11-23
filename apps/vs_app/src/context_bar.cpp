@@ -90,7 +90,28 @@ ContextBar::ContextBar(const ToolActions& actions, QWidget* parent) : QWidget(pa
   pages_->setMinimumWidth(0);
   for (Context c : kContexts) pages_->addWidget(make_page(c, actions));
   outer->addWidget(pages_);
+  // The bar is never narrower than the widest toolbar with icons only, so
+  // the window's narrowest width always fits every context's buttons.
+  int widest = 0;
+  for (Context c : kContexts) {
+    QWidget* page = pages_->widget(static_cast<int>(index_of(c)));
+    set_page_style(page, Qt::ToolButtonIconOnly);
+    widest = std::max(widest, page->layout()->sizeHint().width());
+  }
+  const QMargins m = outer->contentsMargins();
+  setMinimumWidth(widest + m.left() + m.right());
   set_context(Context::Layout);
+}
+
+void ContextBar::set_page_style(QWidget* page, Qt::ToolButtonStyle style) {
+  const bool compact = style == Qt::ToolButtonIconOnly;
+  for (QToolButton* b : page->findChildren<QToolButton*>()) {
+    if (b->toolButtonStyle() == style) continue;
+    b->setToolButtonStyle(style);
+    // More buttons keep the style's own look.
+    if (b->defaultAction() != nullptr) b->setStyleSheet(QString::fromLatin1(compact ? kCompactStyle : kToolStyle));
+  }
+  page->layout()->invalidate();
 }
 
 QWidget* ContextBar::make_page(Context context, const ToolActions& actions) {
@@ -180,23 +201,10 @@ void ContextBar::resizeEvent(QResizeEvent* event) {
 void ContextBar::fit_page() {
   QWidget* page = pages_->currentWidget();
   if (page == nullptr || page->layout() == nullptr) return;
-  const auto buttons = page->findChildren<QToolButton*>();
-  const auto style = [&](Qt::ToolButtonStyle s) {
-    const bool compact = s == Qt::ToolButtonIconOnly;
-    for (QToolButton* b : buttons) {
-      if (b->toolButtonStyle() == s) continue;
-      b->setToolButtonStyle(s);
-      // More buttons keep the style's own look.
-      if (b->defaultAction() != nullptr) {
-        b->setStyleSheet(QString::fromLatin1(compact ? kCompactStyle : kToolStyle));
-      }
-    }
-    page->layout()->invalidate();
-  };
-  style(Qt::ToolButtonTextUnderIcon);
+  set_page_style(page, Qt::ToolButtonTextUnderIcon);
   const QMargins m = layout()->contentsMargins();
   const int room = width() - m.left() - m.right();
-  if (page->layout()->sizeHint().width() > room) style(Qt::ToolButtonIconOnly);
+  if (page->layout()->sizeHint().width() > room) set_page_style(page, Qt::ToolButtonIconOnly);
 }
 
 void ContextBar::set_tab(Context tab, const Availability& availability) {
