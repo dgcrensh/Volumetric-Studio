@@ -1,7 +1,10 @@
 #pragma once
 
 // The main window: the viewport in the middle and dockable panels around
-// it (plan, M13), and from M14 everything that authors a project:
+// it (plan, M13), and from M14 everything that authors a project. Since U1
+// phase 4 the Volumes, Features, Variables and Drawings panels are sections
+// of one Browser on the left (browser.hpp), and the Browser and the
+// Inspector fold to a strip:
 //
 //   Volumes      the volume tree (kind icons, status badges) and the
 //                connection surfaces, coloured by type; its context menu
@@ -58,7 +61,7 @@
 // edits them all as a grid (design_table_dialog.hpp); the inspector marks a
 // parameter or variable the shown configuration drives (configurations.hpp).
 //
-// Drawings (L6): the Drawings dock lists drawings, views and dimensions;
+// Drawings (L6): the Browser's Drawings section lists drawings, views and dimensions;
 // the drawing window shows one drawing's sheet (drawing_window.hpp),
 // recomputed from every evaluation; view and dimension dialogs
 // (drawing_dialogs.hpp); the Drawing tab's New and File > Export Drawing…
@@ -114,7 +117,9 @@ class QTreeWidgetItem;
 namespace vs::app {
 
 class ConnectionDialog;
+class Browser;
 class ContextBar;
+class FoldPanel;
 class ToolActions;
 class DesignTableDialog;
 class DimensionDialog;
@@ -161,6 +166,10 @@ class MainWindow : public QMainWindow {
   [[nodiscard]] QTreeWidget& volume_tree() { return *volumes_; }
   [[nodiscard]] QTreeWidget& feature_tree() { return *features_; }
   [[nodiscard]] QTreeWidget& inspector() { return *inspector_; }
+  // U1 phase 4: the left Browser (Volumes, Features, Variables, Drawings
+  // sections) and the Inspector's panel, each folding to a strip.
+  [[nodiscard]] Browser& browser() { return *browser_; }
+  [[nodiscard]] FoldPanel& inspector_panel() { return *inspector_panel_; }
   [[nodiscard]] QTreeWidget& diagnostics_list() { return *diagnostics_; }
   [[nodiscard]] QTableWidget& variables_table() { return *variables_; }
 
@@ -312,9 +321,10 @@ class MainWindow : public QMainWindow {
   DesignTableDialog* open_design_table();
 
   // --- drawings (L6, decision 0038)
-  // The Drawings dock: drawings, their views, their dimensions
+  // The Browser's Drawings section: drawings, their views, their dimensions
   // (drawing_rows(); disposable dimensions marked), with add / remove
   // buttons and a context menu. Every change is one undoable step.
+  // The Browser's dock: since U1 the drawings are one of its sections.
   [[nodiscard]] QDockWidget& drawings_dock() { return *drawings_dock_; }
   [[nodiscard]] QTreeWidget& drawings_tree() { return *drawings_; }
   // The drawing window and its sheet; it shows the open drawing, redrawn
@@ -391,6 +401,8 @@ class MainWindow : public QMainWindow {
   // U1: the tool actions and the context bar, with the configuration box
   // and Regenerate on its top row.
   void build_context_bar();
+  // Resizes `dock` when `panel` (its widget) folds or unfolds.
+  void fold_dock_with_panel(QDockWidget* dock, FoldPanel* panel);
   // Enables tools and tabs and shows the current context (cheap; called
   // after anything that changes what is open or selected).
   void refresh_tools();
@@ -535,7 +547,9 @@ class MainWindow : public QMainWindow {
     Id drawing;
   };
   [[nodiscard]] DrawingItem current_drawing_item() const;
-  QDockWidget* drawings_dock_ = nullptr;
+  QDockWidget* drawings_dock_ = nullptr;  // the Browser's dock (U1)
+  Browser* browser_ = nullptr;
+  FoldPanel* inspector_panel_ = nullptr;
   QTreeWidget* drawings_ = nullptr;
   DrawingWindow* drawing_window_ = nullptr;
   std::shared_ptr<std::atomic<std::uint64_t>> draw_requested_ = std::make_shared<std::atomic<std::uint64_t>>(0);
@@ -547,7 +561,7 @@ class MainWindow : public QMainWindow {
   // while sketching, and the left docks folded away meanwhile.
   QDockWidget* sketch_dock_ = nullptr;
   QWidget* sketch_dock_empty_ = nullptr;  // the dock's widget between sketches
-  std::vector<QDockWidget*> folded_docks_;
+  bool sketch_folded_browser_ = false;  // sketch mode folded it; unfold after
   struct SketchSession {
     Id volume;
     feature::Feature feature;

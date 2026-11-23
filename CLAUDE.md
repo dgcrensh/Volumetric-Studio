@@ -953,9 +953,14 @@ so they are registered. A new library must also be added to
   File, Edit, View and Help. Sketch mode (phase 3) is only the canvas:
   the Sketch tab drives it, its status and constraint list
   (`SketchMode::side_panel()`) sit in the Sketch dock on the right, and
-  the left docks fold while sketching. Phases 4 to 6 are in
-  `docs/plans/U1-context-toolbar.md`. Tests: `test_tool_catalog.cpp`,
-  `test_context_bar_ui.cpp`.
+  the Browser folds while sketching. Phase 4: `browser.*` is the left
+  panel, one `Browser` (a `FoldPanel`) with Volumes, Features, Variables
+  and Drawings sections that fold to a line (`MainWindow::browser()`, in
+  the dock `drawings_dock()` returns); the Browser and the Inspector
+  (`inspector_panel()`) fold to a strip and the viewport takes the room.
+  Phases 5 and 6 are in `docs/plans/U1-context-toolbar.md`. Tests:
+  `test_tool_catalog.cpp`, `test_context_bar_ui.cpp`,
+  `test_browser_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

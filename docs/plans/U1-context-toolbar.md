@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows L6 (drawings) · decision record:
 `docs/decisions/0039-context-toolbar.md`
 
-Status: phases 1 to 3 done; phases 4 to 6 to do.
+Status: phases 1 to 4 done; phases 5 and 6 to do.
 
 ## Goal
 
@@ -79,7 +79,17 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
 4. **Browser and Inspector.** `browser.*`: one left dock with foldable
    sections holding the existing trees, so `volume_tree()`,
    `feature_tree()` and `variables_table()` keep working. The Inspector
-   folds to a strip.
+   folds to a strip. **Done.** `FoldPanel` is a side panel with a header
+   (title and fold chevron) that folds to a 36 px strip of buttons (unfold,
+   then one per section, which unfolds on that section); the window
+   resizes the dock to the strip and back (`fold_dock_with_panel()`).
+   `Browser` holds Volumes, Features, Variables and Drawings (closed until
+   a drawing opens) as sections whose headers fold them to a line; open
+   sections share the height. The Volumes, Features and Variables docks
+   are gone; the Browser sits in the dock that held Drawings, so
+   `drawings_dock()` and its View menu toggle keep working, and the
+   Inspector is a `FoldPanel` on the right. Sketch mode folds the Browser
+   to its strip and puts it back as it was. Tests: `test_browser_ui.cpp`.
 5. **Problems.** `problems.*`: the status-bar count and the drawer, a pane
    under the viewport in a vertical splitter, holding the existing
    diagnostics tree (`diagnostics_list()`, `activate_diagnostic()` stay).

@@ -43,6 +43,7 @@
 
 #include "actions.hpp"
 #include "authoring.hpp"
+#include "browser.hpp"
 #include "configurations.hpp"
 #include "context_bar.hpp"
 #include "design_table_dialog.hpp"
@@ -73,6 +74,8 @@ namespace vs::app {
 namespace {
 
 constexpr int kRecentMax = 8;
+// The Browser's sections, in the order build_docks() adds them (U1).
+constexpr int kDrawingsSection = 3;
 constexpr int kRoleKind = Qt::UserRole;      // 0 volume, 1 surface, 3 feature, 4 node
 constexpr int kRoleId = Qt::UserRole + 1;    // the subject's id
 
@@ -447,7 +450,6 @@ void MainWindow::build_docks() {
   volumes_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   volumes_->setMinimumWidth(360);
   volumes_->setContextMenuPolicy(Qt::CustomContextMenu);
-  dock(tr("Volumes"), "volumes", volumes_, Qt::LeftDockWidgetArea);
   connect(volumes_, &QTreeWidget::itemSelectionChanged, this, [this] {
     if (syncing_) return;
     const auto items = volumes_->selectedItems();
@@ -472,7 +474,6 @@ void MainWindow::build_docks() {
   features_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   features_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   features_->setContextMenuPolicy(Qt::CustomContextMenu);
-  dock(tr("Features"), "features", features_, Qt::LeftDockWidgetArea);
   connect(features_, &QTreeWidget::itemSelectionChanged, this, [this] {
     if (syncing_) return;
     const auto items = features_->selectedItems();
@@ -504,7 +505,6 @@ void MainWindow::build_docks() {
   vb->addWidget(remove_var);
   vb->addStretch(1);
   vl->addLayout(vb);
-  QDockWidget* variables_dock = dock(tr("Variables"), "variables", vars, Qt::LeftDockWidgetArea);
   connect(add_var, &QPushButton::clicked, this, [this] {
     const Id volume = shown_tree();
     const auto* tree = tree_of(history_.project().document, volume);
@@ -540,7 +540,13 @@ void MainWindow::build_docks() {
   inspector_stack_->addWidget(inspector_);
   node_form_ = new NodeForm;
   inspector_stack_->addWidget(node_form_);
-  QDockWidget* inspector_dock = dock(tr("Inspector"), "inspector", inspector_stack_, Qt::RightDockWidgetArea);
+  // U1 phase 4: the Inspector folds to a strip on the right.
+  inspector_panel_ = new FoldPanel(tr("Inspector"), Qt::RightEdge);
+  inspector_panel_->setObjectName(QStringLiteral("inspector_panel"));
+  inspector_panel_->set_body(inspector_stack_);
+  QDockWidget* inspector_dock = dock(tr("Inspector"), "inspector", inspector_panel_, Qt::RightDockWidgetArea);
+  inspector_dock->setTitleBarWidget(new QWidget);  // the panel has its own header
+  fold_dock_with_panel(inspector_dock, inspector_panel_);
   // U1: the open sketch's status and constraints, tabbed with the inspector
   // and shown only while sketching (sketch mode hands over its panel).
   sketch_dock_empty_ = new QWidget;
@@ -594,7 +600,7 @@ void MainWindow::build_docks() {
   });
   connect(node_editor_, &NodeEditor::closeRequested, this, &MainWindow::leave_graph);
 
-  // L6: drawings, tabbed with the variables; the drawing window beside.
+  // L6: drawings (a Browser section since U1); the drawing window beside.
   auto* dw = new QWidget;
   auto* dl = new QVBoxLayout(dw);
   dl->setContentsMargins(0, 0, 0, 0);
@@ -616,9 +622,15 @@ void MainWindow::build_docks() {
   db->addWidget(delete_button);
   db->addStretch(1);
   dl->addLayout(db);
-  drawings_dock_ = dock(tr("Drawings"), "drawings", dw, Qt::LeftDockWidgetArea);
-  tabifyDockWidget(variables_dock, drawings_dock_);
-  variables_dock->raise();
+  // U1 phase 4: one Browser on the left, its sections the trees above.
+  browser_ = new Browser;
+  browser_->add_section(tr("Volumes"), Icon::Volume, volumes_);
+  browser_->add_section(tr("Features"), Icon::Model, features_);
+  browser_->add_section(tr("Variables"), Icon::Variables, vars);
+  browser_->add_section(tr("Drawings"), Icon::Drawing, dw, false);
+  drawings_dock_ = dock(tr("Browser"), "browser", browser_, Qt::LeftDockWidgetArea);
+  drawings_dock_->setTitleBarWidget(new QWidget);  // the Browser has its own header
+  fold_dock_with_panel(drawings_dock_, browser_);
   connect(new_drawing_button, &QPushButton::clicked, this, [this] { new_drawing(); });
   connect(add_button, &QPushButton::clicked, this, [this] {
     const DrawingItem item = current_drawing_item();
@@ -1755,6 +1767,7 @@ bool MainWindow::open_drawing(const Id& drawing) {
   const model::Drawing* d = history_.project().document.find_drawing(drawing);
   if (d == nullptr) return false;
   drawing_window_->set_drawing(drawing, qstr(d->name));
+  browser_->set_section_open(kDrawingsSection, true);  // its views and dimensions, listed
   drawing_window_->show();
   drawing_window_->raise();
   refresh_drawings();
@@ -2131,19 +2144,14 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
   auto editor = std::make_unique<SketchEditor>(sk, session_->settings(), lookup);
   suspend_window_shortcuts(true);
   sketch_mode_ = new SketchMode(std::move(editor), title);
-  // U1: the panel goes to the right-hand dock; the left docks fold away
-  // until Finish or Cancel, so the canvas gets the room. Folded
+  // U1: the panel goes to the right-hand dock; the Browser folds to its
+  // strip until Finish or Cancel, so the canvas gets the room. Folded
   // before the canvas shows, or its minimum width would widen the window.
   sketch_dock_->setWidget(sketch_mode_->side_panel());
   sketch_dock_->show();
   sketch_dock_->raise();
-  folded_docks_.clear();
-  for (QDockWidget* d : findChildren<QDockWidget*>()) {
-    if (d->isVisible() && dockWidgetArea(d) == Qt::LeftDockWidgetArea) {
-      folded_docks_.push_back(d);
-      d->hide();
-    }
-  }
+  sketch_folded_browser_ = !browser_->folded();
+  browser_->set_folded(true);
   central_->addWidget(sketch_mode_);
   central_->setCurrentWidget(sketch_mode_);
   sketch_session_ = SketchSession{volume, std::move(f), is_new};
@@ -2176,8 +2184,8 @@ void MainWindow::finish_sketch(bool accept) {
   central_->removeWidget(sketch_mode_);
   sketch_dock_->hide();
   sketch_dock_->setWidget(sketch_dock_empty_);  // the panel goes with sketch mode
-  for (QDockWidget* d : folded_docks_) d->show();
-  folded_docks_.clear();
+  if (sketch_folded_browser_) browser_->set_folded(false);
+  sketch_folded_browser_ = false;
   sketch_mode_->deleteLater();
   sketch_mode_ = nullptr;
   suspend_window_shortcuts(false);
@@ -2623,6 +2631,21 @@ void MainWindow::report(const core::Diagnostics& diagnostics, const QString& wha
   } else if (!what.isEmpty()) {
     status_label_->setText(what);
   }
+}
+
+// --- foldable panels (U1 phase 4) ------------------------------------------------------------------
+
+void MainWindow::fold_dock_with_panel(QDockWidget* dock, FoldPanel* panel) {
+  // Folding shrinks the dock to the strip; unfolding gives back its width.
+  connect(panel, &FoldPanel::foldedChanged, this, [this, dock, panel](bool folded) {
+    if (folded) {
+      panel->setProperty("unfolded_width", dock->width());
+      resizeDocks({dock}, {FoldPanel::strip_width()}, Qt::Horizontal);
+    } else {
+      const int width = panel->property("unfolded_width").toInt();
+      if (width > FoldPanel::strip_width()) resizeDocks({dock}, {width}, Qt::Horizontal);
+    }
+  });
 }
 
 // --- the context bar (U1, decision 0039) -----------------------------------------------------------

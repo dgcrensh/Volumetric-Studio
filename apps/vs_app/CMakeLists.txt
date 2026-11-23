@@ -105,6 +105,8 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 add_library(vs_app_ui STATIC
   src/actions.cpp
   src/actions.hpp
+  src/browser.cpp
+  src/browser.hpp
   src/context_bar.cpp
   src/context_bar.hpp
   src/design_table_dialog.cpp
@@ -160,6 +162,7 @@ if(VS_BUILD_TESTS)
     tests/wait.hpp
     tests/test_authoring_ui.cpp
     tests/test_configurations_ui.cpp
+    tests/test_browser_ui.cpp
     tests/test_context_bar_ui.cpp
     tests/test_dialogs_ui.cpp
     tests/test_drawings_ui.cpp
