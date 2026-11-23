@@ -3,7 +3,7 @@
 Nov 23, 2026 · follows L6 (drawings) · decision record:
 `docs/decisions/0039-context-toolbar.md`
 
-Status: phases 1 to 4 done; phases 5 and 6 to do.
+Status: phases 1 to 5 done; phase 6 to do.
 
 ## Goal
 
@@ -96,7 +96,18 @@ viewport and, while sketching, `SketchMode`. Two facts shape the plan:
    It opens itself only after something you started fails (Validate, a
    refused edit, an export check), never for a background evaluation.
    Rows in the Browser show their counts. The Graph dock shows in the
-   Graph context only.
+   Graph context only. **Done.** `ProblemsButton` is the status bar's
+   count ("No problems", or "2 errors, 1 warning" with an icon) and
+   toggles the drawer, as does View > Problems; `ProblemsDrawer` is a
+   header (where the problems came from, a close chevron) over the list,
+   under `central_` in a vertical splitter (`MainWindow::problems_drawer()`,
+   `set_problems_open()`), remembering its height. `show_diagnostics(...,
+   started)` opens it for opens, refused edits, Validate, exports,
+   imports and bakes that report anything. Volume rows already showed
+   their counts; the Browser's Volumes and Features headers now count
+   the rows with problems (`Browser::set_section_badge()`). The Graph
+   dock can't be closed by hand and follows the context. Tests:
+   `test_problems_ui.cpp`.
 6. **Drawing tab and finish.** `SheetView` moves into the central stack
    under the Drawing tab (the separate drawing window goes); one
    stylesheet with the mockup's colours; `QSettings` for panel widths,

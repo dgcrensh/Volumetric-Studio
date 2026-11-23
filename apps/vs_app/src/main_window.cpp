@@ -25,6 +25,7 @@
 #include <QRadioButton>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTableWidget>
@@ -54,6 +55,7 @@
 #include "model_dialogs.hpp"
 #include "node_editor.hpp"
 #include "node_preview.hpp"
+#include "problems.hpp"
 #include "reference_choices.hpp"
 #include "sketch_mode.hpp"
 #include "viewport.hpp"
@@ -75,6 +77,8 @@ namespace {
 
 constexpr int kRecentMax = 8;
 // The Browser's sections, in the order build_docks() adds them (U1).
+constexpr int kVolumesSection = 0;
+constexpr int kFeaturesSection = 1;
 constexpr int kDrawingsSection = 3;
 constexpr int kRoleKind = Qt::UserRole;      // 0 volume, 1 surface, 3 feature, 4 node
 constexpr int kRoleId = Qt::UserRole + 1;    // the subject's id
@@ -218,7 +222,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   viewport_ = new Viewport;
   central_ = new QStackedWidget;
   central_->addWidget(viewport_);
-  setCentralWidget(central_);
+  // U1 phase 5: the Problems drawer opens under the viewport, pushing it up.
+  split_ = new QSplitter(Qt::Vertical);
+  split_->setObjectName(QStringLiteral("central_split"));
+  split_->setChildrenCollapsible(false);
+  split_->addWidget(central_);
+  setCentralWidget(split_);
   build_docks();
   build_menus();
 
@@ -254,6 +263,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   statusBar()->addPermanentWidget(progress_);
   statusBar()->addPermanentWidget(cancel_button_);
   statusBar()->addPermanentWidget(frame_label_);
+  problems_button_ = new ProblemsButton;
+  statusBar()->addPermanentWidget(problems_button_);
+  connect(problems_button_, &QToolButton::clicked, this, [this](bool open) { set_problems_open(open); });
 
   state_timer_ = new QTimer(this);
   state_timer_->setInterval(100);
@@ -411,6 +423,10 @@ void MainWindow::build_menus() {
   }
   view->addSeparator();
   for (QDockWidget* dock : findChildren<QDockWidget*>()) view->addAction(dock->toggleViewAction());
+  problems_action_ = view->addAction(tr("&Problems"));
+  problems_action_->setObjectName(QStringLiteral("view_problems"));
+  problems_action_->setCheckable(true);
+  connect(problems_action_, &QAction::triggered, this, [this](bool open) { set_problems_open(open); });
 
   QMenu* help = menuBar()->addMenu(tr("&Help"));
   help->addAction(tr("&About"), this, [this] {
@@ -572,17 +588,24 @@ void MainWindow::build_docks() {
   diagnostics_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
   diagnostics_->header()->setSectionResizeMode(2, QHeaderView::Stretch);
   diagnostics_->header()->setStretchLastSection(false);
-  QDockWidget* diagnostics_dock = dock(tr("Diagnostics"), "diagnostics", diagnostics_, Qt::BottomDockWidgetArea);
+  // U1 phase 5: the list lives in the Problems drawer under the viewport.
+  problems_drawer_ = new ProblemsDrawer(diagnostics_);
+  split_->addWidget(problems_drawer_);
+  split_->setStretchFactor(0, 1);
+  split_->setStretchFactor(1, 0);
+  problems_drawer_->hide();
+  connect(problems_drawer_, &ProblemsDrawer::closeRequested, this, [this] { set_problems_open(false); });
   connect(diagnostics_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int) {
     activate_diagnostic(diagnostics_->indexOfTopLevelItem(item));
   });
 
-  // The node editor (M15), tabbed with the diagnostics.
+  // The node editor (M15), under the viewport in the Graph context only.
   node_editor_ = new NodeEditor;
   node_editor_->set_apply([this](const Command& c) { return apply(c); });
   graph_dock_ = dock(tr("Graph"), "graph", node_editor_, Qt::BottomDockWidgetArea);
-  tabifyDockWidget(diagnostics_dock, graph_dock_);
-  diagnostics_dock->raise();
+  // Shown and hidden with the Graph context (refresh_tools()).
+  graph_dock_->setFeatures(graph_dock_->features() & ~QDockWidget::DockWidgetClosable);
+  graph_dock_->toggleViewAction()->setVisible(false);
   connect(node_editor_, &NodeEditor::nodeSelected, this, [this](core::Id volume, core::Id node) {
     if (syncing_) return;
     select(node.is_null() ? Selection::of_volume(volume) : Selection::of_node(node, volume));
@@ -631,14 +654,12 @@ void MainWindow::build_docks() {
   drawings_dock_ = dock(tr("Browser"), "browser", browser_, Qt::LeftDockWidgetArea);
   drawings_dock_->setTitleBarWidget(new QWidget);  // the Browser has its own header
   fold_dock_with_panel(drawings_dock_, browser_);
-  // The Browser and the Inspector run the window's full height; the bottom
-  // docks sit between them, under the viewport, and start short. The Graph
-  // dock shows when a graph is edited (edit_graph()).
+  // The Browser and the Inspector run the window's full height; the Graph
+  // dock sits between them, under the viewport, in the Graph context only.
   setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
   graph_dock_->hide();
   resizeDocks({drawings_dock_, inspector_dock}, {300, 300}, Qt::Horizontal);
-  resizeDocks({diagnostics_dock}, {140}, Qt::Vertical);
   connect(new_drawing_button, &QPushButton::clicked, this, [this] { new_drawing(); });
   connect(add_button, &QPushButton::clicked, this, [this] {
     const DrawingItem item = current_drawing_item();
@@ -680,7 +701,7 @@ void MainWindow::build_docks() {
 bool MainWindow::open_project(const std::filesystem::path& path) {
   const core::Diagnostics d = session_->open(path);
   if (d.has_errors()) {
-    show_diagnostics(d, tr("Open"));
+    show_diagnostics(d, tr("Open"), true);
     status_label_->setText(tr("Can't open %1").arg(qpath(path)));
     return false;
   }
@@ -740,7 +761,7 @@ void MainWindow::refresh_graph() {
 core::Diagnostics MainWindow::apply(const Command& command) {
   const core::Diagnostics d = history_.apply(command);
   if (d.has_errors()) {
-    show_diagnostics(d, tr("Refused edit"));
+    show_diagnostics(d, tr("Refused edit"), true);
     status_label_->setText(tr("Can't %1: %2").arg(qstr(command.label).toLower(), qstr(first_error(d))));
     // A preview may be on screen: put the project back.
     if (previewing_) session_->update_project(history_.current());
@@ -958,6 +979,15 @@ void MainWindow::refresh_volume_tree() {
     }
     volumes_->expandAll();
   }
+  // U1 phase 5: the section header counts the volumes with problems.
+  std::size_t with_problems = 0;
+  if (s) {
+    for (const VolumeRow& r : volume_rows(s->evaluation, last_states_)) with_problems += r.errors + r.warnings > 0 ? 1 : 0;
+  }
+  browser_->set_section_badge(kVolumesSection, with_problems > 0 ? QString::number(with_problems) : QString(),
+                              with_problems > 0 ? tr("%n volume(s) with errors or warnings", nullptr,
+                                                     static_cast<int>(with_problems))
+                                                : QString());
   syncing_ = false;
   sync_tree_selection();
 }
@@ -978,6 +1008,7 @@ void MainWindow::refresh_states() {
 
 void MainWindow::refresh_features() {
   syncing_ = true;
+  int failed = 0;
   features_->clear();
   const SnapshotPtr s = session_->latest();
   if (s) {
@@ -999,8 +1030,11 @@ void MainWindow::refresh_features() {
       item->setData(0, kRoleId, qstr(row.selection.id.to_string()));
       item->setData(1, kRoleId, qstr(row.selection.volume.to_string()));
       if (row.selection == selection_) item->setSelected(true);
+      failed += row.status == "failed" || row.status == "infeasible" ? 1 : 0;
     }
   }
+  browser_->set_section_badge(kFeaturesSection, failed > 0 ? QString::number(failed) : QString(),
+                              failed > 0 ? tr("%n failed feature(s)", nullptr, failed) : QString());
   syncing_ = false;
 }
 
@@ -1108,7 +1142,7 @@ void MainWindow::refresh_inspector() {
   inspector_->expandAll();
 }
 
-void MainWindow::show_diagnostics(const core::Diagnostics& diagnostics, const QString& source) {
+void MainWindow::show_diagnostics(const core::Diagnostics& diagnostics, const QString& source, bool started) {
   shown_diagnostics_ = diagnostics;
   diagnostics_->clear();
   for (const core::Diagnostic& d : diagnostics) {
@@ -1125,10 +1159,31 @@ void MainWindow::show_diagnostics(const core::Diagnostics& diagnostics, const QS
   }
   const auto errors = diagnostics.count(core::Severity::Error);
   const auto warnings = diagnostics.count(core::Severity::Warning);
-  if (auto* dock = qobject_cast<QDockWidget*>(diagnostics_->parentWidget())) {
-    dock->setWindowTitle(tr("Diagnostics — %1: %2 errors, %3 warnings").arg(source).arg(errors).arg(warnings));
-  }
+  problems_drawer_->set_summary(source, errors, warnings);
+  problems_button_->set_counts(errors, warnings);
+  // Only something the person started opens the drawer, and only when it
+  // has something to say; a background evaluation updates the count.
+  if (started && errors + warnings > 0) set_problems_open(true);
 }
+
+void MainWindow::set_problems_open(bool open) {
+  const QSignalBlocker block(problems_button_);
+  problems_button_->setChecked(open);
+  if (problems_action_ != nullptr) problems_action_->setChecked(open);
+  if (open == problems_drawer_->isVisible()) return;
+  if (!open) {
+    problems_drawer_->setProperty("open_height", problems_drawer_->height());
+    problems_drawer_->hide();
+    return;
+  }
+  problems_drawer_->show();
+  const int total = split_->height();
+  const int remembered = problems_drawer_->property("open_height").toInt();
+  const int drawer = std::clamp(remembered > 0 ? remembered : total / 4, 120, std::max(120, total / 2));
+  split_->setSizes({std::max(0, total - drawer), drawer});
+}
+
+bool MainWindow::problems_open() const { return problems_drawer_->isVisible(); }
 
 void MainWindow::activate_diagnostic(int row) {
   const SnapshotPtr s = session_->latest();
@@ -2075,7 +2130,7 @@ core::Diagnostics MainWindow::bake(const Id& volume) {
                                   fmt::format("Wait for '{}' to finish generating before baking it.", v->name)));
   }
   if (d.has_errors()) {
-    show_diagnostics(d, tr("Bake"));
+    show_diagnostics(d, tr("Bake"), true);
     status_label_->setText(qstr(d.items().front().message));
     return d;
   }
@@ -2468,7 +2523,7 @@ core::Diagnostics MainWindow::import_file(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     d.add(core::Diagnostic::error("app.import.io", "Can't read " + sstr(qpath(path))));
-    show_diagnostics(d, tr("Import"));
+    show_diagnostics(d, tr("Import"), true);
     return d;
   }
   const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -2622,7 +2677,7 @@ void MainWindow::validate(std::function<void(const ShipCheck&)> done) {
       [this, s, check, done, interactive] {
         last_check_ = *check;
         last_check_snapshot_ = s;
-        show_diagnostics(check->diagnostics, tr("Validation"));
+        show_diagnostics(check->diagnostics, tr("Validation"), true);
         status_label_->setText(qstr(summary(*check)));
         if (done) {
           done(*check);
@@ -2634,7 +2689,7 @@ void MainWindow::validate(std::function<void(const ShipCheck&)> done) {
 
 void MainWindow::report(const core::Diagnostics& diagnostics, const QString& what) {
   if (diagnostics.has_errors()) {
-    show_diagnostics(diagnostics, tr("Export"));
+    show_diagnostics(diagnostics, tr("Export"), true);
     status_label_->setText(tr("Failed: %1").arg(qstr(diagnostics.items().front().message)));
   } else if (!what.isEmpty()) {
     status_label_->setText(what);
@@ -2746,6 +2801,10 @@ void MainWindow::refresh_tools() {
     tool_actions_->action(id)->setChecked(sketch_mode_ != nullptr && sketch_mode_->editor().tool() == t);
   }
   context_bar_->set_context(now);
+  // The node editor shows in the Graph context only.
+  if (graph_dock_ != nullptr && graph_dock_->isHidden() == (now == Context::Graph)) {
+    graph_dock_->setVisible(now == Context::Graph);
+  }
   for (Context c : kContexts) context_bar_->set_tab(c, tab_availability(c, doc, state));
 
   // What the context works on, beside the tabs (the old "Editing in

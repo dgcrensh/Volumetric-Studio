@@ -107,6 +107,7 @@ class QLabel;
 class QMenu;
 class QProgressBar;
 class QPushButton;
+class QSplitter;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
@@ -118,6 +119,8 @@ namespace vs::app {
 
 class ConnectionDialog;
 class Browser;
+class ProblemsButton;
+class ProblemsDrawer;
 class ContextBar;
 class FoldPanel;
 class ToolActions;
@@ -171,6 +174,12 @@ class MainWindow : public QMainWindow {
   [[nodiscard]] Browser& browser() { return *browser_; }
   [[nodiscard]] FoldPanel& inspector_panel() { return *inspector_panel_; }
   [[nodiscard]] QTreeWidget& diagnostics_list() { return *diagnostics_; }
+  // U1 phase 5: the Problems drawer under the viewport (holding
+  // diagnostics_list()) and its count in the status bar.
+  [[nodiscard]] ProblemsDrawer& problems_drawer() { return *problems_drawer_; }
+  [[nodiscard]] ProblemsButton& problems_button() { return *problems_button_; }
+  void set_problems_open(bool open);
+  [[nodiscard]] bool problems_open() const;
   [[nodiscard]] QTableWidget& variables_table() { return *variables_; }
 
   // Exports what is shown, on the worker thread; `done` gets the result
@@ -265,6 +274,8 @@ class MainWindow : public QMainWindow {
   void leave_graph();
   [[nodiscard]] const Id& graph_volume() const { return graph_volume_; }
   [[nodiscard]] NodeEditor& node_editor() { return *node_editor_; }
+  // The dock holding the node editor: shown in the Graph context only (U1).
+  [[nodiscard]] QDockWidget& graph_dock() { return *graph_dock_; }
   [[nodiscard]] NodeForm& node_form() { return *node_form_; }
   // The template library for `volume` (a placeholder or procedural one):
   // OK attaches the chosen template's graph, previewed live meanwhile.
@@ -419,7 +430,10 @@ class MainWindow : public QMainWindow {
   void refresh_variables();
   void refresh_inspector();
   void refresh_edit_actions();
-  void show_diagnostics(const core::Diagnostics& diagnostics, const QString& source);
+  // Fills the Problems list. `started`: the person started what produced
+  // them (an open, an edit, Validate, an export...), so the drawer opens
+  // when there is anything to show.
+  void show_diagnostics(const core::Diagnostics& diagnostics, const QString& source, bool started = false);
   void sync_tree_selection();
   void update_title();
   void add_recent(const std::filesystem::path& path);
@@ -458,6 +472,10 @@ class MainWindow : public QMainWindow {
   History history_;
   Viewport* viewport_ = nullptr;
   QStackedWidget* central_ = nullptr;
+  QSplitter* split_ = nullptr;  // central_ over the Problems drawer
+  ProblemsDrawer* problems_drawer_ = nullptr;
+  ProblemsButton* problems_button_ = nullptr;
+  QAction* problems_action_ = nullptr;  // View > Problems
   QTreeWidget* volumes_ = nullptr;
   QTreeWidget* features_ = nullptr;
   QTableWidget* variables_ = nullptr;

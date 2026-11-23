@@ -958,9 +958,14 @@ so they are registered. A new library must also be added to
   and Drawings sections that fold to a line (`MainWindow::browser()`, in
   the dock `drawings_dock()` returns); the Browser and the Inspector
   (`inspector_panel()`) fold to a strip and the viewport takes the room.
-  Phases 5 and 6 are in `docs/plans/U1-context-toolbar.md`. Tests:
-  `test_tool_catalog.cpp`, `test_context_bar_ui.cpp`,
-  `test_browser_ui.cpp`.
+  Phase 5: `problems.*` is the status bar's count (`problems_button()`)
+  and the Problems drawer under the viewport (`problems_drawer()`, in a
+  splitter, holding `diagnostics_list()`); it opens itself only when
+  something the person started reports problems (`show_diagnostics(...,
+  started)`), never for a background evaluation; the Graph dock follows
+  the Graph context. Phase 6 is in `docs/plans/U1-context-toolbar.md`.
+  Tests: `test_tool_catalog.cpp`, `test_context_bar_ui.cpp`,
+  `test_browser_ui.cpp`, `test_problems_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

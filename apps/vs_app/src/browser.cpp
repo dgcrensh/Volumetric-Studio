@@ -134,7 +134,7 @@ int Browser::add_section(const QString& title, Icon icon, QWidget* content, bool
   column_layout_->addWidget(header);
   column_layout_->addWidget(content, open ? 1 : 0);
   content->setVisible(open);
-  sections_.push_back({header, content});
+  sections_.push_back({header, content, title});
   connect(header, &QToolButton::toggled, this, [this, index](bool on) { set_section_open(index, on); });
   add_strip_button(icon, title);
   relayout();
@@ -154,6 +154,13 @@ bool Browser::section_open(int section) const {
 }
 
 QToolButton& Browser::section_header(int section) const { return *sections_.at(static_cast<std::size_t>(section)).header; }
+
+void Browser::set_section_badge(int section, const QString& badge, const QString& tooltip) {
+  if (section < 0 || section >= section_count()) return;
+  const Section& s = sections_[static_cast<std::size_t>(section)];
+  s.header->setText(badge.isEmpty() ? s.title : s.title + QStringLiteral("  (") + badge + QStringLiteral(")"));
+  s.header->setToolTip(tooltip);
+}
 
 void Browser::reveal(int section) {
   set_folded(false);

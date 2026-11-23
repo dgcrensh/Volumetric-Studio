@@ -79,6 +79,9 @@ class Browser : public FoldPanel {
   void set_section_open(int section, bool open);
   [[nodiscard]] bool section_open(int section) const;
   [[nodiscard]] QToolButton& section_header(int section) const;
+  // A count after a section's title (U1 phase 5: how many of its rows have
+  // problems); empty clears it. `tooltip` says what it counts.
+  void set_section_badge(int section, const QString& badge, const QString& tooltip = {});
   // Opens a section and unfolds the Browser if needed.
   void reveal(int section);
 
@@ -86,6 +89,7 @@ class Browser : public FoldPanel {
   struct Section {
     QToolButton* header = nullptr;
     QWidget* content = nullptr;
+    QString title;
   };
   void relayout();
 

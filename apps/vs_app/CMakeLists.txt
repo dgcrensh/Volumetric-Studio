@@ -107,6 +107,8 @@ add_library(vs_app_ui STATIC
   src/actions.hpp
   src/browser.cpp
   src/browser.hpp
+  src/problems.cpp
+  src/problems.hpp
   src/context_bar.cpp
   src/context_bar.hpp
   src/design_table_dialog.cpp
@@ -170,6 +172,7 @@ if(VS_BUILD_TESTS)
     tests/test_nested.cpp
     tests/test_generated.cpp
     tests/test_node_editor.cpp
+    tests/test_problems_ui.cpp
     tests/test_session.cpp
     tests/test_viewport_ui.cpp
     tests/test_ship_ui.cpp
