@@ -324,7 +324,7 @@ TEST_CASE("Sharp corners between a line and an arc extend to meet", "[offset]") 
   }
 }
 
-TEST_CASE("Bézier offsets stay within the minimum feature size", "[offset]") {
+TEST_CASE("Bezier offsets stay within the minimum feature size", "[offset]") {
   Sketch s;
   const Id bz = s.add_bezier(dvec2{0, 0}, dvec2{10, 30}, dvec2{40, -20}, dvec2{50, 10});
   const BezierGeometry src = *bezier_geometry(s, bz);
@@ -356,7 +356,7 @@ TEST_CASE("Bézier offsets stay within the minimum feature size", "[offset]") {
   }
 }
 
-TEST_CASE("A closed loop of Béziers offsets to a closed loop", "[offset]") {
+TEST_CASE("A closed loop of Beziers offsets to a closed loop", "[offset]") {
   // A circle of radius 10 as four Béziers.
   constexpr double k = 0.5522847498 * 10;
   Sketch s;
@@ -393,7 +393,7 @@ TEST_CASE("A closed loop of Béziers offsets to a closed loop", "[offset]") {
   CHECK(folds.error().code == "sketch.offset.collapsed");
 }
 
-TEST_CASE("Corners beside a Bézier are rounded", "[offset]") {
+TEST_CASE("Corners beside a Bezier are rounded", "[offset]") {
   // A line then a Bézier leaving at a right angle.
   Sketch s;
   const Id p0 = s.add_point({0, 0}), p1 = s.add_point({10, 0});
