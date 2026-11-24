@@ -208,6 +208,7 @@ class NodeForm : public QWidget {
   Id node_;
   proc::Graph shown_;  // the graph the form was built from
   std::size_t surfaces_ = 0;
+  std::size_t boundary_faces_ = 0;  // V1
   QFormLayout* form_ = nullptr;
   QLabel* header_ = nullptr;
   std::map<std::string, QWidget*> fields_;

@@ -1680,4 +1680,8 @@ RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
   return out;
 }
 
+bool on_named_face(const NamedFace& named, const Face& face, double tolerance) {
+  return on_named(named, face, tolerance);
+}
+
 }  // namespace vs::feature

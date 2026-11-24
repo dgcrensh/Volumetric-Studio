@@ -18,6 +18,8 @@
 //                   scattered on a connection surface (`spacing` apart)
 //                   and moved `depth` into the volume along its normal,
 //                   in `layers` layers `step` apart (decision 0042)
+//   voronoi_skin    the same, seeded on the boundary's skin, or on the named
+//                   boundary face `boundary_face` (V1)
 //
 // make_template() returns a graph ready for a procedural volume: node ids
 // derive from the template's name (Id::derive), so the same template with
@@ -51,6 +53,7 @@ const std::vector<TemplateInfo>& templates();
 
 struct TemplateOptions {
   std::optional<core::Id> surface;  // the connection surface it reads, if any
+  std::string boundary_face;        // voronoi_skin: a named boundary face (empty: all of it)
   double cell_size = 0.5;           // the output's grid, mm
 };
 

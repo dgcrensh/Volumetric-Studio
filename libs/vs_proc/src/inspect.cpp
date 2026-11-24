@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "vs/proc/check.hpp"
 #include "vs/proc/mesher.hpp"
 
 namespace vs::proc {
@@ -55,7 +56,8 @@ NodeInspection inspect_volume_node(const model::Document& document,
     out.diagnostics.add(graph.error());
     return out;
   }
-  auto inputs = gather_inputs(document, layout, index, settings);
+  auto inputs = gather_inputs(document, layout, index, settings,
+                              {boundary_faces_read(*graph, registry)});
   if (!inputs) {
     out.diagnostics.add(inputs.error());
     return out;

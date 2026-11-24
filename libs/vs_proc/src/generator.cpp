@@ -110,7 +110,8 @@ eval::ContentsGenerator::Job ProceduralGenerator::prepare(
     }
   }
 
-  auto gathered = gather_inputs(document, layout, index, settings);
+  auto gathered = gather_inputs(document, layout, index, settings,
+                                {boundary_faces_read(*graph, registry_)});
   if (!gathered) {
     Diagnostics ds;
     ds.add(gathered.error());
@@ -219,7 +220,8 @@ eval::LayoutOutcome ProceduralGenerator::generate(const model::Document& documen
     for (auto d : checked) out.diagnostics.add(with_self(std::move(d)));
     return out;
   }
-  auto inputs = gather_inputs(document, layout, index, settings);
+  auto inputs = gather_inputs(document, layout, index, settings,
+                              {boundary_faces_read(graph, registry_)});
   if (!inputs) {
     out.diagnostics.add(with_self(inputs.error()));
     return out;

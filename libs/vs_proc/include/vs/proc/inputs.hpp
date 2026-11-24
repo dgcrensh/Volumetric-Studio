@@ -18,6 +18,9 @@
 //                                closed mesh (mesh.* / kernel.* in the message)
 //   proc.input.surface           a joining surface's patch failed or couldn't
 //                                be tessellated (the surface second)
+//   proc.reference.boundary_face (V1) a face asked for isn't one of the
+//                                boundary's named faces, or no face of the
+//                                built boundary lies on it
 
 #include <cstddef>
 #include <cstdint>
@@ -65,6 +68,11 @@ struct GraphInputs {
   std::shared_ptr<const TriangleDistance> boundary;  // closed
   dbox3 bounds;                                      // the boundary's exact box
   std::vector<ConnectionInput> connections;          // document order
+  // V1: the boundary's named faces that GatherOptions asked for, by name
+  // ("<layout feature id>:<name>", or "-x".."+z" for a box), tessellated
+  // (open, wound counter-clockwise seen from outside the boundary). Only
+  // these: a graph names the faces it reads (boundary_faces_read()).
+  std::map<std::string, std::shared_ptr<const TriangleDistance>, std::less<>> boundary_faces;
   std::map<std::string, double, std::less<>> parameters;  // the volume's, by name
   std::uint64_t seed = 0;
   core::ProductSettings settings;
@@ -76,9 +84,16 @@ struct GraphInputs {
 // tessellation's deflection is a small part of a typical grid cell.
 inline constexpr double kInputDeflection = 0.01;  // mm
 
+struct GatherOptions {
+  // V1: named boundary faces to tessellate into GraphInputs::boundary_faces.
+  // Each costs a tessellation of the boundary, so only those a graph reads.
+  std::vector<std::string> boundary_faces;
+};
+
 // The inputs of `document.volumes[index]` from `layout`.
 core::Result<GraphInputs> gather_inputs(const model::Document& document,
                                         const model::DocumentBuild& layout, std::size_t index,
-                                        const core::ProductSettings& settings);
+                                        const core::ProductSettings& settings,
+                                        const GatherOptions& options = {});
 
 }  // namespace vs::proc

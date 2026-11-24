@@ -7,6 +7,8 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -76,7 +78,8 @@ void check_settings(const Graph& graph, const Node& node, const NodeType& type, 
       }
       // L4: a template's name (checked against the composite by
       // check_volume_graph()), or a template parameter's (empty: none).
-      case PropertyKind::Template: ok = std::holds_alternative<std::string>(value); break;
+      case PropertyKind::Template:
+      case PropertyKind::BoundaryFace: ok = std::holds_alternative<std::string>(value); break;
       case PropertyKind::TemplateParameter: {
         const auto* s = std::get_if<std::string>(&value);
         ok = s != nullptr && (s->empty() || feature::is_valid_name(*s));
@@ -149,10 +152,47 @@ std::vector<std::size_t> find_loop(const Graph& graph) {
   return loop;
 }
 
+// V1: whether `name` could be one of `volume`'s boundary faces, as far as
+// the document says without building it: a box's six sides, or a face of
+// one of the boundary's features. gather_inputs() finds the face itself.
+bool could_name_boundary_face(const model::Document& document, const Id& volume,
+                              const std::string& name) {
+  const model::Volume* v = document.find_volume(volume);
+  if (v == nullptr) return false;
+  if (std::holds_alternative<model::BoxBoundary>(v->boundary)) {
+    for (const char* side : {"-x", "+x", "-y", "+y", "-z", "+z"}) {
+      if (name == side) return true;
+    }
+    return false;
+  }
+  const auto& features = std::get<model::FeatureBoundary>(v->boundary).features;
+  const auto colon = name.find(':');
+  if (colon == std::string::npos || colon + 1 == name.size()) return false;
+  const auto id = Id::parse(name.substr(0, colon));
+  return id && std::find(features.begin(), features.end(), *id) != features.end();
+}
+
 }  // namespace
 
 bool is_output_node(std::string_view type) {
   return type == "output" || type == "output.children";
+}
+
+std::vector<std::string> boundary_faces_read(const Graph& graph, const NodeRegistry& registry) {
+  std::vector<std::string> out;
+  for (const auto& node : graph.nodes) {
+    const NodeType* type = registry.find(node.type);
+    if (type == nullptr) continue;
+    for (const auto& prop : type->properties) {
+      if (prop.kind != PropertyKind::BoundaryFace) continue;
+      const Setting* s = node.find_setting(prop.name);
+      const auto* name = s != nullptr ? std::get_if<std::string>(s) : nullptr;
+      if (name == nullptr || name->empty()) continue;
+      if (std::find(out.begin(), out.end(), *name) == out.end()) out.push_back(*name);
+    }
+  }
+  std::sort(out.begin(), out.end());
+  return out;
 }
 
 bool is_unfinished(std::string_view code) {
@@ -386,6 +426,19 @@ Diagnostics check_volume_graph(const Graph& graph, const model::Document& docume
               "proc.reference.template",
               fmt::format("'{}' fills children from template '{}', which this composite doesn't "
                           "have",
+                          node_subject(node).label, *name),
+              {node_subject(node)}));
+        }
+        continue;
+      }
+      if (prop.kind == PropertyKind::BoundaryFace) {
+        const Setting* s = node.find_setting(prop.name);
+        const auto* name = s != nullptr ? std::get_if<std::string>(s) : nullptr;
+        if (name == nullptr || name->empty()) continue;  // the whole boundary
+        if (!could_name_boundary_face(document, volume, *name)) {
+          out.add(Diagnostic::error(
+              "proc.reference.boundary_face",
+              fmt::format("'{}' reads boundary face '{}', which this volume's boundary can't have",
                           node_subject(node).label, *name),
               {node_subject(node)}));
         }

@@ -232,7 +232,7 @@ if(VS_BUILD_TESTS)
   # M12: templates, outputs, inspection, bake and unbake, the gyroid bench.
   add_test(NAME "vstudio-cli: templates lists the starter templates" COMMAND vstudio-cli templates)
   set_tests_properties("vstudio-cli: templates lists the starter templates" PROPERTIES
-    PASS_REGULAR_EXPRESSION "gyroid_infill.*graded_lattice.*bolt_bosses.*voronoi_walls")
+    PASS_REGULAR_EXPRESSION "gyroid_infill.*graded_lattice.*bolt_bosses.*voronoi_walls.*voronoi_skin")
   add_test(NAME "vstudio-cli: rebuild generates bolt bosses and publishes their count"
     COMMAND vstudio-cli rebuild "${proc_data}/bolt_bosses.vsproj" --threads 4 --weld)
   set_tests_properties("vstudio-cli: rebuild generates bolt bosses and publishes their count" PROPERTIES

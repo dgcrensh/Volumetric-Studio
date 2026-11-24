@@ -69,6 +69,9 @@ std::vector<const proc::NodeType*> palette_order() {
 
 QString num(double v) { return QString::number(v, 'g', 10); }
 
+// V1: what a BoundaryFace property shows when it names no face.
+QString whole_boundary_text() { return QStringLiteral("(whole boundary)"); }
+
 }  // namespace
 
 // --- settings as text ------------------------------------------------------------------------
@@ -83,6 +86,10 @@ QString setting_text(const proc::Setting& value, const GraphContext& context) {
     for (const auto& surface : context.surfaces) {
       if (surface.id == *id) return qstr(surface.name);
     }
+  }
+  // V1: a boundary face by its label.
+  for (const auto& face : context.boundary_faces) {
+    if (face.name == s) return qstr(face.label);
   }
   return qstr(s);
 }
@@ -110,6 +117,11 @@ std::optional<proc::Setting> parse_setting(const QString& text, const proc::Sett
   }
   for (const auto& surface : context.surfaces) {
     if (qstr(surface.name) == t) return proc::Setting(surface.id.to_string());
+  }
+  // V1: a boundary face's label, or the whole boundary (no name).
+  if (t == whole_boundary_text()) return proc::Setting(std::string());
+  for (const auto& face : context.boundary_faces) {
+    if (qstr(face.label) == t) return proc::Setting(face.name);
   }
   return proc::Setting(sstr(t));
 }
@@ -770,7 +782,7 @@ void NodeEditor::show_graph(const model::Project& project, const eval::Evaluatio
     if (const auto* r = evaluation->find(volume)) from_evaluation = r->diagnostics;
   }
   core::Diagnostics diagnostics = graph_diagnostics(*g, project.document, volume, from_evaluation);
-  GraphContext context = graph_context(project.document, volume);
+  GraphContext context = graph_context(project.document, volume, evaluation);
   if (!other && *g == graph_) {
     // Only the marks may have changed: keep the scene (and any drag in
     // progress) unless they did.
@@ -778,7 +790,10 @@ void NodeEditor::show_graph(const model::Project& project, const eval::Evaluatio
     for (const auto& d : preview_diagnostics_) all.add(d);
     const bool same_context = context.surfaces.size() == context_.surfaces.size() &&
                               std::equal(context.surfaces.begin(), context.surfaces.end(), context_.surfaces.begin(),
-                                         [](const auto& a, const auto& b) { return a.id == b.id && a.name == b.name; });
+                                         [](const auto& a, const auto& b) { return a.id == b.id && a.name == b.name; }) &&
+                              std::equal(context.boundary_faces.begin(), context.boundary_faces.end(),
+                                         context_.boundary_faces.begin(), context_.boundary_faces.end(),
+                                         [](const auto& a, const auto& b) { return a.name == b.name && a.label == b.label; });
     diagnostics_ = std::move(diagnostics);
     context_ = std::move(context);
     title_->setText(tr("Graph of %1").arg(qstr(v->name)));
@@ -1267,7 +1282,10 @@ void NodeForm::edit(const std::string& key, const QString& text) {
 
 void NodeForm::show_node(const proc::Graph& graph, const Id& id, const GraphContext& context) {
   // Unchanged: keep the widgets (and what is being typed in them).
-  if (id == node_ && graph == shown_ && context.surfaces.size() == surfaces_ && !fields_.empty()) return;
+  if (id == node_ && graph == shown_ && context.surfaces.size() == surfaces_ &&
+      context.boundary_faces.size() == boundary_faces_ && !fields_.empty()) {
+    return;
+  }
   while (form_->rowCount() > 0) {
     const QFormLayout::TakeRowResult row = form_->takeRow(0);
     for (QLayoutItem* item : {row.labelItem, row.fieldItem}) {
@@ -1288,6 +1306,7 @@ void NodeForm::show_node(const proc::Graph& graph, const Id& id, const GraphCont
   node_ = id;
   shown_ = graph;
   surfaces_ = context.surfaces.size();
+  boundary_faces_ = context.boundary_faces.size();
   const proc::Node* node = graph.find_node(id);
   if (node == nullptr) {
     header_->setText(tr("No node selected"));
@@ -1380,6 +1399,16 @@ void NodeForm::show_node(const proc::Graph& graph, const Id& id, const GraphCont
         QStringList items;
         for (const auto& c : context.surfaces) items << qstr(c.name);
         w = combo(p.name, items, current, qstr(p.doc));
+        break;
+      }
+      case proc::PropertyKind::BoundaryFace: {
+        // V1: the boundary's named faces from the last evaluation; one it
+        // names that isn't listed (yet) stays as it is.
+        QStringList items{whole_boundary_text()};
+        for (const auto& f : context.boundary_faces) items << qstr(f.label);
+        const QString shown = current.isEmpty() ? whole_boundary_text() : current;
+        if (!items.contains(shown)) items << shown;
+        w = combo(p.name, items, shown, qstr(p.doc));
         break;
       }
       case proc::PropertyKind::Parameter: {

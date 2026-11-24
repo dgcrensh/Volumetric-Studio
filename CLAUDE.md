@@ -731,7 +731,13 @@ so they are registered. A new library must also be added to
   the same search, step for step. `frames.offset` moves frames along
   their own z (`into_boundary` picks the inner side per frame, in
   `layers` with a `margin`), so seeds scattered on a surface go in and
-  the cells follow it.
+  the cells follow it. `scatter.boundary` seeds on the boundary's skin
+  or one named face (`PropertyKind::BoundaryFace`: `-x`..`+z`, or
+  `<feature id>:<name>`), z out of the volume; `gather_inputs()`
+  tessellates only the faces a graph reads (`GatherOptions`,
+  `boundary_faces_read()`, into `GraphInputs::boundary_faces`), so pass
+  them wherever a graph's inputs are gathered
+  (`proc.reference.boundary_face` otherwise).
 - **Outputs**: the generator measures the mesh (`eval::measure_mesh()`)
   and fills `Published` outputs from `output.publish` nodes
   (`proc.output.unpublished` when missing).
@@ -754,7 +760,8 @@ so they are registered. A new library must also be added to
   and keeps the graph; `unbake()` restores it, same content hash.
 - **Templates** (`templates.hpp`): `gyroid_infill`, `graded_lattice`,
   `bolt_bosses` (needs a bolted flange), `voronoi_walls` (needs the
-  surface it seeds on); ids derive from the name, so a
+  surface it seeds on), `voronoi_skin` (the boundary's skin, or
+  `TemplateOptions::boundary_face`); ids derive from the name, so a
   template is the same graph every time. Saved copies in
   `tests/data/templates`.
 - **Tests** build box rows in code (`tests/scenes.*`, and `mixed()`: a

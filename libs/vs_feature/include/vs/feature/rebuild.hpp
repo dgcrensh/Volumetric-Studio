@@ -225,6 +225,11 @@ struct RebuildOptions {
 RebuildResult rebuild(const FeatureTree& tree, const ProductSettings& settings,
                       const RebuildOptions& options = {});
 
+// True when `face` lies on the surface `named` describes, facing the same
+// way, within `tolerance`: how face references find their faces again, and
+// how vs_proc finds a boundary face a graph names (V1).
+bool on_named_face(const NamedFace& named, const kernel::Face& face, double tolerance);
+
 // The frame of a principal plane.
 sketch::SketchPlane principal_frame(PrincipalPlane plane);
 

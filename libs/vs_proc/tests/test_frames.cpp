@@ -10,6 +10,7 @@
 
 #include "scenes.hpp"
 #include "vs/model/build.hpp"
+#include "vs/proc/check.hpp"
 #include "vs/proc/evaluate.hpp"
 #include "vs/proc/field.hpp"
 #include "vs/proc/inspect.hpp"
@@ -234,5 +235,70 @@ TEST_CASE("Offset moves frames along their own z, into the boundary", "[proc][fr
     CHECK(frames_of(g, o, r.inputs, &problems).empty());
     REQUIRE(problems.size() == 1);
     CHECK(problems.items().front().code == "proc.node.infeasible");
+  }
+}
+
+TEST_CASE("Scatter on the boundary lies on its skin, facing out", "[proc][frames][scatter][boundary]") {
+  // Box 0..40 x 0..30 x 0..20.
+  Row r = row(3);
+  Graph g;
+  const Id s = g.add("scatter.boundary", "Skin", {{"count", Setting(300.0)}, {"spacing", Setting(1.0)}});
+
+  SECTION("the whole skin, by area") {
+    const auto f = frames_of(g, s, r.inputs);
+    REQUIRE(f.size() == 300);
+    std::set<int> sides;
+    for (std::size_t i = 0; i < f.size(); ++i) {
+      const dvec3 p = at(f[i]);
+      CHECK(std::abs(scenes::box_distance(p, {0, 0, 0}, {40, 30, 20})) <= 1e-4);
+      // z points out of the side the point lies on.
+      const dvec3 z = core::to_fp64(f[i].linear.cols[2]);
+      CHECK(length(z) == Approx(1.0));
+      CHECK(scenes::box_distance(p + z, {0, 0, 0}, {40, 30, 20}) == Approx(1.0).margin(1e-4));
+      const int side = std::abs(z.x) > 0.5 ? 0 : std::abs(z.y) > 0.5 ? 1 : 2;
+      sides.insert(2 * side + ((z.x + z.y + z.z) > 0 ? 1 : 0));
+      for (std::size_t j = 0; j < i; ++j) CHECK(length(p - at(f[j])) >= 1.0 - 1e-5);
+    }
+    CHECK(sides.size() == 6);
+    // Seeded.
+    CHECK(frames_of(g, s, row(3).inputs).back().translation == f.back().translation);
+    CHECK(frames_of(g, s, row(4).inputs).back().translation != f.back().translation);
+  }
+
+  SECTION("one named face, gathered because the graph reads it") {
+    g.find_node(s)->settings["face"] = Setting(std::string("+z"));
+    // Inputs gathered without it don't have it.
+    core::Diagnostics problems;
+    CHECK(frames_of(g, s, r.inputs, &problems).empty());
+    CHECK_FALSE(problems.with_code("proc.reference.boundary_face").empty());
+
+    REQUIRE(boundary_faces_read(g) == std::vector<std::string>{"+z"});
+    auto in = gather_inputs(r.boxes.project.document, r.layout, 0, kSettings, {boundary_faces_read(g)});
+    REQUIRE(in);
+    REQUIRE(in->boundary_faces.size() == 1);
+    const auto f = frames_of(g, s, *in);
+    REQUIRE(f.size() == 300);
+    for (const auto& t : f) {
+      CHECK(at(t).z == Approx(20.0));
+      CHECK(t.linear.cols[2].z == Approx(1.0f));
+    }
+
+    // Through an offset, into the volume.
+    const Id o = g.add("frames.offset", "Inward", {{"distance", Setting(2.0)}});
+    g.link(s, "frames", o, "frames");
+    for (const auto& t : frames_of(g, o, *in)) CHECK(at(t).z == Approx(18.0));
+  }
+
+  SECTION("a face the boundary doesn't have") {
+    auto in = gather_inputs(r.boxes.project.document, r.layout, 0, kSettings, {{"+w"}});
+    REQUIRE_FALSE(in);
+    CHECK(in.error().code == "proc.reference.boundary_face");
+    g.find_node(s)->settings["face"] = Setting(std::string("+w"));
+    const auto checked = check_volume_graph(g, r.boxes.project.document, r.boxes.volumes[0]);
+    CHECK_FALSE(checked.with_code("proc.reference.boundary_face").empty());
+    g.find_node(s)->settings["face"] = Setting(std::string("-y"));
+    CHECK(check_volume_graph(g, r.boxes.project.document, r.boxes.volumes[0])
+              .with_code("proc.reference.boundary_face")
+              .empty());
   }
 }

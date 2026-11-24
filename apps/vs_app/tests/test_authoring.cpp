@@ -281,3 +281,27 @@ TEST_CASE("A wire between two same-named ports runs the way it was dragged (H5)"
   REQUIRE(c.graph.edge_into(first, "field") != nullptr);
   CHECK(c.graph.edge_into(first, "field")->from.node == second);
 }
+
+TEST_CASE("A graph's context lists its boundary's named faces once evaluated (V1)", "[app][graph]") {
+  const auto project = samples::load("bracket.vsproj");
+  const auto ev = samples::evaluate(project);
+  REQUIRE(ev.ok());
+  const Id base = ev.document.find_volume("Base")->id;
+  // Without an evaluation there are none: they are known once built.
+  CHECK(app::graph_context(ev.document, base).boundary_faces.empty());
+  const app::GraphContext c = app::graph_context(ev.document, base, &ev);
+  const auto* vb = ev.build.find_volume(base);
+  REQUIRE(vb != nullptr);
+  REQUIRE(c.boundary_faces.size() == vb->boundary_faces.size());
+  for (std::size_t i = 0; i < c.boundary_faces.size(); ++i) {
+    CHECK(c.boundary_faces[i].name == vb->boundary_faces[i].name);
+    CHECK_FALSE(c.boundary_faces[i].label.empty());
+    CHECK(c.boundary_faces[i].label.rfind("Boundary: ", 0) == std::string::npos);
+  }
+  // A node reading a boundary face gets none by default: the whole boundary.
+  const proc::NodeType* scatter = proc::library().find("scatter.boundary");
+  REQUIRE(scatter != nullptr);
+  const auto settings = app::default_settings(proc::Graph{}, *scatter, c, nullptr);
+  REQUIRE(settings);
+  CHECK(settings->empty());  // the face property has a default
+}

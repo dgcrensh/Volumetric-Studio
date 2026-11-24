@@ -12,6 +12,7 @@
 #include <map>
 #include <numbers>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -149,6 +150,55 @@ void too_few(NodeContext& ctx, std::size_t found, double count, std::vector<std:
                              found, count, kAttemptsPerPoint));
 }
 
+// `count` points on `surface` by area, `spacing` apart, each frame's z
+// `normal(triangle, point)`: dart throwing in index order, so the node's
+// seed decides them. Sets the outputs, or reports why not.
+template <typename Normal>
+void scatter_on(NodeContext& ctx, const TriangleDistance& surface, double count, double spacing,
+                std::string_view what, Normal normal) {
+  // Cumulative areas, so a uniform number picks a triangle by area.
+  std::vector<double> cumulative;
+  double total = 0.0;
+  const auto& pos = surface.positions();
+  for (std::size_t t = 0; t < surface.triangle_count(); ++t) {
+    const auto v = surface.triangle(t);
+    total += 0.5 * length(cross(pos[v[1]] - pos[v[0]], pos[v[2]] - pos[v[0]]));
+    cumulative.push_back(total);
+  }
+  const auto wanted = static_cast<std::size_t>(count);
+  if (wanted > 0 && !(total > 0.0)) {
+    ctx.fail(fmt::format("{} has no area", what));
+    return;
+  }
+  const std::uint64_t attempts = kAttemptsPerPoint * static_cast<std::uint64_t>(wanted);
+  SpacingGrid grid(spacing);
+  std::vector<core::ftransform> frames;
+  for (std::uint64_t i = 0; i < attempts && frames.size() < wanted; ++i) {
+    if (i % 4096 == 0 && ctx.cancelled()) return;
+    const double pick = uniform(ctx.seed(), 3 * i) * total;
+    const auto it = std::upper_bound(cumulative.begin(), cumulative.end(), pick);
+    const auto t = static_cast<std::size_t>(
+        std::min<std::ptrdiff_t>(it - cumulative.begin(),
+                                 static_cast<std::ptrdiff_t>(cumulative.size()) - 1));
+    double a = uniform(ctx.seed(), 3 * i + 1);
+    double b = uniform(ctx.seed(), 3 * i + 2);
+    if (a + b > 1.0) {
+      a = 1.0 - a;
+      b = 1.0 - b;
+    }
+    const auto v = surface.triangle(t);
+    const dvec3 p = pos[v[0]] + (pos[v[1]] - pos[v[0]]) * a + (pos[v[2]] - pos[v[0]]) * b;
+    if (!grid.accepts(p)) continue;
+    grid.add(p);
+    frames.push_back(frame_at(p, normal(t, p)));
+  }
+  if (frames.size() < wanted) {
+    too_few(ctx, frames.size(), count, {"count", "spacing"});
+    return;
+  }
+  set_frames(ctx, std::move(frames));
+}
+
 }  // namespace
 
 void add_frame_nodes(NodeRegistry& r) {
@@ -235,50 +285,48 @@ void add_frame_nodes(NodeRegistry& r) {
         const double count = ctx.scalar("count");
         const double spacing = ctx.scalar("spacing");
         if (!check_scatter(ctx, count, spacing)) return;
-        const TriangleDistance& patch = *c->patch;
-        // Cumulative areas, so a uniform number picks a triangle by area.
-        std::vector<double> cumulative;
-        double total = 0.0;
-        const auto& pos = patch.positions();
-        for (std::size_t t = 0; t < patch.triangle_count(); ++t) {
-          const auto v = patch.triangle(t);
-          total += 0.5 * length(cross(pos[v[1]] - pos[v[0]], pos[v[2]] - pos[v[0]]));
-          cumulative.push_back(total);
-        }
-        const auto wanted = static_cast<std::size_t>(count);
-        if (wanted > 0 && !(total > 0.0)) {
-          ctx.fail("the surface's patch has no area");
-          return;
-        }
-        const std::uint64_t attempts = kAttemptsPerPoint * static_cast<std::uint64_t>(wanted);
-        SpacingGrid grid(spacing);
-        std::vector<core::ftransform> frames;
-        for (std::uint64_t i = 0; i < attempts && frames.size() < wanted; ++i) {
-          if (i % 4096 == 0 && ctx.cancelled()) return;
-          const double pick = uniform(ctx.seed(), 3 * i) * total;
-          const auto it = std::upper_bound(cumulative.begin(), cumulative.end(), pick);
-          const auto t = static_cast<std::size_t>(
-              std::min<std::ptrdiff_t>(it - cumulative.begin(),
-                                       static_cast<std::ptrdiff_t>(cumulative.size()) - 1));
-          double a = uniform(ctx.seed(), 3 * i + 1);
-          double b = uniform(ctx.seed(), 3 * i + 2);
-          if (a + b > 1.0) {
-            a = 1.0 - a;
-            b = 1.0 - b;
-          }
-          const auto v = patch.triangle(t);
-          const dvec3 p = pos[v[0]] + (pos[v[1]] - pos[v[0]]) * a + (pos[v[2]] - pos[v[0]]) * b;
-          if (!grid.accepts(p)) continue;
-          grid.add(p);
-          frames.push_back(frame_at(p, surface_normal(*c, p)));
-        }
-        if (frames.size() < wanted) {
-          too_few(ctx, frames.size(), count, {"count", "spacing"});
-          return;
-        }
-        set_frames(ctx, std::move(frames));
+        scatter_on(ctx, *c->patch, count, spacing, "the surface's patch",
+                   [&](std::size_t, const dvec3& p) { return surface_normal(*c, p); });
       },
       {{"surface", PropertyKind::Surface, std::nullopt, {}, "the surface's id"}}, false));
+
+  r.add(make(
+      "scatter.boundary", "scatter",
+      "`count` seeded random points on the boundary's skin, or on one of its named faces, "
+      "`spacing` apart (0: no minimum), each frame's z pointing out of the volume there (the "
+      "tessellation's normal). frames.offset moves them inside",
+      {in("count", P::Scalar, num(50)), in("spacing", P::Scalar, num(0))},
+      {out("frames", P::Frames), out("count", P::Scalar)},
+      [](NodeContext& ctx) {
+        const double count = ctx.scalar("count");
+        const double spacing = ctx.scalar("spacing");
+        if (!check_scatter(ctx, count, spacing)) return;
+        const GraphInputs& gi = ctx.inputs();
+        const std::string face = ctx.text("face");
+        const TriangleDistance* surface = nullptr;
+        if (face.empty()) {
+          surface = gi.boundary.get();
+        } else if (const auto it = gi.boundary_faces.find(face); it != gi.boundary_faces.end()) {
+          surface = it->second.get();
+        }
+        if (surface == nullptr || surface->empty()) {
+          ctx.fail(face.empty() ? std::string("the volume has no boundary to scatter on")
+                                : fmt::format("the boundary has no face '{}' here", face));
+          return;
+        }
+        // Triangles wind counter-clockwise seen from outside.
+        const auto& pos = surface->positions();
+        scatter_on(ctx, *surface, count, spacing,
+                   face.empty() ? std::string("the boundary") : "face '" + face + "'",
+                   [&](std::size_t t, const dvec3&) {
+                     const auto v = surface->triangle(t);
+                     return cross(pos[v[1]] - pos[v[0]], pos[v[2]] - pos[v[0]]);
+                   });
+      },
+      {{"face", PropertyKind::BoundaryFace, Setting(std::string()), {},
+        "a named face of the boundary (\"-z\" on a box, \"<feature id>:end\", ...); empty: "
+        "the whole boundary"}},
+      false));
 
   r.add(make(
       "frames.offset", "pattern",

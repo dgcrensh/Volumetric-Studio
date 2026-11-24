@@ -158,8 +158,12 @@ Graph bolt_bosses(const TemplateOptions& o) {
   return b.finish();
 }
 
-Graph voronoi_walls(const TemplateOptions& o) {
-  Builder b("voronoi_walls");
+// Voronoi walls round seeds scattered on a surface: a connection surface's
+// patch (voronoi_walls) or the boundary's skin (voronoi_skin, V1), moved
+// into the volume along the surface's normal, so the cells follow its
+// shape; layers stack further in.
+Graph voronoi(std::string_view name, const TemplateOptions& o, bool on_boundary) {
+  Builder b(name);
   b.parameter("wall", 1.0);
   b.parameter("count", 200.0);
   b.parameter("spacing", 0.0);
@@ -169,9 +173,10 @@ Graph voronoi_walls(const TemplateOptions& o) {
   b.parameter("thickness", 0.8);
   const Id boundary = b.node("input.boundary", "Boundary");
   const Id skin = shell(b, boundary);
-  // Seeds on the surface, moved into the volume along its normal, so the
-  // cells follow its shape; layers stack further in.
-  const Id seeds = b.node("scatter.surface", "Seeds", {{"surface", Setting(o.surface->to_string())}});
+  const Id seeds =
+      on_boundary
+          ? b.node("scatter.boundary", "Seeds", {{"face", Setting(o.boundary_face)}})
+          : b.node("scatter.surface", "Seeds", {{"surface", Setting(o.surface->to_string())}});
   b.link(b.read("count"), "value", seeds, "count");
   b.link(b.read("spacing"), "value", seeds, "spacing");
   const Id inward = b.node("frames.offset", "Inward");
@@ -205,6 +210,11 @@ const std::vector<TemplateInfo>& templates() {
        "A shell with Voronoi cell walls seeded on a connection surface and moved inward, so the "
        "cells follow it: wall, count, spacing, depth, layers, step, thickness",
        true},
+      {"voronoi_skin",
+       "A shell with Voronoi cell walls seeded on the boundary's skin (or one named face) and "
+       "moved inward, so the cells follow the volume's shape: wall, count, spacing, depth, "
+       "layers, step, thickness",
+       false},
   };
   return list;
 }
@@ -224,8 +234,9 @@ core::Result<Graph> make_template(std::string_view name, const TemplateOptions& 
       return Diagnostic::error("proc.template.surface",
                                "voronoi_walls seeds its cells on a connection surface: give its id");
     }
-    return voronoi_walls(options);
+    return voronoi("voronoi_walls", options, false);
   }
+  if (name == "voronoi_skin") return voronoi("voronoi_skin", options, true);
   return Diagnostic::error("proc.template.unknown",
                            fmt::format("There's no template '{}'", name));
 }

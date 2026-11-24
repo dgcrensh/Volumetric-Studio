@@ -14,6 +14,7 @@
 #include "scenes.hpp"
 #include "vs/eval/engine.hpp"
 #include "vs/mesh/topology.hpp"
+#include "vs/proc/check.hpp"
 #include "vs/proc/evaluate.hpp"
 #include "vs/proc/generator.hpp"
 #include "vs/proc/inputs.hpp"
@@ -179,4 +180,45 @@ TEST_CASE("Offset moves points on a curved surface into either side's volume",
     CHECK_THAT(r, Catch::Matchers::WithinAbs(into_shaft ? 10.0 - depth : 10.0 + depth, 0.05));  // chords of the tessellated band
     CHECK(inputs->boundary->signed_distance(p) < 0.0);
   }
+}
+
+TEST_CASE("Scatter on a named cylindrical boundary face faces out of the volume",
+          "[proc][curved][frames][scatter][boundary]") {
+  // The shaft's outside faces away from the axis; the sleeve's bore towards it.
+  const auto c = curved::make_curved({});
+  const auto& doc = c.project.document;
+  const auto layout = model::build_layout(doc, kSettings);
+  std::size_t tested = 0;
+  for (std::size_t v = 0; v < doc.volumes.size(); ++v) {
+    for (const auto& named : layout.volumes[v].boundary_faces) {
+      if (!named.cylinder) continue;
+      INFO(doc.volumes[v].name << " " << named.name);
+      Graph g;
+      const Id points = g.add("scatter.boundary", "Points",
+                              {{"face", Setting(named.name)}, {"count", Setting(40.0)}});
+      REQUIRE(check_volume_graph(g, doc, doc.volumes[v].id).with_code("proc.reference.boundary_face").empty());
+      const auto inputs = gather_inputs(doc, layout, v, kSettings, {boundary_faces_read(g)});
+      REQUIRE(inputs);
+      EvaluateGraphOptions eo;
+      eo.keep_outputs = true;
+      eo.only_for = points;
+      const auto result = evaluate_graph(g, *inputs, eo);
+      INFO(scenes::codes(result.diagnostics));
+      REQUIRE_FALSE(result.diagnostics.has_errors());
+      const auto& frames = std::get<Frames>(result.find(points)->outputs[0])->frames;
+      REQUIRE(frames.size() == 40);
+      const auto& cyl = *named.cylinder;
+      const core::dvec3 axis = normalize(cyl.axis.direction);
+      for (const auto& f : frames) {
+        const core::dvec3 p = core::to_fp64(f.translation);
+        const core::dvec3 d = p - cyl.axis.origin;
+        const core::dvec3 radial = d - axis * dot(d, axis);
+        CHECK_THAT(length(radial), Catch::Matchers::WithinAbs(cyl.radius, 0.05));
+        const double out = dot(core::to_fp64(f.linear.cols[2]), normalize(radial));
+        CHECK_THAT(out, Catch::Matchers::WithinAbs(cyl.inward ? -1.0 : 1.0, 0.02));
+      }
+      ++tested;
+    }
+  }
+  CHECK(tested >= 2);
 }

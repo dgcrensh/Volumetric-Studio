@@ -24,6 +24,7 @@
 #include "scene.hpp"
 #include "vs/core/diagnostic.hpp"
 #include "vs/core/id.hpp"
+#include "vs/eval/engine.hpp"
 #include "vs/model/document.hpp"
 #include "vs/proc/graph.hpp"
 #include "vs/proc/nodes.hpp"
@@ -42,17 +43,26 @@ std::string node_title(std::string_view type);
 // `title`, or `title 2`, `title 3`, ... whichever no node of `graph` is named.
 std::string unique_node_name(const proc::Graph& graph, const std::string& title);
 
-// What a volume's graph may read: the connection surfaces joining it.
+// What a volume's graph may read: the connection surfaces joining it, and
+// (V1) its boundary's named faces.
 struct GraphContext {
   struct Surface {
     Id id;
     std::string name;
     model::ConnectionType type = model::ConnectionType::Bonded;
   };
+  struct BoundaryFace {
+    std::string name;   // what a BoundaryFace property holds: "<feature id>:end", "-x", ...
+    std::string label;  // what the node form shows: "Extrude 1 end", "-x", ...
+  };
   std::vector<Surface> surfaces;
   std::vector<std::string> templates;  // L4: a composite's, by name
+  std::vector<BoundaryFace> boundary_faces;  // V1: from an evaluation (empty without one)
 };
-GraphContext graph_context(const model::Document& document, const Id& volume);
+// `evaluation` (may be null) lists the boundary's named faces: they are
+// known only once the boundary has built.
+GraphContext graph_context(const model::Document& document, const Id& volume,
+                           const eval::Evaluation* evaluation = nullptr);
 
 // A change's result: the new graph (the old one when refused) and why.
 struct GraphChange {
