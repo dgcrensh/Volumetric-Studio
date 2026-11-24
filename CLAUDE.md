@@ -263,6 +263,16 @@ so they are registered. A new library must also be added to
   redundant. On error the sketch is unchanged. Fixtures in
   `tests/data/svg`; `vstudio-cli sketch-import-svg <file.svg> [--out
   sketch.json] [--scale k] [--dpi n] [--gap mm] [--fix] [--no-smooth]`.
+- **Offset** (decision 0041, `offset.hpp`): `offset_curves()` orders the
+  chosen curves into chains (`offset_chains()`; `connected_curves()`
+  grows a selection through two-curve joints) and adds their offset:
+  positive is outward for a loop, left of travel for an open chain. Lines,
+  arcs and circles are exact (arcs and circles share their source's
+  centre point); Béziers become Hermite-fitted Béziers within the minimum
+  feature size. Inside corners are trimmed, outside ones extended
+  (`OffsetCorners::Extend`) or rounded about the corner point (always
+  beside a Bézier). No constraints, no link. Collapses, folds and
+  self-crossings are refused (`sketch.offset.*`), never untangled.
 - **Files.** `to_json()` / `sketch_from_json()` round-trip exactly, ids
   included; an object's own id may not be null (H2, also in vs_feature and
   vs_model files). `vstudio-cli sketch-solve <file>` solves one from the
@@ -1006,6 +1016,14 @@ so they are registered. A new library must also be added to
   `SketchEditor::undo_and_forget()`); OK keeps one sketch step, Cancel
   takes it out. Tests: `test_sketch_editor.cpp` (core),
   `test_svg_import_ui.cpp`.
+- **Offset** (decision 0041): the Sketch tab's Modify group has Offset
+  (`OffsetCurves`, `sketch_offset`; enabled when a curve is selected,
+  `ToolState::sketch_curve_selection`). `MainWindow::offset_curves()`
+  opens `OffsetDialog` (`offset_dialog.*`: distance, side, corners, whole
+  chains) on the selection as it opened, previewing through
+  `SketchMode::preview_offset()` like Import SVG; OK keeps one step.
+  `SketchEditor::offset()` and `offset_targets()` are the core. Tests:
+  `test_sketch_editor.cpp`, `test_tool_catalog.cpp`, `test_offset_ui.cpp`.
 - **Running it**: `build/windows-msvc-app/apps/vs_app/vs_app.exe [project]
   [--select <name>] [--view iso|top|front|...] [--context <volume>]
   [--sketch <sketch>] [--edit <feature>] [--graph <volume> [--node <node>]

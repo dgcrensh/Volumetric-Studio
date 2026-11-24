@@ -135,6 +135,14 @@ class SketchMode : public QWidget {
   void drop_import();
   [[nodiscard]] bool import_previewing() const { return import_previewing_; }
 
+  // Offset (decision 0041) previews the same way: each preview replaces the
+  // last, keep_offset() keeps it, drop_offset() takes it out.
+  core::Result<sketch::SketchOffset> preview_offset(const std::vector<Id>& curves,
+                                                    const sketch::OffsetOptions& options);
+  void keep_offset();
+  void drop_offset();
+  [[nodiscard]] bool offset_previewing() const { return offset_previewing_; }
+
  signals:
   void finished(bool accept);
   // The drawing tool changed (set_tool()).
@@ -153,6 +161,7 @@ class SketchMode : public QWidget {
   QAction* redo_ = nullptr;
   bool refreshing_ = false;
   bool import_previewing_ = false;
+  bool offset_previewing_ = false;
 };
 
 }  // namespace vs::app

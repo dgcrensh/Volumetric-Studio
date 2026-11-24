@@ -120,6 +120,7 @@ namespace vs::app {
 
 class ConnectionDialog;
 class SvgImportDialog;
+class OffsetDialog;
 class Browser;
 class ProblemsButton;
 class ProblemsDrawer;
@@ -261,6 +262,11 @@ class MainWindow : public QMainWindow {
   // file was chosen, or the file can't be read (said in the status bar).
   SvgImportDialog* import_svg(QString path = {});
   [[nodiscard]] SvgImportDialog* svg_import_dialog() const;
+  // Decision 0041: the Sketch tab's Offset. Opens the offset dialog on the
+  // sketch's selected curves (null when none is selected or no sketch is
+  // open); it previews on the sketch until OK or Cancel.
+  OffsetDialog* offset_curves();
+  [[nodiscard]] OffsetDialog* offset_dialog() const;
   // The dock holding the open sketch's status and constraint list (U1).
   [[nodiscard]] QDockWidget& sketch_dock() { return *sketch_dock_; }
 
@@ -593,6 +599,7 @@ class MainWindow : public QMainWindow {
 
   SketchMode* sketch_mode_ = nullptr;
   QPointer<SvgImportDialog> svg_dialog_;
+  QPointer<OffsetDialog> offset_dialog_;
   // U1 phase 3: the sketch's status and constraints in a right-hand dock
   // while sketching, and the left docks folded away meanwhile.
   QDockWidget* sketch_dock_ = nullptr;

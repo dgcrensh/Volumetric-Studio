@@ -60,6 +60,7 @@
 #include "theme.hpp"
 #include "reference_choices.hpp"
 #include "sketch_mode.hpp"
+#include "offset_dialog.hpp"
 #include "svg_import_dialog.hpp"
 #include "viewport.hpp"
 #include "vs/core/version.hpp"
@@ -2342,6 +2343,12 @@ void MainWindow::finish_sketch(bool accept) {
     sketch_mode_->keep_import();
     d->close();
   }
+  if (offset_dialog_) {
+    OffsetDialog* d = offset_dialog_;
+    offset_dialog_ = nullptr;
+    sketch_mode_->keep_offset();
+    d->close();
+  }
   if (accept) {
     const sketch::Sketch& sk = sketch_mode_->editor().sketch();
     core::Diagnostics d;
@@ -2885,6 +2892,7 @@ ToolState MainWindow::tool_state() const {
     s.sketch_open = true;
     const std::vector<Id>& picked = sketch_mode_->view().selection();
     s.sketch_selection = picked.size();
+    s.sketch_curve_selection = sketch_mode_->editor().offset_targets(picked, false).size();
     s.applicable_constraints = sketch_mode_->editor().applicable(picked);
   }
   s.drawing_shown = drawing_window_ != nullptr && central_->currentWidget() == drawing_window_ && !shown_drawing().is_null();
@@ -3033,6 +3041,7 @@ void MainWindow::run_tool(ToolId id) {
     case ToolId::SketchSlot: sketch_tool(SketchTool::Slot); break;
     case ToolId::SketchBezier: sketch_tool(SketchTool::Bezier); break;
     case ToolId::ImportSvg: import_svg(); break;
+    case ToolId::OffsetCurves: offset_curves(); break;
     case ToolId::Construction:
       if (sketch_mode_ != nullptr) sketch_mode_->toggle_construction();
       break;
@@ -3099,6 +3108,53 @@ SvgImportDialog* MainWindow::import_svg(QString path) {
     if (svg_dialog_ != d) return;  // kept, or closed with the sketch
     svg_dialog_ = nullptr;
     mode->drop_import();
+    refresh_tools();
+  });
+  preview();
+  d->show();
+  return d;
+}
+
+OffsetDialog* MainWindow::offset_dialog() const { return offset_dialog_.data(); }
+
+OffsetDialog* MainWindow::offset_curves() {
+  if (sketch_mode_ == nullptr) return nullptr;
+  if (offset_dialog_) offset_dialog_->reject();  // one offset at a time
+  SketchMode* mode = sketch_mode_;
+  // The selection as the dialog opens, both ways, before any preview adds
+  // curves to the chains.
+  const std::vector<Id> picked = mode->view().selection();
+  const auto chosen = std::make_shared<const std::vector<Id>>(mode->editor().offset_targets(picked, false));
+  const auto chains = std::make_shared<const std::vector<Id>>(mode->editor().offset_targets(picked, true));
+  if (chosen->empty()) {
+    status_label_->setText(tr("Select the curves to offset first."));
+    return nullptr;
+  }
+  auto* d = new OffsetDialog(mode);
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  offset_dialog_ = d;
+  const auto preview = [d, mode, chosen, chains] {
+    const auto& curves = d->whole_chains() ? *chains : *chosen;
+    const auto added = mode->preview_offset(curves, d->options());
+    if (added) {
+      d->set_message(describe_offset(*added, curves.size()), false);
+    } else {
+      mode->drop_offset();
+      d->set_message(qstr(added.error().message));
+    }
+  };
+  connect(d, &EditDialog::changed, this, preview);
+  connect(d, &EditDialog::commitRequested, this, [this, d, mode] {
+    if (!mode->offset_previewing()) return;  // the message says why
+    mode->keep_offset();
+    offset_dialog_ = nullptr;
+    d->accept();
+    refresh_tools();
+  });
+  connect(d, &QDialog::rejected, this, [this, d, mode] {
+    if (offset_dialog_ != d) return;  // kept, or closed with the sketch
+    offset_dialog_ = nullptr;
+    mode->drop_offset();
     refresh_tools();
   });
   preview();

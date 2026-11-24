@@ -85,6 +85,8 @@ enum class ToolId {
   SketchBezier,
   // Sketch: insert
   ImportSvg,
+  // Sketch: modify (decision 0041)
+  OffsetCurves,
   // Sketch: constrain and dimension (one per sketch::ConstraintKind)
   Coincident,
   PointOnCurve,
@@ -156,6 +158,8 @@ struct ToolState {
   // The sketch's selected entities and constraints, and the constraint
   // kinds that fit them (SketchEditor::applicable()).
   std::size_t sketch_selection = 0;
+  // How many of them are curves (lines, arcs, circles, Béziers).
+  std::size_t sketch_curve_selection = 0;
   std::vector<sketch::ConstraintKind> applicable_constraints;
   // A drawing is shown on the sheet.
   bool drawing_shown = false;

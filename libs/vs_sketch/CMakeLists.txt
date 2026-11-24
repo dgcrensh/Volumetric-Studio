@@ -10,6 +10,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 vs_add_library(vs_sketch
   SOURCES
     src/module.cpp
+    src/offset.cpp
     src/profile.cpp
     src/serialize.cpp
     src/sketch.cpp
@@ -28,6 +29,7 @@ vs_add_library_tests(vs_sketch
     tests/test_bezier.cpp
     tests/test_design_rules.cpp
     tests/test_module.cpp
+    tests/test_offset.cpp
     tests/test_profile.cpp
     tests/test_serialize.cpp
     tests/test_sketch.cpp

@@ -69,6 +69,9 @@ constexpr std::array kTools = {
     // Sketch: insert
     Tool{T::ImportSvg, "import_svg", "SVG", "Import the outlines of an SVG file into the sketch", "",
          Icon::ImportSvg},
+    // Sketch: modify
+    Tool{T::OffsetCurves, "sketch_offset", "Offset",
+         "Offset the selected curves, or their whole chains, inward or outward by a distance", "", Icon::Offset},
     // Sketch: constrain
     Tool{T::Coincident, "coincident", "Coincident", "Join two points", "", Icon::Coincident},
     Tool{T::PointOnCurve, "point_on_curve", "On curve", "Keep a point on a line or circle", "", Icon::PointOnCurve},
@@ -141,6 +144,7 @@ std::vector<ToolGroup> make_groups(Context context) {
           {"Draw", {T::SketchSelect, T::SketchLine, T::SketchRectangle, T::SketchCircle, T::SketchArc, T::SketchBezier,
                     T::SketchPoint, T::SketchSlot}, 6},
           {"Insert", {T::ImportSvg}, kAll},
+          {"Modify", {T::OffsetCurves}, kAll},
           {"Constrain", {T::Coincident, T::PointOnCurve, T::Horizontal, T::Vertical, T::Parallel, T::Perpendicular,
                          T::Tangent, T::Equal, T::Symmetric, T::Fix}, 4},
           {"Dimension", {T::Distance, T::HorizontalDistance, T::VerticalDistance, T::Angle, T::Radius, T::Diameter},
@@ -386,6 +390,9 @@ Availability availability(ToolId id, const model::Document& document, const Tool
       }
       if ((id == T::Construction || id == T::DeleteSketchItems) && state.sketch_selection == 0) {
         return no("Select sketch geometry first.");
+      }
+      if (id == T::OffsetCurves && state.sketch_curve_selection == 0) {
+        return no("Select the curves to offset first.");
       }
       return ok();
     }

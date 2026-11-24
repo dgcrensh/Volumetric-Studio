@@ -340,14 +340,24 @@ TEST_CASE("Sketch tools follow the sketch selection", "[app][tools]") {
   CHECK_FALSE(h);
   CHECK(h.reason == "Select the geometry to constrain first.");
 
-  // One line selected: what fits it.
+  const auto offset = availability(ToolId::OffsetCurves, doc, s);
+  CHECK_FALSE(offset);
+  CHECK(offset.reason == "Select the curves to offset first.");
+  CHECK(shows_in(ToolId::OffsetCurves, Context::Sketch));
+
+  // A point alone can't be offset.
   s.sketch_selection = 1;
+  CHECK_FALSE(availability(ToolId::OffsetCurves, doc, s));
+
+  // One line selected: what fits it.
+  s.sketch_curve_selection = 1;
   s.applicable_constraints = {sketch::ConstraintKind::Horizontal, sketch::ConstraintKind::Vertical,
                               sketch::ConstraintKind::Distance, sketch::ConstraintKind::Angle,
                               sketch::ConstraintKind::Fix};
   CHECK(availability(ToolId::Horizontal, doc, s));
   CHECK(availability(ToolId::Distance, doc, s));
   CHECK(availability(ToolId::Construction, doc, s));
+  CHECK(availability(ToolId::OffsetCurves, doc, s));
   const auto tangent = availability(ToolId::Tangent, doc, s);
   CHECK_FALSE(tangent);
   CHECK(tangent.reason == "Doesn't fit the selected geometry.");
