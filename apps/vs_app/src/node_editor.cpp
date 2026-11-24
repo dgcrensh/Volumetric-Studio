@@ -1448,7 +1448,7 @@ void TemplateDialog::update_doc() {
   doc_->setText(qstr(t.doc));
   surface_->setEnabled(t.needs_surface);
   if (t.needs_surface && context_.surfaces.empty()) {
-    set_message(tr("%1 reads a bolted flange, and no connection surface joins this volume.").arg(qstr(t.name)));
+    set_message(tr("%1 reads a connection surface, and none joins this volume.").arg(qstr(t.name)));
   } else {
     set_message({});
   }

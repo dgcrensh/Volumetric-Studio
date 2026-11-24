@@ -280,6 +280,77 @@ void add_frame_nodes(NodeRegistry& r) {
       },
       {{"surface", PropertyKind::Surface, std::nullopt, {}, "the surface's id"}}, false));
 
+  r.add(make(
+      "frames.offset", "pattern",
+      "Moves each frame along its own z axis: `layers` copies, the first `distance` along it and "
+      "each next one `step` further. `into_boundary` picks, per frame, the side that lies inside "
+      "the boundary (so points on a surface go into the volume, whichever way its normal points); "
+      "`margin` > 0 drops points less than that deep inside the boundary",
+      {in("frames", P::Frames), in("distance", P::Scalar, num(2)), in("layers", P::Scalar, num(1)),
+       in("step", P::Scalar, num(2)), in("margin", P::Scalar, num(0))},
+      {out("frames", P::Frames), out("count", P::Scalar)},
+      [](NodeContext& ctx) {
+        const double distance = ctx.scalar("distance");
+        const double layers = ctx.scalar("layers");
+        const double step = ctx.scalar("step");
+        const double margin = ctx.scalar("margin");
+        if (!std::isfinite(distance)) {
+          ctx.infeasible({"distance"}, "the distance must be a number");
+          return;
+        }
+        if (!std::isfinite(step)) {
+          ctx.infeasible({"step"}, "the step must be a number");
+          return;
+        }
+        if (!(margin >= 0.0) || !std::isfinite(margin)) {
+          ctx.infeasible({"margin"}, "the margin can't be negative");
+          return;
+        }
+        if (!check_count(ctx, "layers", layers, 1, kMaxFrames)) return;
+        const auto& base = ctx.frames("frames")->frames;
+        if (!check_total(ctx, {"layers"}, layers * static_cast<double>(base.size()))) return;
+        const bool into = ctx.text("direction") == "into_boundary";
+        const GraphInputs& gi = ctx.inputs();
+        const bool has_boundary = gi.boundary != nullptr && !gi.boundary->empty();
+        if ((into || margin > 0.0) && !has_boundary) {
+          ctx.fail("the volume has no boundary to move into");
+          return;
+        }
+        const auto n = static_cast<std::size_t>(layers);
+        std::vector<core::ftransform> frames;
+        frames.reserve(base.size() * n);
+        for (std::size_t i = 0; i < base.size(); ++i) {
+          if (i % 4096 == 0 && ctx.cancelled()) return;
+          const core::ftransform& f = base[i];
+          const dvec3 origin = core::to_fp64(f.translation);
+          const dvec3 z = core::to_fp64(f.linear.cols[2]);
+          double sign = 1.0;
+          if (into) {
+            // The side inside the boundary at the first layer; the deeper
+            // one when both or neither are; +z on a tie.
+            const double plus = gi.boundary->signed_distance(origin + z * distance);
+            const double minus = gi.boundary->signed_distance(origin - z * distance);
+            if (minus < plus) sign = -1.0;
+          }
+          for (std::size_t k = 0; k < n; ++k) {
+            const dvec3 p = origin + z * (sign * (distance + step * static_cast<double>(k)));
+            if (margin > 0.0 && gi.boundary->signed_distance(p) > -margin) continue;
+            core::ftransform moved = f;
+            moved.translation = core::to_fp32(p);
+            frames.push_back(moved);
+          }
+        }
+        if (frames.empty() && !base.empty()) {
+          ctx.infeasible({"margin", "distance"},
+                         fmt::format("no point is at least {} mm inside the boundary", margin));
+          return;
+        }
+        set_frames(ctx, std::move(frames));
+      },
+      {{"direction", PropertyKind::Choice, Setting(std::string("into_boundary")),
+        {"into_boundary", "along_z"}, "which way along each frame's z: into the boundary, or +z"}},
+      false));
+
   r.add(make("pattern.linear", "pattern",
              "`count` copies of each frame, each `step` further on (the first stays put)",
              {optional_in("frames", P::Frames, "frames to repeat (none: one at the origin)"),

@@ -158,6 +158,36 @@ Graph bolt_bosses(const TemplateOptions& o) {
   return b.finish();
 }
 
+Graph voronoi_walls(const TemplateOptions& o) {
+  Builder b("voronoi_walls");
+  b.parameter("wall", 1.0);
+  b.parameter("count", 200.0);
+  b.parameter("spacing", 0.0);
+  b.parameter("depth", 2.0);
+  b.parameter("layers", 1.0);
+  b.parameter("step", 5.0);
+  b.parameter("thickness", 0.8);
+  const Id boundary = b.node("input.boundary", "Boundary");
+  const Id skin = shell(b, boundary);
+  // Seeds on the surface, moved into the volume along its normal, so the
+  // cells follow its shape; layers stack further in.
+  const Id seeds = b.node("scatter.surface", "Seeds", {{"surface", Setting(o.surface->to_string())}});
+  b.link(b.read("count"), "value", seeds, "count");
+  b.link(b.read("spacing"), "value", seeds, "spacing");
+  const Id inward = b.node("frames.offset", "Inward");
+  b.link(seeds, "frames", inward, "frames");
+  b.link(b.read("depth"), "value", inward, "distance");
+  b.link(b.read("layers"), "value", inward, "layers");
+  b.link(b.read("step"), "value", inward, "step");
+  const Id thickness = b.read("thickness");
+  b.link(thickness, "value", inward, "margin");
+  const Id cells = b.node("field.voronoi", "Cells");
+  b.link(inward, "frames", cells, "frames");
+  b.link(thickness, "value", cells, "thickness");
+  finish(b, boundary, skin, cells, o);
+  return b.finish();
+}
+
 }  // namespace
 
 const std::vector<TemplateInfo>& templates() {
@@ -170,6 +200,10 @@ const std::vector<TemplateInfo>& templates() {
       {"bolt_bosses",
        "A shell with a solid boss round each bolt hole of a bolted flange; publishes "
        "boss_count: wall, boss_radius, boss_height",
+       true},
+      {"voronoi_walls",
+       "A shell with Voronoi cell walls seeded on a connection surface and moved inward, so the "
+       "cells follow it: wall, count, spacing, depth, layers, step, thickness",
        true},
   };
   return list;
@@ -184,6 +218,13 @@ core::Result<Graph> make_template(std::string_view name, const TemplateOptions& 
                                "bolt_bosses reads a bolted flange: give its surface id");
     }
     return bolt_bosses(options);
+  }
+  if (name == "voronoi_walls") {
+    if (!options.surface) {
+      return Diagnostic::error("proc.template.surface",
+                               "voronoi_walls seeds its cells on a connection surface: give its id");
+    }
+    return voronoi_walls(options);
   }
   return Diagnostic::error("proc.template.unknown",
                            fmt::format("There's no template '{}'", name));

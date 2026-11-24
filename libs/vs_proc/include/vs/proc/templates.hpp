@@ -13,6 +13,11 @@
 //                   `boss_radius` round every bolt hole of a bolted flange,
 //                   reaching `boss_height` into the volume; publishes
 //                   `boss_count`, the number of holes it found
+//   voronoi_walls   the boundary shelled by `wall`, filled with Voronoi
+//                   cell walls `thickness` thick round `count` seeds
+//                   scattered on a connection surface (`spacing` apart)
+//                   and moved `depth` into the volume along its normal,
+//                   in `layers` layers `step` apart (decision 0042)
 //
 // make_template() returns a graph ready for a procedural volume: node ids
 // derive from the template's name (Id::derive), so the same template with
@@ -22,7 +27,8 @@
 // generation cost grows with its inverse cube).
 //
 // Codes: proc.template.unknown (no such template), proc.template.surface
-// (bolt_bosses needs the flange's surface id).
+// (bolt_bosses needs the flange's surface id, voronoi_walls the surface it
+// seeds on).
 
 #include <optional>
 #include <string>
@@ -38,7 +44,7 @@ namespace vs::proc {
 struct TemplateInfo {
   std::string name;
   std::string doc;
-  bool needs_surface = false;  // reads a connection surface (a bolted flange)
+  bool needs_surface = false;  // reads a connection surface (a bolted flange, Voronoi seeds)
 };
 
 const std::vector<TemplateInfo>& templates();

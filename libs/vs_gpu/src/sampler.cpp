@@ -301,6 +301,23 @@ std::string self_check() {
     frames.frames.push_back(t);
   }
 
+  // Seeds for the Voronoi walls: a lattice nudged off its grid (so no two
+  // points tie), and a flat layer, as an offset surface makes.
+  FrameSet cloud;
+  FrameSet layer;
+  for (int i = 0; i < 216; ++i) {
+    const int x = i % 6, y = (i / 6) % 6, z = i / 36;
+    core::ftransform t;
+    t.translation = {-10.0f + 4.0f * static_cast<float>(x) + 0.37f * static_cast<float>((i * 7) % 5),
+                     -8.0f + 3.2f * static_cast<float>(y) + 0.29f * static_cast<float>((i * 3) % 7),
+                     -7.5f + 3.0f * static_cast<float>(z) + 0.41f * static_cast<float>((i * 5) % 3)};
+    cloud.frames.push_back(t);
+    if (z == 0) {
+      t.translation.z = 1.5f;
+      layer.frames.push_back(t);
+    }
+  }
+
   const Field sphere = sphere_field({1, 2, 3}, 5.5);
   const Field boxf = box_field({0.5, -0.25, 0}, {7, 5, 3});
   const std::vector<std::pair<const char*, Field>> battery{
@@ -328,6 +345,9 @@ std::string self_check() {
                                     tpms_field(TpmsSurface::Gyroid, 4.0, {0, 0, 0}, 0.6))},
       {"instances", instances_field(sphere_field({0, 0, 0}, 1.5), frames, 1.5)},
       {"instances unbounded", instances_field(box_field({0, 0, 0}, {1, 2, 1}), frames, 0.0)},
+      {"voronoi", voronoi_field(frames, 0.7)},
+      {"voronoi cloud", voronoi_field(cloud, 0.5)},
+      {"voronoi layer in a ball", intersection_field(mesh_signed_field(ball), voronoi_field(layer, 0.9))},
   };
   const auto grid = proc::grid_covering(core::dbox3::from_min_max({-12, -10, -9}, {12, 10, 9}), 0.6);
   if (!grid) return "the check grid";

@@ -407,6 +407,116 @@ double mesh_signed(uint s, dvec3 p) {
   else normal = dv(U[s + 1u] + 3u * U[U[s + 3u] + 3u * t + uint(f - 4)]);
   return dot3(sub3(p, q), normal) < 0.0lf ? -d : d;
 }
+// Voronoi walls (decision 0042): field.cpp's voronoi_eval(), step for step.
+// Node numbers from m: thickness, grid corner, cell, cells per axis, cell
+// starts, then the seeds (field_layout.hpp). No local arrays of doubles.
+double vor_reach(double x, double lo, double cell, int n, int c, int r) {
+  P double best = -1.0lf;
+  if (c + r < n) {
+    P double face = lo + double(c + r) * cell;
+    best = mx(0.0lf, face - x);
+  }
+  if (c - r >= 0) {
+    P double face = lo + double(c - r + 1) * cell;
+    P double d = mx(0.0lf, x - face);
+    if (best < 0.0lf || d < best) best = d;
+  }
+  return best;
+}
+double vor_bound(uint m, dvec3 p, ivec3 dims, ivec3 c, int r) {
+  P double cell = D[m + 4u];
+  P double gx = vor_reach(p.x, D[m + 1u], cell, dims.x, c.x, 0);
+  P double gy = vor_reach(p.y, D[m + 2u], cell, dims.y, c.y, 0);
+  P double gz = vor_reach(p.z, D[m + 3u], cell, dims.z, c.z, 0);
+  P double g2x = gx * gx;
+  P double g2y = gy * gy;
+  P double g2z = gz * gz;
+  P double base = (g2x + g2y) + g2z;
+  P double extra = -1.0lf;
+  P double a = vor_reach(p.x, D[m + 1u], cell, dims.x, c.x, r);
+  if (a >= 0.0lf) { P double e = a * a - g2x; if (extra < 0.0lf || e < extra) extra = e; }
+  a = vor_reach(p.y, D[m + 2u], cell, dims.y, c.y, r);
+  if (a >= 0.0lf) { P double e = a * a - g2y; if (extra < 0.0lf || e < extra) extra = e; }
+  a = vor_reach(p.z, D[m + 3u], cell, dims.z, c.z, r);
+  if (a >= 0.0lf) { P double e = a * a - g2z; if (extra < 0.0lf || e < extra) extra = e; }
+  P double r2 = base + extra;
+  return extra < 0.0lf ? -1.0lf : r2;
+}
+double vor_d2(uint s, dvec3 p) {
+  P double dx = p.x - D[s];
+  P double dy = p.y - D[s + 1u];
+  P double dz = p.z - D[s + 2u];
+  P double r = dx * dx + dy * dy + dz * dz;
+  return r;
+}
+int vor_cell(double x, double lo, double cell, int n) {
+  return int(cl(floor((x - lo) / cell), 0.0lf, double(n - 1)));
+}
+double voronoi(uint m, dvec3 p) {
+  P double cell = D[m + 4u];
+  ivec3 dims = ivec3(int(D[m + 5u]), int(D[m + 6u]), int(D[m + 7u]));
+  ivec3 c = ivec3(vor_cell(p.x, D[m + 1u], cell, dims.x), vor_cell(p.y, D[m + 2u], cell, dims.y),
+                  vor_cell(p.z, D[m + 3u], cell, dims.z));
+  uint starts = m + 8u;
+  uint seeds = starts + uint(dims.x * dims.y * dims.z) + 1u;
+  P double best = inf_d();
+  uint a = 0u;
+  bool found = false;
+  for (int r = 0;; ++r) {
+    P double bound = vor_bound(m, p, dims, c, r);
+    if (bound < 0.0lf || (found && bound > best)) break;
+    int z0 = max(0, c.z - r), z1 = min(dims.z - 1, c.z + r);
+    int y0 = max(0, c.y - r), y1 = min(dims.y - 1, c.y + r);
+    int x0 = max(0, c.x - r), x1 = min(dims.x - 1, c.x + r);
+    for (int z = z0; z <= z1; ++z) {
+      for (int y = y0; y <= y1; ++y) {
+        bool rim = abs(z - c.z) == r || abs(y - c.y) == r;
+        int step = rim ? 1 : 2 * r;
+        for (int x = rim ? x0 : c.x - r; x <= x1; x += step) {
+          if (x < x0) continue;
+          uint k = uint((z * dims.y + y) * dims.x + x);
+          uint last = uint(D[starts + k + 1u]);
+          for (uint s = uint(D[starts + k]); s < last; ++s) {
+            P double d2 = vor_d2(seeds + 3u * s, p);
+            if (!found || d2 < best || (d2 == best && s < a)) { best = d2; a = s; found = true; }
+          }
+        }
+      }
+    }
+  }
+  P double da = sqrt_rn(best);
+  uint sa = seeds + 3u * a;
+  P double wall = inf_d();
+  for (int r = 0;; ++r) {
+    P double bound = vor_bound(m, p, dims, c, r);
+    if (bound < 0.0lf) break;
+    P double reach = (sqrt_rn(bound) - da) * 0.5lf;
+    if (reach >= wall) break;
+    int z0 = max(0, c.z - r), z1 = min(dims.z - 1, c.z + r);
+    int y0 = max(0, c.y - r), y1 = min(dims.y - 1, c.y + r);
+    int x0 = max(0, c.x - r), x1 = min(dims.x - 1, c.x + r);
+    for (int z = z0; z <= z1; ++z) {
+      for (int y = y0; y <= y1; ++y) {
+        bool rim = abs(z - c.z) == r || abs(y - c.y) == r;
+        int step = rim ? 1 : 2 * r;
+        for (int x = rim ? x0 : c.x - r; x <= x1; x += step) {
+          if (x < x0) continue;
+          uint k = uint((z * dims.y + y) * dims.x + x);
+          uint last = uint(D[starts + k + 1u]);
+          for (uint s = uint(D[starts + k]); s < last; ++s) {
+            if (s == a) continue;
+            uint sb = seeds + 3u * s;
+            P double ab = sqrt_rn(vor_d2(sb, dv(sa)));
+            P double w = (vor_d2(sb, p) - best) / (2.0lf * ab);
+            if (w < wall) wall = w;
+          }
+        }
+      }
+    }
+  }
+  P double r = wall - 0.5lf * D[m];
+  return r;
+}
 )";
   // The stack's size is spelled out, so the source stays what it was.
   for (std::size_t at = s.find("BVH_STACK"); at != std::string::npos; at = s.find("BVH_STACK", at)) {
@@ -522,6 +632,13 @@ void main() {{
                            num(j, layout::kInfillKind), vec(j, layout::kInfillOrigin), num(j, layout::kInfillCell));
         break;
       }
+      case FieldOp::Voronoi:
+        static_assert(layout::kVoronoiThickness == 0 && layout::kVoronoiOrigin == 1 &&
+                          layout::kVoronoiCell == 4 && layout::kVoronoiDims == 5 &&
+                          layout::kVoronoiStarts == 8,
+                      "voronoi() in the helpers spells out field_layout's Voronoi numbers");
+        body = fmt::format("r = voronoi(U[{}u], p);", 1 + j);
+        break;
       case FieldOp::Instances:
         static_assert(layout::kInstancesFirst == 1 && layout::kInstanceStride == 13 &&
                           layout::kInstanceInverse == 0 && layout::kInstanceOrigin == 9 &&

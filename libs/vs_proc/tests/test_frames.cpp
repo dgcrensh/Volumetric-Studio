@@ -164,3 +164,75 @@ TEST_CASE("Scatter on a surface lies on its patch, facing along its normal", "[p
     CHECK(std::abs(t.linear.cols[2].x) == Approx(1.0f));
   }
 }
+
+TEST_CASE("Offset moves frames along their own z, into the boundary", "[proc][frames][offset]") {
+  // Box 0..40 x 0..30 x 0..20; the patch lies on x = 40, its normal +x, so
+  // into the boundary is -x.
+  const Row r = row();
+  Graph g;
+  const Id s = g.add("scatter.surface", "Points",
+                     {{"surface", Setting(r.boxes.surfaces[0].to_string())}, {"count", Setting(20.0)}});
+  const Id o = g.add("frames.offset", "Inward", {{"distance", Setting(3.0)}});
+  g.link(s, "frames", o, "frames");
+  const auto on = frames_of(g, s, r.inputs);
+  REQUIRE(on.size() == 20);
+
+  SECTION("one layer, into the boundary by default") {
+    const auto f = frames_of(g, o, r.inputs);
+    REQUIRE(f.size() == 20);
+    for (std::size_t i = 0; i < f.size(); ++i) {
+      CHECK(at(f[i]).x == Approx(37.0));
+      CHECK(at(f[i]).y == Approx(at(on[i]).y));
+      CHECK(at(f[i]).z == Approx(at(on[i]).z));
+      CHECK(f[i].linear.cols[2].x == on[i].linear.cols[2].x);  // rotation kept
+    }
+  }
+  SECTION("along z goes out instead") {
+    g.find_node(o)->settings["direction"] = Setting(std::string("along_z"));
+    const auto f = frames_of(g, o, r.inputs);
+    REQUIRE(f.size() == 20);
+    CHECK(at(f[0]).x == Approx(43.0));
+  }
+  SECTION("layers stack at distance + k step, frame by frame") {
+    g.find_node(o)->settings["layers"] = Setting(3.0);
+    g.find_node(o)->settings["step"] = Setting(5.0);
+    const auto f = frames_of(g, o, r.inputs);
+    REQUIRE(f.size() == 60);
+    CHECK(at(f[0]).x == Approx(37.0));
+    CHECK(at(f[1]).x == Approx(32.0));
+    CHECK(at(f[2]).x == Approx(27.0));
+    CHECK(at(f[3]).y == Approx(at(on[1]).y));
+  }
+  SECTION("margin drops points too close to the boundary") {
+    // Layers at x = 37, 27, 17 and 7. Points on the patch lie 5 to 15 mm
+    // from the y and z faces, so only the first layer (3 mm from x = 40)
+    // is less than the 4 mm margin deep.
+    g.find_node(o)->settings["layers"] = Setting(4.0);
+    g.find_node(o)->settings["step"] = Setting(10.0);
+    g.find_node(o)->settings["margin"] = Setting(4.0);
+    const auto f = frames_of(g, o, r.inputs);
+    REQUIRE(f.size() == 60);
+    for (const auto& t : f) {
+      CHECK((at(t).x == Approx(27.0) || at(t).x == Approx(17.0) || at(t).x == Approx(7.0)));
+    }
+  }
+  SECTION("a margin nothing satisfies is infeasible") {
+    g.find_node(o)->settings["margin"] = Setting(50.0);
+    core::Diagnostics problems;
+    CHECK(frames_of(g, o, r.inputs, &problems).empty());
+    REQUIRE(problems.size() == 1);
+    CHECK(problems.items().front().code == "proc.node.infeasible");
+  }
+  SECTION("bad values are infeasible") {
+    core::Diagnostics problems;
+    g.find_node(o)->settings["layers"] = Setting(0.0);
+    CHECK(frames_of(g, o, r.inputs, &problems).empty());
+    REQUIRE(problems.size() == 1);
+    CHECK(problems.items().front().code == "proc.node.infeasible");
+    g.find_node(o)->settings["layers"] = Setting(1.0);
+    g.find_node(o)->settings["margin"] = Setting(-1.0);
+    CHECK(frames_of(g, o, r.inputs, &problems).empty());
+    REQUIRE(problems.size() == 1);
+    CHECK(problems.items().front().code == "proc.node.infeasible");
+  }
+}

@@ -2,8 +2,10 @@
 // fields, and output.publish.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -81,6 +83,36 @@ void add_infill_nodes(NodeRegistry& r) {
       },
       {{"surface", PropertyKind::Choice, Setting(std::string("gyroid")),
         {"gyroid", "schwarz_p", "diamond"}, "the surface"}}));
+
+  r.add(make(
+      "field.voronoi", "infill",
+      "Walls `thickness` thick on the faces of the Voronoi cells round the frames' origins (the "
+      "seeds): each cell holds the points nearer its seed than any other. Seed from a surface "
+      "with scatter.surface and frames.offset for cells that follow it; intersect with the "
+      "boundary to fill a volume",
+      {in("frames", P::Frames), in("thickness", P::Scalar, num(1))}, {out("field", P::Field)},
+      [](NodeContext& ctx) {
+        const double t = ctx.scalar("thickness");
+        if (!check_size(ctx, "thickness", t)) return;
+        const Frames& frames = ctx.frames("frames");
+        if (frames->frames.size() < 2) {
+          ctx.infeasible({"frames"}, fmt::format("Voronoi cells need at least 2 seeds; there are {}",
+                                                 frames->frames.size()));
+          return;
+        }
+        std::vector<std::array<float, 3>> at;
+        at.reserve(frames->frames.size());
+        for (const auto& f : frames->frames) {
+          at.push_back({f.translation.x, f.translation.y, f.translation.z});
+        }
+        std::sort(at.begin(), at.end());
+        if (std::adjacent_find(at.begin(), at.end()) != at.end()) {
+          ctx.infeasible({"frames"}, "two seeds are at the same place, so their cells have no wall "
+                                     "between them; space them apart (scatter's spacing)");
+          return;
+        }
+        ctx.set("field", voronoi_field(*frames, t));
+      }));
 
   r.add(make("field.thicken", "field",
              "A wall `thickness` thick centred on a field's surface (turns a surface or a sheet's "

@@ -56,8 +56,8 @@ scenes::Mixed scene_for(const std::string& name) {
 
 }  // namespace
 
-TEST_CASE("The template library lists three templates, each a valid graph", "[proc][templates]") {
-  REQUIRE(templates().size() == 3);
+TEST_CASE("The template library lists four templates, each a valid graph", "[proc][templates]") {
+  REQUIRE(templates().size() == 4);
   for (const auto& t : templates()) {
     INFO(t.name);
     TemplateOptions o;
@@ -74,11 +74,12 @@ TEST_CASE("The template library lists three templates, each a valid graph", "[pr
   }
   CHECK(make_template("teapot").error().code == "proc.template.unknown");
   CHECK(make_template("bolt_bosses").error().code == "proc.template.surface");
+  CHECK(make_template("voronoi_walls").error().code == "proc.template.surface");
 }
 
 TEST_CASE("Acceptance 1: each template generates, passes containment, welds and exports to 3MF",
           "[proc][templates][acceptance]") {
-  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses");
+  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses", "voronoi_walls");
   INFO(name);
   const scenes::Mixed m = scene_for(name);
   eval::EngineOptions eo;
@@ -140,7 +141,7 @@ TEST_CASE("Acceptance 1: each template generates, passes containment, welds and 
 }
 
 TEST_CASE("Template meshes are identical across thread counts", "[proc][templates]") {
-  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses");
+  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses", "voronoi_walls");
   INFO(name);
   const scenes::Mixed m = scene_for(name);
   core::Hash256 first{};
@@ -159,4 +160,27 @@ TEST_CASE("Template meshes are identical across thread counts", "[proc][template
       CHECK(mesh_hash(*pm) == first);
     }
   }
+}
+
+TEST_CASE("A cancelled Voronoi evaluation keeps nothing", "[proc][templates][voronoi][cancel]") {
+  const scenes::Mixed m = scene_for("voronoi_walls");
+  eval::EngineOptions eo;
+  eo.threads = 2;
+  eval::Engine engine(kSettings, eo);
+  install(engine);
+  eval::CancellationToken token;
+  token.cancel();
+  eval::EvaluateOptions o;
+  o.cancel = token;
+  const auto ev = engine.evaluate(m.project, o);
+  CHECK(ev.cancelled);
+  const auto* p = ev.find(m.procedural);
+  REQUIRE(p != nullptr);
+  CHECK_FALSE(p->contents);
+  CHECK(engine.cache().memory_size() == 0);
+  // The next evaluation generates it whole.
+  const auto again = engine.evaluate(m.project);
+  INFO(scenes::codes(again.diagnostics));
+  REQUIRE(again.ok());
+  CHECK(again.find(m.procedural)->regenerated);
 }
