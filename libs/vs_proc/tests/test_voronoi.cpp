@@ -173,7 +173,6 @@ TEST_CASE("Voronoi fields hash by their seeds and thickness", "[proc][field][vor
 TEST_CASE("The Voronoi node checks its seeds and thickness", "[proc][nodes][voronoi]") {
   const auto with = [](const std::vector<dvec3>& points, double thickness) {
     Graph g;
-    Id last;
     Id merged;
     for (std::size_t i = 0; i < points.size(); ++i) {
       const Id p = g.add("frames.point", "P" + std::to_string(i), {{"position", Setting(points[i])}});
