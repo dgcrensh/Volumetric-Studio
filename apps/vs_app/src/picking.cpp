@@ -13,6 +13,9 @@ namespace {
 using core::dvec3;
 
 constexpr double kCosTolerance = 1e-6;  // about 0.08 degrees
+// How far a drawn face's surface may pass from a sampled reference's points
+// (mm): the display keeps the kernel's faces, so only rounding separates them.
+constexpr double kSampleTolerance = 1e-4;
 
 bool parallel(const dvec3& a, const dvec3& b) { return std::abs(dot(normalize(a), normalize(b))) > 1.0 - kCosTolerance; }
 
@@ -26,7 +29,23 @@ std::optional<NamedSurface> from_named(const feature::NamedFace& f) {
   NamedSurface s;
   s.plane = f.plane;
   s.cylinder = f.cylinder;
+  s.samples = f.samples;
   return s;
+}
+
+// Whether a drawn face lies on a sampled surface (a Bézier's side, decision
+// 0040), facing the same way: the test vs_feature finds such faces by.
+bool on_samples(const kernel::Face& face, const std::vector<feature::SurfacePoint>& samples, double tolerance) {
+  if (samples.empty() || kernel::face_surface_plane(face) || kernel::face_cylinder(face)) return false;
+  std::vector<dvec3> points;
+  points.reserve(samples.size());
+  for (const auto& s : samples) points.push_back(s.point);
+  const auto normals = kernel::surface_normals_at(face, points, tolerance);
+  if (!normals) return false;
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    if (dot(normalize((*normals)[i]), normalize(samples[i].normal)) < 1.0 - kCosTolerance) return false;
+  }
+  return true;
 }
 
 const feature::NamedFace* find_named(const std::vector<feature::NamedFace>& faces, const std::string& name) {
@@ -61,7 +80,12 @@ std::optional<Choice<feature::FaceRef>> name_face(const SceneItem& item, std::si
   }
   const auto surface = face_surface(part->face);
   if (!surface) {
-    why = "That face is neither planar nor cylindrical, so no reference names it.";
+    // Another kind of surface: a sampled reference may lie on it.
+    for (const auto& c : choices.faces) {
+      const auto named = named_surface(evaluation, tree_volume, c.ref);
+      if (named && on_samples(part->face, named->samples, kSampleTolerance)) return c;
+    }
+    why = "No face reference offered here lies on that curved face (it may belong to a feature further down).";
     return std::nullopt;
   }
   for (const auto& c : choices.faces) {
@@ -124,6 +148,17 @@ std::optional<NamedSurface> named_surface(const eval::Evaluation& evaluation, co
 }
 
 bool same_surface(const NamedSurface& a, const NamedSurface& b, double tolerance) {
+  if (!a.samples.empty() || !b.samples.empty()) {
+    if (a.samples.size() != b.samples.size()) return false;
+    for (std::size_t i = 0; i < a.samples.size(); ++i) {
+      if (length(a.samples[i].point - b.samples[i].point) >= tolerance ||
+          !parallel(a.samples[i].normal, b.samples[i].normal) ||
+          dot(a.samples[i].normal, b.samples[i].normal) < 0) {
+        return false;
+      }
+    }
+    return true;
+  }
   if (a.cylinder.has_value() != b.cylinder.has_value()) return false;
   if (a.cylinder) {
     const auto& ca = *a.cylinder;

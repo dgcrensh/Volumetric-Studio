@@ -64,6 +64,11 @@ constexpr std::array kTools = {
     Tool{T::SketchCircle, "sketch_circle", "Circle", "Circle from its centre and a point on it", "", Icon::Circle},
     Tool{T::SketchArc, "sketch_arc", "Arc", "Arc from its centre, start and end", "", Icon::Arc},
     Tool{T::SketchSlot, "sketch_slot", "Slot", "Slot from two centres and a width", "", Icon::Slot},
+    Tool{T::SketchBezier, "sketch_bezier", "Curve",
+         "Bézier curve from its start, two handles and its end, chained until Esc", "", Icon::Bezier},
+    // Sketch: insert
+    Tool{T::ImportSvg, "import_svg", "SVG", "Import the outlines of an SVG file into the sketch", "",
+         Icon::ImportSvg},
     // Sketch: constrain
     Tool{T::Coincident, "coincident", "Coincident", "Join two points", "", Icon::Coincident},
     Tool{T::PointOnCurve, "point_on_curve", "On curve", "Keep a point on a line or circle", "", Icon::PointOnCurve},
@@ -133,8 +138,9 @@ std::vector<ToolGroup> make_groups(Context context) {
       };
     case Context::Sketch:
       return {
-          {"Draw", {T::SketchSelect, T::SketchLine, T::SketchRectangle, T::SketchCircle, T::SketchArc, T::SketchPoint,
-                    T::SketchSlot}, 5},
+          {"Draw", {T::SketchSelect, T::SketchLine, T::SketchRectangle, T::SketchCircle, T::SketchArc, T::SketchBezier,
+                    T::SketchPoint, T::SketchSlot}, 6},
+          {"Insert", {T::ImportSvg}, kAll},
           {"Constrain", {T::Coincident, T::PointOnCurve, T::Horizontal, T::Vertical, T::Parallel, T::Perpendicular,
                          T::Tangent, T::Equal, T::Symmetric, T::Fix}, 4},
           {"Dimension", {T::Distance, T::HorizontalDistance, T::VerticalDistance, T::Angle, T::Radius, T::Diameter},

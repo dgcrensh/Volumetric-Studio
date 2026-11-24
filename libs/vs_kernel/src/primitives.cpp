@@ -23,6 +23,8 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRep_Tool.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <Geom_BezierCurve.hxx>
+#include <NCollection_Array1.hxx>
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom_Plane.hxx>
 #include <Geom_Surface.hxx>
@@ -49,6 +51,16 @@ using detail::topo;
 using detail::to_occ;
 
 // --- loops ------------------------------------------------------------------
+
+dvec3 BezierSegment::at(double t) const {
+  const double u = 1.0 - t;
+  const dvec3 a = start * u + control1 * t;
+  const dvec3 b = control1 * u + control2 * t;
+  const dvec3 c = control2 * u + end * t;
+  const dvec3 d = a * u + b * t;
+  const dvec3 e = b * u + c * t;
+  return d * u + e * t;
+}
 
 Loop Loop::polygon(std::span<const dvec3> points) {
   Loop loop;
@@ -137,6 +149,32 @@ Result<TopoDS_Wire> make_wire(const std::vector<ProfileSegment>& segs, bool clos
                                  fmt::format("Profile line {} could not be built", i));
       }
       edge = mk.Edge();
+    } else if (const auto* bezier = std::get_if<BezierSegment>(&segs[i])) {
+      const double reach = core::distance(bezier->start, bezier->control1) +
+                           core::distance(bezier->control1, bezier->control2) +
+                           core::distance(bezier->control2, bezier->end);
+      if (!is_finite(bezier->control1) || !is_finite(bezier->control2)) {
+        return Diagnostic::error("kernel.profile.not_finite",
+                                 "A profile point is not a finite number");
+      }
+      if (reach < settings.min_feature_size_mm()) {
+        return Diagnostic::error("kernel.profile.degenerate_segment",
+                                 fmt::format("Profile curve {} is shorter than the minimum "
+                                             "feature size ({} mm)",
+                                             i, settings.min_feature_size_mm()));
+      }
+      NCollection_Array1<gp_Pnt> poles(1, 4);
+      poles.SetValue(1, BRep_Tool::Pnt(v1));
+      poles.SetValue(2, to_occ(bezier->control1));
+      poles.SetValue(3, to_occ(bezier->control2));
+      poles.SetValue(4, BRep_Tool::Pnt(v2));
+      const occ::handle<Geom_BezierCurve> curve = new Geom_BezierCurve(poles);
+      BRepBuilderAPI_MakeEdge mk(curve, v1, v2);
+      if (!mk.IsDone()) {
+        return Diagnostic::error("kernel.profile.bad_segment",
+                                 fmt::format("Profile curve {} could not be built", i));
+      }
+      edge = mk.Edge();
     } else {
       const auto& arc = std::get<ArcSegment>(segs[i]);
       GC_MakeArcOfCircle curve(to_occ(arc.start), to_occ(arc.through), to_occ(arc.end));
@@ -165,13 +203,18 @@ Result<TopoDS_Wire> make_wire(const std::vector<ProfileSegment>& segs, bool clos
   return w;
 }
 
-// Points along a loop (segment starts and arc midpoints), used for the
+// Points along a loop (segment starts, arc midpoints and points a third and
+// two thirds along Béziers), used for the
 // orientation of holes and for side-of-axis checks.
 std::vector<dvec3> loop_samples(const Loop& loop) {
   std::vector<dvec3> pts;
   for (const auto& s : loop.segments) {
     pts.push_back(segment_start(s));
     if (const auto* arc = std::get_if<ArcSegment>(&s)) pts.push_back(arc->through);
+    if (const auto* bezier = std::get_if<BezierSegment>(&s)) {
+      pts.push_back(bezier->at(1.0 / 3.0));
+      pts.push_back(bezier->at(2.0 / 3.0));
+    }
   }
   return pts;
 }

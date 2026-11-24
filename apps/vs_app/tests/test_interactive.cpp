@@ -157,6 +157,52 @@ TEST_CASE("A picked face or edge names what the reference lists name", "[app][pi
   }
 }
 
+TEST_CASE("A Bezier's curved side and its edges can be picked", "[app][picking][bezier]") {
+  // The bracket plus a "D" in the layout, away from it: a line and a Bézier
+  // bulging to +x, extruded 10 mm.
+  model::Project project = samples::load("bracket.vsproj");
+  sketch::Sketch d(Id::random(), "D");
+  const Id bottom = d.add_point({300, 0});
+  const Id top = d.add_point({300, 40});
+  d.add_line(bottom, top);
+  const Id curve = d.add_bezier(top, d.add_point({340, 40}), d.add_point({340, 0}), bottom);
+  auto& layout = project.document.layout;
+  const Id sk = layout.add(feature::SketchFeature{d, feature::PrincipalPlane::XY});
+  feature::ExtrudeFeature e;
+  e.sketch = sk;
+  e.depth = feature::Param::of(10);
+  const Id body = layout.add(e);
+  REQUIRE_FALSE(model::check(project.document).has_errors());
+
+  const auto ev = samples::evaluate(project);
+  const auto scene = app::build_scene(ev, core::ProductSettings::defaults());
+  check_resolution(ev, scene, Id{});
+
+  // A fillet's edges: the curved side against either cap or the flat side.
+  // (A cap may be named by an earlier reference on its plane, as any pick.)
+  const feature::FaceRef side{body, "side:" + curve.to_string()};
+  const auto choices = app::reference_choices(ev, Id{});
+  const auto* item = scene.find(body, app::ItemRole::LayoutSolid);
+  REQUIRE(item != nullptr);
+  bool face_picked = false;
+  std::size_t edges_picked = 0;
+  for (std::size_t f = 0; f < item->mesh.faces.size(); ++f) {
+    const auto r = app::resolve_pick(scene, ev, Id{}, choices, {body, app::ItemRole::LayoutSolid,
+                                                               app::PickedPart::Kind::Face, f});
+    if (r.face && *r.face == side) {
+      face_picked = true;
+      CHECK_FALSE(r.plane);  // not a plane to sketch on
+    }
+  }
+  for (std::size_t k = 0; k < item->mesh.edges.size(); ++k) {
+    const auto r = app::resolve_pick(scene, ev, Id{}, choices, {body, app::ItemRole::LayoutSolid,
+                                                               app::PickedPart::Kind::Edge, k});
+    if (r.edge && r.edge->other && (r.edge->face == side || *r.edge->other == side)) ++edges_picked;
+  }
+  CHECK(face_picked);
+  CHECK(edges_picked >= 3);  // the curve along the start, along the end, and a joint with the line's side
+}
+
 TEST_CASE("A sketch dimension's handle sits on what it sizes and points the way it grows", "[app][drag]") {
   sketch::Sketch sk(Id::random(), "S");
   const Id line = sk.add_line(core::dvec2{0, 0}, core::dvec2{30, 0});

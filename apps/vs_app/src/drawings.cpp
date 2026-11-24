@@ -303,6 +303,7 @@ std::vector<AnchorChoice> anchor_choices(const eval::Evaluation& evaluation, con
   // A face the dimension can measure: a plane facing along it, or (for a
   // linear one, by its axis, or a diameter) a cylinder facing the viewer.
   auto fits = [&](const feature::NamedFace& f) {
+    if (!f.samples.empty()) return false;
     if (f.cylinder) return parallel(f.cylinder->axis.direction, frame.toward);
     return !diameter && parallel(f.plane.normal, along);
   };

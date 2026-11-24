@@ -14,6 +14,7 @@ vs_add_library(vs_sketch
     src/serialize.cpp
     src/sketch.cpp
     src/solver.cpp
+    src/svg.cpp
   PUBLIC_LINKS
     vs::vs_core
     vs::vs_kernel
@@ -24,12 +25,14 @@ vs_add_library(vs_sketch
 vs_add_library_tests(vs_sketch
   SOURCES
     tests/canonical.cpp
+    tests/test_bezier.cpp
     tests/test_design_rules.cpp
     tests/test_module.cpp
     tests/test_profile.cpp
     tests/test_serialize.cpp
     tests/test_sketch.cpp
     tests/test_solver.cpp
+    tests/test_svg.cpp
   LINKS
     vs::vs_kernel)
 

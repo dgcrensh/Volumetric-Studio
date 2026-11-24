@@ -333,10 +333,11 @@ class DocumentBuilder {
         in.result.axis = axis;
         in.result.faces.push_back(
             {"patch", {cb.frame.origin, cb.frame.normal()},
-             kernel::Cylinder{axis, cb.cylinder->radius, /*inward=*/false}});
+             kernel::Cylinder{axis, cb.cylinder->radius, /*inward=*/false}, {}});
       } else {
         in.result.plane = cb.frame;
-        in.result.faces.push_back({"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt});
+        in.result.faces.push_back(
+            {"patch", {cb.frame.origin, cb.frame.normal()}, std::nullopt, {}});
       }
       inputs.references.push_back(std::move(in));
     }
@@ -462,7 +463,7 @@ class DocumentBuilder {
     }
     const auto& face = std::get<feature::FaceRef>(ref);
     for (const auto& n : (*r)->faces) {
-      if (n.name == face.name && !n.cylinder) return feature::frame_for(n.plane);
+      if (n.name == face.name && !n.curved()) return feature::frame_for(n.plane);
     }
     return error(by, "model.connection.plane_failed",
                  fmt::format("'{}' has no flat face '{}'", level_tree().subject(id).label,
@@ -637,12 +638,12 @@ class DocumentBuilder {
       return faces;
     }
     const auto raw_box = kernel::bounding_box(boundary);
-    faces.push_back({"-x", {raw_box.min, {-1, 0, 0}}, std::nullopt});
-    faces.push_back({"+x", {raw_box.max, {1, 0, 0}}, std::nullopt});
-    faces.push_back({"-y", {raw_box.min, {0, -1, 0}}, std::nullopt});
-    faces.push_back({"+y", {raw_box.max, {0, 1, 0}}, std::nullopt});
-    faces.push_back({"-z", {raw_box.min, {0, 0, -1}}, std::nullopt});
-    faces.push_back({"+z", {raw_box.max, {0, 0, 1}}, std::nullopt});
+    faces.push_back({"-x", {raw_box.min, {-1, 0, 0}}, std::nullopt, {}});
+    faces.push_back({"+x", {raw_box.max, {1, 0, 0}}, std::nullopt, {}});
+    faces.push_back({"-y", {raw_box.min, {0, -1, 0}}, std::nullopt, {}});
+    faces.push_back({"+y", {raw_box.max, {0, 1, 0}}, std::nullopt, {}});
+    faces.push_back({"-z", {raw_box.min, {0, 0, -1}}, std::nullopt, {}});
+    faces.push_back({"+z", {raw_box.max, {0, 0, 1}}, std::nullopt, {}});
     return faces;
   }
 
@@ -949,6 +950,7 @@ class DocumentBuilder {
         for (auto& f : r.faces) {
           f.plane.origin = f.plane.origin - offset;
           if (f.cylinder) f.cylinder->axis.origin = f.cylinder->axis.origin - offset;
+          for (auto& s : f.samples) s.point = s.point - offset;
         }
       }
     }

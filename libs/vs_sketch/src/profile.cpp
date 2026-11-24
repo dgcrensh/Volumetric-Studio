@@ -30,7 +30,8 @@ struct Curve {
   LineGeometry line{};
   ArcGeometry arc{};
   CircleGeometry circle{};
-  // End points (lines and arcs): point ids and positions.
+  BezierGeometry bezier{};
+  // End points (lines, arcs and Béziers): point ids and positions.
   Id end_ids[2];
   dvec2 ends[2];
 };
@@ -54,6 +55,12 @@ std::vector<Curve> profile_curves(const Sketch& sketch) {
       c.end_ids[1] = a->end;
       c.ends[0] = c.arc.start();
       c.ends[1] = c.arc.end();
+    } else if (const auto* b = e.as<Bezier>()) {
+      c.bezier = *bezier_geometry(sketch, e.id);
+      c.end_ids[0] = b->start;
+      c.end_ids[1] = b->end;
+      c.ends[0] = c.bezier.start();
+      c.ends[1] = c.bezier.end();
     } else if (e.as<Circle>() != nullptr) {
       c.circle = *circle_geometry(sketch, e.id);
     } else {
@@ -76,6 +83,8 @@ double edge_area(const Curve& c, bool reversed) {
                     g.radius * g.radius * t);
     };
     a = f(g.end_angle) - f(g.start_angle);
+  } else if (c.kind == EntityKind::Bezier) {
+    a = c.bezier.area_term();
   } else {
     a = std::numbers::pi * c.circle.radius * c.circle.radius;
   }
@@ -84,10 +93,19 @@ double edge_area(const Curve& c, bool reversed) {
 
 // Points along an edge in traversal order, excluding its last point. Arcs
 // get at least kSamplesPerTurn chords a turn, and more on large radii, so
-// that no chord strays more than `deflection` from the arc.
+// that no chord strays more than `deflection` from the arc; Béziers take
+// equal steps in t, as many as keep every chord within `deflection`.
 void sample_edge(const Curve& c, bool reversed, double deflection, std::vector<dvec2>& out) {
   if (c.kind == EntityKind::Line) {
     out.push_back(reversed ? c.line.end : c.line.start);
+    return;
+  }
+  if (c.kind == EntityKind::Bezier) {
+    const int n = c.bezier.steps_within(deflection, 8);
+    for (int i = 0; i < n; ++i) {
+      const double t = static_cast<double>(reversed ? n - i : i) / n;
+      out.push_back(c.bezier.at(t));
+    }
     return;
   }
   ArcGeometry g;
@@ -266,7 +284,7 @@ Result<std::vector<Profile>> extract_profiles(const Sketch& sketch,
   const double slack = tol + deflection;
   const auto sketch_ref = sketch.sketch_subject();
 
-  std::vector<Curve> open;  // lines and arcs; curve i has ends 2i and 2i + 1
+  std::vector<Curve> open;  // lines, arcs and Béziers; curve i has ends 2i and 2i + 1
   std::vector<Loop> loops;
   for (const auto& c : profile_curves(sketch)) {
     if (c.kind != EntityKind::Circle) {
@@ -477,6 +495,11 @@ kernel::Loop to_kernel_loop(const Sketch& sketch, const ProfileLoop& loop) {
                            plane.to_model(arc->at(0.5 * (arc->start_angle + arc->end_angle))),
                            plane.to_model(arc->end())};
       if (edge.reversed) std::swap(s.start, s.end);
+      out.segments.emplace_back(s);
+    } else if (const auto bezier = bezier_geometry(sketch, edge.entity)) {
+      kernel::BezierSegment s{plane.to_model(bezier->p[0]), plane.to_model(bezier->p[1]),
+                              plane.to_model(bezier->p[2]), plane.to_model(bezier->p[3])};
+      if (edge.reversed) s = s.reversed();
       out.segments.emplace_back(s);
     }
   }

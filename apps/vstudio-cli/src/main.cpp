@@ -31,6 +31,9 @@ Commands:
   tolerance-spike   Run the M1 kernel tolerance spike and print its measurements
   sketch-solve <in.json> [out.json]
                     Solve a sketch file, report it and its profiles, optionally write it
+  sketch-import-svg <file.svg> [--out sketch.json] [--scale k] [--dpi n] [--gap mm]
+                    [--fix] [--no-smooth]
+                    Import an SVG file's outlines as a sketch, report it and its profiles
   build <in.json> [out.step]
                     Rebuild a feature tree file, report it, optionally write the body as STEP
   info <project.vsproj> [--build]
@@ -217,6 +220,9 @@ int main(int argc, char** argv) {
   }
   if (command == "sketch-solve") {
     return vs::cli::run_sketch_solve(rest, std::cout, std::cerr);
+  }
+  if (command == "sketch-import-svg") {
+    return vs::cli::run_sketch_import_svg(rest, std::cout, std::cerr);
   }
   if (command == "build") {
     return vs::cli::run_build(rest, std::cout, std::cerr);

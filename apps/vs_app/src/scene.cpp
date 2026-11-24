@@ -386,6 +386,15 @@ std::vector<std::vector<fvec3>> sketch_lines(const sketch::Sketch& sketch) {
           out.push_back(arc(g->center, g->radius, g->start_angle, g->end_angle));
         }
         break;
+      case sketch::EntityKind::Bezier:
+        if (const auto g = sketch::bezier_geometry(sketch, e.id)) {
+          const int n = std::min(g->steps_within(0.01, 16), 512);
+          std::vector<fvec3> line;
+          line.reserve(static_cast<std::size_t>(n) + 1);
+          for (int i = 0; i <= n; ++i) line.push_back(model(g->at(static_cast<double>(i) / n)));
+          out.push_back(std::move(line));
+        }
+        break;
     }
   }
   return out;

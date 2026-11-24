@@ -128,6 +128,13 @@ class SketchMode : public QWidget {
   // Refreshes the list, the status and the canvas from the editor.
   void refresh();
 
+  // S1: Import SVG previews on the sketch. Each preview replaces the last;
+  // keep_import() keeps it as one undo step, drop_import() takes it out.
+  core::Result<sketch::SvgImport> preview_import(std::string_view svg, const sketch::SvgImportOptions& options);
+  void keep_import();
+  void drop_import();
+  [[nodiscard]] bool import_previewing() const { return import_previewing_; }
+
  signals:
   void finished(bool accept);
   // The drawing tool changed (set_tool()).
@@ -145,6 +152,7 @@ class SketchMode : public QWidget {
   QAction* undo_ = nullptr;
   QAction* redo_ = nullptr;
   bool refreshing_ = false;
+  bool import_previewing_ = false;
 };
 
 }  // namespace vs::app

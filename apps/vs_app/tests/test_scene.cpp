@@ -219,3 +219,14 @@ TEST_CASE("Volumes are coloured by their place in the volume tree, as the tree's
   }
   CHECK(drawn >= 4);
 }
+
+TEST_CASE("A sketch's Bezier is drawn as a fine polyline on its plane", "[app][scene][bezier]") {
+  vs::sketch::Sketch s;
+  s.add_bezier(vs::core::dvec2{0, 0}, vs::core::dvec2{0, 30}, vs::core::dvec2{40, 30},
+               vs::core::dvec2{40, 0});
+  const auto lines = vs::app::sketch_lines(s);
+  REQUIRE(lines.size() == 1);
+  CHECK(lines.front().size() > 16);
+  CHECK(lines.front().front().x == 0.0f);
+  CHECK(lines.front().back().x == 40.0f);
+}

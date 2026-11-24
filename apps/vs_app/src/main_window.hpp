@@ -119,6 +119,7 @@ class QTreeWidgetItem;
 namespace vs::app {
 
 class ConnectionDialog;
+class SvgImportDialog;
 class Browser;
 class ProblemsButton;
 class ProblemsDrawer;
@@ -254,6 +255,12 @@ class MainWindow : public QMainWindow {
   SketchMode* new_sketch(const feature::PlaneRef& plane, const std::string& name = {});
   SketchMode* edit_sketch(const Id& volume, const Id& feature);
   [[nodiscard]] SketchMode* sketch_mode() const { return sketch_mode_; }
+  // S1: Insert > SVG in sketch mode. Asks for a file when `path` is empty,
+  // previews the import on the sketch and opens its options; OK keeps it as
+  // one sketch step, Cancel takes it out. Null when no sketch is open, no
+  // file was chosen, or the file can't be read (said in the status bar).
+  SvgImportDialog* import_svg(QString path = {});
+  [[nodiscard]] SvgImportDialog* svg_import_dialog() const;
   // The dock holding the open sketch's status and constraint list (U1).
   [[nodiscard]] QDockWidget& sketch_dock() { return *sketch_dock_; }
 
@@ -585,6 +592,7 @@ class MainWindow : public QMainWindow {
   std::uint64_t drawn_ticket_ = 0;  // the newest redraw that came back
 
   SketchMode* sketch_mode_ = nullptr;
+  QPointer<SvgImportDialog> svg_dialog_;
   // U1 phase 3: the sketch's status and constraints in a right-hand dock
   // while sketching, and the left docks folded away meanwhile.
   QDockWidget* sketch_dock_ = nullptr;

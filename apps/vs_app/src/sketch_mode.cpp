@@ -211,6 +211,15 @@ void SketchView::paintEvent(QPaintEvent*) {
       const double start = a->start_angle * 180.0 / std::numbers::pi;
       const double span = (a->end_angle - a->start_angle) * 180.0 / std::numbers::pi;
       p.drawArc(box, static_cast<int>(std::lround(start * 16)), static_cast<int>(std::lround(span * 16)));
+    } else if (const auto b = sketch::bezier_geometry(sk, e.id)) {
+      QPainterPath path(to_screen(b->p[0]));
+      path.cubicTo(to_screen(b->p[1]), to_screen(b->p[2]), to_screen(b->p[3]));
+      p.drawPath(path);
+      // Handles: thin lines from each end to its control point.
+      QPen handle(colour(e), 1.0, Qt::DotLine);
+      p.setPen(handle);
+      p.drawLine(to_screen(b->p[0]), to_screen(b->p[1]));
+      p.drawLine(to_screen(b->p[3]), to_screen(b->p[2]));
     }
   }
   for (const auto& e : sk.entities()) {
@@ -229,6 +238,7 @@ void SketchView::paintEvent(QPaintEvent*) {
     if (const auto l = sketch::line_geometry(sk, id)) return to_screen((l->start + l->end) * 0.5);
     if (const auto c = sketch::circle_geometry(sk, id)) return to_screen(c->center + dvec2{c->radius, 0});
     if (const auto a = sketch::arc_geometry(sk, id)) return to_screen(a->at((a->start_angle + a->end_angle) / 2));
+    if (const auto b = sketch::bezier_geometry(sk, id)) return to_screen(b->at(0.5));
     return std::nullopt;
   };
   QFont font = p.font();
@@ -264,7 +274,8 @@ void SketchView::paintEvent(QPaintEvent*) {
 
   // The shape in progress.
   std::vector<dvec2> pending = editor_.pending();
-  if (pending.empty() && editor_.tool() == SketchTool::Line && !editor_.chain_end().is_null()) {
+  if (pending.empty() && (editor_.tool() == SketchTool::Line || editor_.tool() == SketchTool::Bezier) &&
+      !editor_.chain_end().is_null()) {
     pending.push_back(*sk.point(editor_.chain_end()));
   }
   if (!pending.empty()) {
@@ -285,6 +296,20 @@ void SketchView::paintEvent(QPaintEvent*) {
       case SketchTool::Slot:
         for (const auto& q : pending) p.drawLine(to_screen(q), hover_);
         break;
+      case SketchTool::Bezier: {
+        // The control polygon so far, and the curve once both handles are down.
+        QPolygonF polygon;
+        for (const auto& q : pending) polygon << to_screen(q);
+        polygon << hover_;
+        p.drawPolyline(polygon);
+        if (pending.size() == 3) {
+          QPainterPath curve(to_screen(pending[0]));
+          curve.cubicTo(to_screen(pending[1]), to_screen(pending[2]), hover_);
+          p.setPen(QPen(kSelected, 1.5));
+          p.drawPath(curve);
+        }
+        break;
+      }
       default: break;
     }
   }
@@ -599,6 +624,27 @@ void SketchMode::refresh() {
 void SketchMode::update_actions() {
   undo_->setEnabled(editor_->can_undo());
   redo_->setEnabled(editor_->can_redo());
+}
+
+core::Result<sketch::SvgImport> SketchMode::preview_import(std::string_view svg,
+                                                          const sketch::SvgImportOptions& options) {
+  if (import_previewing_) editor_->undo_and_forget();
+  auto imported = editor_->import_svg(svg, options);
+  import_previewing_ = imported.ok();
+  if (import_previewing_) view_->fit();
+  refresh();
+  emit view_->edited();
+  return imported;
+}
+
+void SketchMode::keep_import() { import_previewing_ = false; }
+
+void SketchMode::drop_import() {
+  if (!import_previewing_) return;
+  import_previewing_ = false;
+  editor_->undo_and_forget();
+  refresh();
+  emit view_->edited();
 }
 
 }  // namespace vs::app

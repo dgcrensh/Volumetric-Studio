@@ -4,6 +4,9 @@
 #include <cmath>
 
 #include <BRepAdaptor_Surface.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <Geom_Surface.hxx>
+#include <Precision.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -254,6 +257,50 @@ std::optional<Plane> face_surface_plane(const Face& face) {
     if (!pln.Direct()) normal = -normal;
     if (f.Orientation() == TopAbs_REVERSED) normal = -normal;
     return Plane{detail::from_occ(pln.Location()), normal};
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+std::optional<std::vector<dvec3>> surface_normals_at(const Face& face,
+                                                     std::span<const dvec3> points,
+                                                     double tolerance) {
+  if (face.is_empty() || points.empty()) return std::nullopt;
+  try {
+    const TopoDS_Face& f = TopoDS::Face(topo(face));
+    const occ::handle<Geom_Surface> surface = BRep_Tool::Surface(f);
+    if (surface.IsNull()) return std::nullopt;
+    // Search the whole surface: an infinite direction (an extrusion's
+    // length, a plane) is searched well beyond the face, which a trimmed
+    // or split piece of the same surface may not reach.
+    double u1 = 0, u2 = 0, v1 = 0, v2 = 0;
+    surface->Bounds(u1, u2, v1, v2);
+    double fu1 = 0, fu2 = 0, fv1 = 0, fv2 = 0;
+    BRepTools::UVBounds(f, fu1, fu2, fv1, fv2);
+    constexpr double kReach = 1e4;
+    if (Precision::IsInfinite(u1)) u1 = fu1 - kReach;
+    if (Precision::IsInfinite(u2)) u2 = fu2 + kReach;
+    if (Precision::IsInfinite(v1)) v1 = fv1 - kReach;
+    if (Precision::IsInfinite(v2)) v2 = fv2 + kReach;
+    std::vector<dvec3> normals;
+    normals.reserve(points.size());
+    for (const auto& p : points) {
+      GeomAPI_ProjectPointOnSurf projection(detail::to_occ(p), surface, u1, u2, v1, v2);
+      if (projection.NbPoints() == 0 || projection.LowerDistance() > tolerance) {
+        return std::nullopt;
+      }
+      double u = 0, v = 0;
+      projection.LowerDistanceParameters(u, v);
+      gp_Pnt at;
+      gp_Vec du, dv;
+      surface->D1(u, v, at, du, dv);
+      const gp_Vec n = du.Crossed(dv);
+      if (n.Magnitude() <= 1e-12) return std::nullopt;
+      dvec3 normal = core::normalize(from_occ(n));
+      if (f.Orientation() == TopAbs_REVERSED) normal = -normal;
+      normals.push_back(normal);
+    }
+    return normals;
   } catch (...) {
     return std::nullopt;
   }

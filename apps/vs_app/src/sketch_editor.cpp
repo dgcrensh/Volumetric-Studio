@@ -39,6 +39,7 @@ std::string_view to_string(SketchTool tool) {
     case SketchTool::Circle: return "circle";
     case SketchTool::Arc: return "arc";
     case SketchTool::Slot: return "slot";
+    case SketchTool::Bezier: return "curve";
   }
   return "?";
 }
@@ -94,6 +95,9 @@ bool SketchEditor::is_free(const Id& entity) const {
     if (const auto* l = e->as<sketch::Line>()) return free(l->start) || free(l->end);
     if (const auto* a = e->as<sketch::Arc>()) return free(a->center) || free(a->start) || free(a->end);
     if (const auto* c = e->as<sketch::Circle>()) return free(c->center);
+    if (const auto* b = e->as<sketch::Bezier>()) {
+      return free(b->start) || free(b->control1) || free(b->control2) || free(b->end);
+    }
   }
   return false;
 }
@@ -172,7 +176,7 @@ std::vector<Id> SketchEditor::click(dvec2 p, const Id& snap) {
   pending_.push_back(p);
   pending_snaps_.push_back(snap);
   // A chain of lines starts each line at the last one's end.
-  if (tool_ == SketchTool::Line && !chain_end_.is_null() && pending_.size() == 1) {
+  if ((tool_ == SketchTool::Line || tool_ == SketchTool::Bezier) && !chain_end_.is_null() && pending_.size() == 1) {
     pending_.insert(pending_.begin(), *sketch_.point(chain_end_));
     pending_snaps_.insert(pending_snaps_.begin(), chain_end_);
   }
@@ -185,6 +189,7 @@ std::vector<Id> SketchEditor::click(dvec2 p, const Id& snap) {
     case SketchTool::Circle: needed = 2; break;
     case SketchTool::Arc:
     case SketchTool::Slot: needed = 3; break;
+    case SketchTool::Bezier: needed = 4; break;
   }
   if (pending_.size() < needed) return {};
   return finish_shape();
@@ -287,12 +292,30 @@ std::vector<Id> SketchEditor::finish_shape() {
       sketch_.equal(arc_a, arc_b);
       break;
     }
+    case SketchTool::Bezier: {
+      // Ends in one place make a loop, which needs handles apart from them.
+      const double reach = distance(pts[0], pts[1]) + distance(pts[1], pts[2]) + distance(pts[2], pts[3]);
+      if (reach <= 0) break;
+      const bool closed = (!snaps[0].is_null() && snaps[0] == snaps[3]) || pts[0] == pts[3];
+      if (closed && (pts[1] == pts[0] || pts[2] == pts[0])) break;
+      const Id a = point_at(pts[0], snaps[0]);
+      const Id c1 = sketch_.add_point(pts[1]);
+      const Id c2 = sketch_.add_point(pts[2]);
+      const Id b = closed ? a : point_at(pts[3], snaps[3]);
+      if (a != snaps[0] || snaps[0].is_null()) added.push_back(a);
+      added.push_back(c1);
+      added.push_back(c2);
+      if (b != a && (b != snaps[3] || snaps[3].is_null())) added.push_back(b);
+      keep(sketch_.add_bezier(a, c1, c2, b));
+      chain_end_ = snaps[3].is_null() && !closed ? b : Id{};
+      break;
+    }
   }
   const Id chain = chain_end_;
   const SketchTool tool = tool_;
   pending_.clear();
   pending_snaps_.clear();
-  chain_end_ = tool == SketchTool::Line ? chain : Id{};
+  chain_end_ = tool == SketchTool::Line || tool == SketchTool::Bezier ? chain : Id{};
   if (added.empty()) {
     // Nothing was made (a zero-size shape): drop the empty step.
     sketch_ = std::move(undo_.back());
@@ -342,6 +365,20 @@ double SketchEditor::distance_to(const Id& entity, dvec2 p) const {
       while (a >= g->start_angle + two_pi) a -= two_pi;
       if (a <= g->end_angle) return std::abs(distance(p, g->center) - g->radius);
       return std::min(distance(p, g->start()), distance(p, g->end()));
+    }
+    case EntityKind::Bezier: {
+      const auto g = sketch::bezier_geometry(sketch_, entity);
+      if (!g) return std::numeric_limits<double>::infinity();
+      // Nearest chord of a fine polyline: hit-testing needs pixels, not microns.
+      const int n = std::min(g->steps_within(1e-3, 32), 1024);
+      double best = std::numeric_limits<double>::infinity();
+      dvec2 prev = g->at(0.0);
+      for (int i = 1; i <= n; ++i) {
+        const dvec2 next = g->at(static_cast<double>(i) / n);
+        best = std::min(best, segment_distance(p, prev, next));
+        prev = next;
+      }
+      return best;
     }
   }
   return std::numeric_limits<double>::infinity();
@@ -520,6 +557,7 @@ bool SketchEditor::remove(const std::vector<Id>& ids) {
     if (const auto* l = e.as<sketch::Line>()) return {l->start, l->end};
     if (const auto* c = e.as<sketch::Circle>()) return {c->center};
     if (const auto* a = e.as<sketch::Arc>()) return {a->center, a->start, a->end};
+    if (const auto* b = e.as<sketch::Bezier>()) return {b->start, b->control1, b->control2, b->end};
     return {};
   };
   // Curves that use a removed point go too.
@@ -547,6 +585,24 @@ bool SketchEditor::remove(const std::vector<Id>& ids) {
   finish_tool();
   solve();
   return true;
+}
+
+bool SketchEditor::undo_and_forget() {
+  if (!undo()) return false;
+  redo_.pop_back();
+  return true;
+}
+
+core::Result<sketch::SvgImport> SketchEditor::import_svg(std::string_view svg,
+                                                        const sketch::SvgImportOptions& options) {
+  finish_tool();
+  sketch::Sketch next = sketch_;
+  auto imported = sketch::import_svg(svg, next, options, settings_);
+  if (!imported) return imported;
+  record();
+  sketch_ = std::move(next);
+  solve();
+  return imported;
 }
 
 bool SketchEditor::toggle_construction(const std::vector<Id>& ids) {

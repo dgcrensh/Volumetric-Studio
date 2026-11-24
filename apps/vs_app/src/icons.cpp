@@ -68,6 +68,17 @@ IconStroke join(std::initializer_list<std::vector<IconPoint>> pieces) {
   return s;
 }
 
+// Points along a cubic Bézier.
+std::vector<IconPoint> bezier_points(IconPoint p0, IconPoint p1, IconPoint p2, IconPoint p3) {
+  std::vector<IconPoint> out;
+  for (int i = 0; i <= 16; ++i) {
+    const double t = i / 16.0, u = 1 - t;
+    const double a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    out.push_back({a * p0.x + b * p1.x + c * p2.x + d * p3.x, a * p0.y + b * p1.y + c * p2.y + d * p3.y});
+  }
+  return out;
+}
+
 IconStroke mirrored(IconStroke s) {
   for (auto& p : s.points) p.x = kIconGrid - p.x;
   return s;
@@ -172,6 +183,12 @@ Strokes make(Icon icon) {
     case Icon::Variables:
       return {poly({{8, 4}, {6, 8}, {6, 16}, {8, 20}}), poly({{16, 4}, {18, 8}, {18, 16}, {16, 20}}), line(10, 9, 14, 15),
               line(14, 9, 10, 15)};
+    case Icon::Bezier:
+      return {{bezier_points({4, 19}, {6, 5}, {18, 19}, {20, 5}), false, false, false}, dashed(line(4, 19, 6, 5)),
+              dashed(line(18, 19, 20, 5)), dot(4, 19), dot(20, 5)};
+    case Icon::ImportSvg:
+      return {{bezier_points({4, 9}, {8, 1}, {16, 15}, {20, 6}), false, false, false}, line(12, 11, 12, 19),
+              poly({{8.5, 15.5}, {12, 19}, {15.5, 15.5}}), line(4, 21.5, 20, 21.5)};
   }
   return {dot(12, 12)};
 }
@@ -186,7 +203,8 @@ constexpr std::array kIcons = {
     Icon::HorizontalDistance, Icon::VerticalDistance, Icon::Angle, Icon::Radius, Icon::Diameter, Icon::Construction,
     Icon::Delete, Icon::Cancel, Icon::Bake, Icon::Unbake, Icon::Drawing, Icon::View, Icon::Export, Icon::Close,
     Icon::Regenerate, Icon::Undo, Icon::Redo, Icon::FitAll, Icon::Error, Icon::Warning, Icon::ChevronLeft,
-    Icon::ChevronRight, Icon::ChevronUp, Icon::ChevronDown, Icon::Browser, Icon::Variables,
+    Icon::ChevronRight, Icon::ChevronUp, Icon::ChevronDown, Icon::Browser, Icon::Variables, Icon::Bezier,
+    Icon::ImportSvg,
 };
 
 constexpr std::array<std::string_view, kIcons.size()> kNames = {
@@ -197,7 +215,7 @@ constexpr std::array<std::string_view, kIcons.size()> kNames = {
     "symmetric", "fix", "distance", "horizontal_distance", "vertical_distance", "angle", "radius", "diameter",
     "construction", "delete", "cancel", "bake", "unbake", "drawing", "view", "export", "close", "regenerate",
     "undo", "redo", "fit_all", "error", "warning", "chevron_left", "chevron_right", "chevron_up", "chevron_down",
-    "browser", "variables",
+    "browser", "variables", "bezier", "import_svg",
 };
 
 }  // namespace

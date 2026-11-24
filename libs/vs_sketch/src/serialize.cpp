@@ -95,6 +95,11 @@ Entity read_entity(const json& j, std::size_t index) {
     e.geometry = Arc{read_id(member(j, "center", where), where + ".center"),
                      read_id(member(j, "start", where), where + ".start"),
                      read_id(member(j, "end", where), where + ".end")};
+  } else if (type == "bezier") {
+    e.geometry = Bezier{read_id(member(j, "start", where), where + ".start"),
+                        read_id(member(j, "control1", where), where + ".control1"),
+                        read_id(member(j, "control2", where), where + ".control2"),
+                        read_id(member(j, "end", where), where + ".end")};
   } else {
     fail(fmt::format("{}.type \"{}\" is not a known entity type", where, type));
   }
@@ -157,9 +162,14 @@ std::string to_json(const Sketch& sketch) {
           } else if constexpr (std::is_same_v<T, Circle>) {
             j["center"] = g.center.to_string();
             j["radius"] = g.radius;
-          } else {
+          } else if constexpr (std::is_same_v<T, Arc>) {
             j["center"] = g.center.to_string();
             j["start"] = g.start.to_string();
+            j["end"] = g.end.to_string();
+          } else {
+            j["start"] = g.start.to_string();
+            j["control1"] = g.control1.to_string();
+            j["control2"] = g.control2.to_string();
             j["end"] = g.end.to_string();
           }
         },

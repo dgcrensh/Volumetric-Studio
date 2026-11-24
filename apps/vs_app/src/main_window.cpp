@@ -7,6 +7,7 @@
 #include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -59,6 +60,7 @@
 #include "theme.hpp"
 #include "reference_choices.hpp"
 #include "sketch_mode.hpp"
+#include "svg_import_dialog.hpp"
 #include "viewport.hpp"
 #include "vs/core/version.hpp"
 #include "vs/draw/drawing.hpp"
@@ -2333,6 +2335,13 @@ SketchMode* MainWindow::open_sketch_mode(const Id& volume, feature::Feature f, b
 
 void MainWindow::finish_sketch(bool accept) {
   if (sketch_mode_ == nullptr || !sketch_session_) return;
+  // An import still open keeps what it shows (Cancel drops the sketch anyway).
+  if (svg_dialog_) {
+    SvgImportDialog* d = svg_dialog_;
+    svg_dialog_ = nullptr;
+    sketch_mode_->keep_import();
+    d->close();
+  }
   if (accept) {
     const sketch::Sketch& sk = sketch_mode_->editor().sketch();
     core::Diagnostics d;
@@ -2823,7 +2832,7 @@ void MainWindow::build_context_bar() {
   tool_actions_ = new ToolActions(this);
   // The Sketch tab's drawing tools show which one is in use (U1 phase 3).
   for (ToolId t : {ToolId::SketchSelect, ToolId::SketchPoint, ToolId::SketchLine, ToolId::SketchRectangle,
-                   ToolId::SketchCircle, ToolId::SketchArc, ToolId::SketchSlot}) {
+                   ToolId::SketchCircle, ToolId::SketchArc, ToolId::SketchSlot, ToolId::SketchBezier}) {
     tool_actions_->action(t)->setCheckable(true);
   }
   connect(tool_actions_, &ToolActions::triggered, this, &MainWindow::run_tool);
@@ -2902,7 +2911,7 @@ void MainWindow::refresh_tools() {
       {ToolId::SketchSelect, SketchTool::Select}, {ToolId::SketchPoint, SketchTool::Point},
       {ToolId::SketchLine, SketchTool::Line},     {ToolId::SketchRectangle, SketchTool::Rectangle},
       {ToolId::SketchCircle, SketchTool::Circle}, {ToolId::SketchArc, SketchTool::Arc},
-      {ToolId::SketchSlot, SketchTool::Slot}};
+      {ToolId::SketchSlot, SketchTool::Slot},     {ToolId::SketchBezier, SketchTool::Bezier}};
   for (const auto& [id, t] : draw_tools) {
     tool_actions_->action(id)->setChecked(sketch_mode_ != nullptr && sketch_mode_->editor().tool() == t);
   }
@@ -3022,6 +3031,8 @@ void MainWindow::run_tool(ToolId id) {
     case ToolId::SketchCircle: sketch_tool(SketchTool::Circle); break;
     case ToolId::SketchArc: sketch_tool(SketchTool::Arc); break;
     case ToolId::SketchSlot: sketch_tool(SketchTool::Slot); break;
+    case ToolId::SketchBezier: sketch_tool(SketchTool::Bezier); break;
+    case ToolId::ImportSvg: import_svg(); break;
     case ToolId::Construction:
       if (sketch_mode_ != nullptr) sketch_mode_->toggle_construction();
       break;
@@ -3043,6 +3054,56 @@ void MainWindow::run_tool(ToolId id) {
     default: break;  // geometry and constraint tools are handled above
   }
   refresh_tools();
+}
+
+SvgImportDialog* MainWindow::svg_import_dialog() const { return svg_dialog_.data(); }
+
+SvgImportDialog* MainWindow::import_svg(QString path) {
+  if (sketch_mode_ == nullptr) return nullptr;
+  if (svg_dialog_) svg_dialog_->reject();  // one import at a time
+  if (path.isEmpty()) {
+    path = QFileDialog::getOpenFileName(this, tr("Import SVG"), QString(), tr("SVG drawings (*.svg)"));
+    if (path.isEmpty()) return nullptr;
+  }
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    status_label_->setText(tr("Can't read %1").arg(QFileInfo(path).fileName()));
+    return nullptr;
+  }
+  auto text = std::make_shared<const std::string>(file.readAll().toStdString());
+  auto* d = new SvgImportDialog(path, sketch_mode_);
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  svg_dialog_ = d;
+  SketchMode* mode = sketch_mode_;
+  const auto preview = [d, mode, text] {
+    const auto imported = mode->preview_import(*text, d->options());
+    if (imported) {
+      d->set_message(describe_import(*imported), false);
+    } else {
+      mode->drop_import();
+      d->set_message(qstr(imported.error().message));
+    }
+  };
+  connect(d, &EditDialog::changed, this, preview);
+  connect(d, &EditDialog::commitRequested, this, [this, d, mode] {
+    if (!mode->import_previewing()) {
+      d->set_message(tr("Nothing to import with these options."));
+      return;
+    }
+    mode->keep_import();
+    svg_dialog_ = nullptr;
+    d->accept();
+    refresh_tools();
+  });
+  connect(d, &QDialog::rejected, this, [this, d, mode] {
+    if (svg_dialog_ != d) return;  // kept, or closed with the sketch
+    svg_dialog_ = nullptr;
+    mode->drop_import();
+    refresh_tools();
+  });
+  preview();
+  d->show();
+  return d;
 }
 
 void MainWindow::import_contents_dialog(const Id& volume) {

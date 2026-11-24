@@ -133,6 +133,8 @@ add_library(vs_app_ui STATIC
   src/session.hpp
   src/sketch_mode.cpp
   src/sketch_mode.hpp
+  src/svg_import_dialog.cpp
+  src/svg_import_dialog.hpp
   src/viewport.cpp
   src/viewport.hpp
   src/widgets.cpp
@@ -178,6 +180,7 @@ if(VS_BUILD_TESTS)
     tests/test_session.cpp
     tests/test_viewport_ui.cpp
     tests/test_ship_ui.cpp
+    tests/test_svg_import_ui.cpp
     tests/test_window.cpp)
   target_link_libraries(vs_app_tests PRIVATE vs_app_ui vs_model_test_fixtures Catch2::Catch2)
   target_compile_definitions(vs_app_tests PRIVATE

@@ -3,6 +3,8 @@
 // The reference forms each constraint kind accepts, shared by validation and
 // the solver so the two can't disagree.
 
+#include <array>
+#include <optional>
 #include <vector>
 
 #include "vs/sketch/sketch.hpp"
@@ -24,6 +26,33 @@ inline std::vector<EntityKind> ref_kinds(const Sketch& sketch, const Constraint&
 
 inline bool is_round(EntityKind k) { return k == EntityKind::Circle || k == EntityKind::Arc; }
 inline bool is_curve(EntityKind k) { return k != EntityKind::Point; }
+
+// The end points of a line, arc or Bézier (null ids for anything else).
+inline std::array<Id, 2> end_points(const Sketch& sketch, const Id& curve) {
+  const Entity* e = sketch.find_entity(curve);
+  if (e == nullptr) return {};
+  if (const auto* l = e->as<Line>()) return {l->start, l->end};
+  if (const auto* a = e->as<Arc>()) return {a->start, a->end};
+  if (const auto* b = e->as<Bezier>()) return {b->start, b->end};
+  return {};
+}
+
+// A point that is an end (not a centre or handle) of both curves `a` and `b`.
+inline std::optional<Id> shared_end(const Sketch& sketch, const Id& a, const Id& b) {
+  for (const auto& p : end_points(sketch, a)) {
+    if (p.is_null()) continue;
+    for (const auto& q : end_points(sketch, b)) {
+      if (p == q) return p;
+    }
+  }
+  return std::nullopt;
+}
+
+// The handle of Bézier `bezier` at its end point `end`: the control point
+// next to it.
+inline Id handle_at(const Bezier& bezier, const Id& end) {
+  return end == bezier.start ? bezier.control1 : bezier.control2;
+}
 
 // True when `c`'s references fit one of its kind's forms (see sketch.hpp).
 inline bool match_form(const Sketch& sketch, const Constraint& c) {
@@ -51,8 +80,18 @@ inline bool match_form(const Sketch& sketch, const Constraint& c) {
     case ConstraintKind::Perpendicular:
       return n == 2 && k[0] == K::Line && k[1] == K::Line;
     case ConstraintKind::Tangent:
-      return n == 2 && ((k[0] == K::Line && is_round(k[1])) ||
-                        (is_round(k[0]) && is_round(k[1])));
+      if (n != 2) return false;
+      if (k[0] == K::Bezier && k[1] == K::Bezier) {
+        // Two Béziers only where they share an end point (decision 0040).
+        return shared_end(sketch, c.refs[0], c.refs[1]).has_value();
+      }
+      if (k[0] == K::Bezier || k[1] == K::Bezier) {
+        // With a line, circle or arc: at a shared end, or anywhere along
+        // the Bézier (S1 phase 4).
+        const K other = k[0] == K::Bezier ? k[1] : k[0];
+        return other == K::Line || is_round(other);
+      }
+      return (k[0] == K::Line && is_round(k[1])) || (is_round(k[0]) && is_round(k[1]));
     case ConstraintKind::Equal:
       return n == 2 && ((k[0] == K::Line && k[1] == K::Line) ||
                         (is_round(k[0]) && is_round(k[1])));
