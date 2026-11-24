@@ -70,6 +70,23 @@ reads the boundary, so it isn't node-cached (like `scatter.volume`).
 `frames.offset` (margin = thickness) → `field.voronoi`, intersected with
 the boundary and joined to a `wall` skin like the other templates.
 
-**Left for later.** Thickness graded by a field; seeds from the
-boundary's own skin or one named face of it (connection surfaces only,
-for now); edge struts; a dedicated benchmark.
+**Seeds from the boundary (second PR).** `scatter.boundary` samples the
+boundary's skin, or one named face of it, with z out of the volume (the
+tessellation's triangle normal), so `frames.offset` takes them in as it
+does a connection surface's. A face is named as the boundary names it
+(`VolumeBuild::boundary_faces`) and stored in a new
+`PropertyKind::BoundaryFace`. Tessellating every named face for every
+procedural volume would double the boundary's tessellation for graphs
+that never read one, so `gather_inputs()` takes the names a graph reads
+(`GatherOptions`, from `boundary_faces_read()`) and finds their faces
+with the same match face references use (`feature::on_named_face()`).
+Names are checked three times under one code,
+`proc.reference.boundary_face`: against what the document allows
+(`check_volume_graph()`), against the built boundary (`gather_inputs()`),
+and against the inputs an evaluation was given. The node is uncached,
+like the other scatters that read inputs. Face names hold a layout
+feature's id, so a graph naming one belongs to its volume; the
+`voronoi_skin` template defaults to the whole skin for that reason.
+
+**Left for later.** Thickness graded by a field; edge struts; a
+dedicated benchmark.

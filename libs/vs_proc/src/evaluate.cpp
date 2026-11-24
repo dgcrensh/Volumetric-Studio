@@ -163,6 +163,20 @@ GraphEvaluation evaluate_graph(const Graph& graph, const GraphInputs& inputs,
       const NodeType* type = registry.find(node.type);
       if (type == nullptr) continue;
       for (const auto& prop : type->properties) {
+        if (prop.kind == PropertyKind::BoundaryFace) {
+          // V1: gather_inputs() tessellates only the faces it was asked for.
+          const Setting* s = node.find_setting(prop.name);
+          const auto* name = s != nullptr ? std::get_if<std::string>(s) : nullptr;
+          if (name != nullptr && !name->empty() && !inputs.boundary_faces.contains(*name)) {
+            d.add(Diagnostic::error(
+                "proc.reference.boundary_face",
+                fmt::format("'{}' reads boundary face '{}', which these inputs don't have; gather "
+                            "them with boundary_faces_read() of the graph",
+                            node_subject(node).label, *name),
+                {node_subject(node)}));
+          }
+          continue;
+        }
         if (prop.kind != PropertyKind::Surface) continue;
         const Setting* s = node.find_setting(prop.name);
         const auto* text = s != nullptr ? std::get_if<std::string>(s) : nullptr;

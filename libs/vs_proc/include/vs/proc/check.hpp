@@ -43,8 +43,14 @@
 //                               would see past its own inputs (design rule 1)
 //   proc.reference.template     (check_volume_graph, L4) a node fills children from a
 //                               template the composite doesn't have
+//   proc.reference.boundary_face (check_volume_graph, V1) a node reads a boundary
+//                               face the volume's boundary can't have: not one of
+//                               a box's six sides, or not a face of one of its
+//                               boundary features (gather_inputs() finds the face)
 
 #include <functional>
+#include <string>
+#include <vector>
 
 #include "vs/core/diagnostic.hpp"
 #include "vs/model/document.hpp"
@@ -59,6 +65,12 @@ core::Diagnostics check_graph(const Graph& graph, const NodeRegistry& registry =
 // `document`.
 core::Diagnostics check_volume_graph(const Graph& graph, const model::Document& document,
                                      const Id& volume, const NodeRegistry& registry = library());
+
+// V1: the named boundary faces the graph's nodes read (BoundaryFace
+// properties that aren't empty), sorted, each once: GatherOptions for
+// gather_inputs().
+std::vector<std::string> boundary_faces_read(const Graph& graph,
+                                             const NodeRegistry& registry = library());
 
 // proc.graph.missing_input and proc.graph.no_output: the graph can't run
 // yet, but nothing in it is wrong.

@@ -8,6 +8,7 @@
 
 #include "vs/model/hierarchy.hpp"
 #include "vs/feature/expression.hpp"
+#include "reference_choices.hpp"
 #include "vs/proc/check.hpp"
 
 namespace vs::app {
@@ -67,8 +68,18 @@ std::string unique_node_name(const Graph& graph, const std::string& title) {
   }
 }
 
-GraphContext graph_context(const model::Document& document, const Id& volume) {
+GraphContext graph_context(const model::Document& document, const Id& volume,
+                           const eval::Evaluation* evaluation) {
   GraphContext c;
+  // V1: the boundary's named faces, labelled as the feature dialogs label them.
+  if (evaluation != nullptr) {
+    for (const auto& f : reference_choices(*evaluation, volume).faces) {
+      if (f.ref.feature != volume) continue;  // a connection surface's patch
+      std::string label = f.label;
+      if (const std::string_view prefix = "Boundary: "; label.starts_with(prefix)) label.erase(0, prefix.size());
+      c.boundary_faces.push_back({f.ref.name, std::move(label)});
+    }
+  }
   for (const auto& s : document.connections) {
     if (model::joins(document, s, volume)) c.surfaces.push_back({s.id, s.name, s.type()});
   }
@@ -146,7 +157,8 @@ std::optional<std::map<std::string, Setting, std::less<>>> default_settings(cons
         if (!graph.parameters.empty()) settings.emplace(prop.name, Setting(graph.parameters.front().name));
         break;
       case PropertyKind::Template:
-      case PropertyKind::TemplateParameter: settings.emplace(prop.name, Setting(std::string())); break;
+      case PropertyKind::TemplateParameter:
+      case PropertyKind::BoundaryFace: settings.emplace(prop.name, Setting(std::string())); break;
       case PropertyKind::Name: {
         std::set<std::string, std::less<>> used;
         for (const auto& n : graph.nodes) {

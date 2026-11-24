@@ -43,6 +43,9 @@ scenes::Mixed scene_for(const std::string& name) {
   TemplateOptions o;
   o.surface = m.surface;
   o.cell_size = 0.5;
+  // voronoi_skin seeds on the face opposite the joint, through the engine's
+  // gathering of named faces (V1).
+  if (name == "voronoi_skin") o.boundary_face = "-x";
   auto graph = make_template(name, o);
   REQUIRE(graph);
   m.project.document.find_volume(m.procedural)->contents = model::ProceduralContents{to_json(*graph)};
@@ -56,8 +59,8 @@ scenes::Mixed scene_for(const std::string& name) {
 
 }  // namespace
 
-TEST_CASE("The template library lists four templates, each a valid graph", "[proc][templates]") {
-  REQUIRE(templates().size() == 4);
+TEST_CASE("The template library lists five templates, each a valid graph", "[proc][templates]") {
+  REQUIRE(templates().size() == 5);
   for (const auto& t : templates()) {
     INFO(t.name);
     TemplateOptions o;
@@ -75,11 +78,19 @@ TEST_CASE("The template library lists four templates, each a valid graph", "[pro
   CHECK(make_template("teapot").error().code == "proc.template.unknown");
   CHECK(make_template("bolt_bosses").error().code == "proc.template.surface");
   CHECK(make_template("voronoi_walls").error().code == "proc.template.surface");
+  // voronoi_skin needs no surface; it seeds on the whole skin by default.
+  const auto skin = make_template("voronoi_skin");
+  REQUIRE(skin);
+  CHECK(boundary_faces_read(*skin).empty());
+  TemplateOptions face;
+  face.boundary_face = "+z";
+  CHECK(boundary_faces_read(*make_template("voronoi_skin", face)) == std::vector<std::string>{"+z"});
 }
 
 TEST_CASE("Acceptance 1: each template generates, passes containment, welds and exports to 3MF",
           "[proc][templates][acceptance]") {
-  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses", "voronoi_walls");
+  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses", "voronoi_walls",
+                                     "voronoi_skin");
   INFO(name);
   const scenes::Mixed m = scene_for(name);
   eval::EngineOptions eo;
@@ -141,7 +152,8 @@ TEST_CASE("Acceptance 1: each template generates, passes containment, welds and 
 }
 
 TEST_CASE("Template meshes are identical across thread counts", "[proc][templates]") {
-  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses", "voronoi_walls");
+  const std::string name = GENERATE("gyroid_infill", "graded_lattice", "bolt_bosses", "voronoi_walls",
+                                     "voronoi_skin");
   INFO(name);
   const scenes::Mixed m = scene_for(name);
   core::Hash256 first{};

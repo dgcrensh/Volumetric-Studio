@@ -100,6 +100,7 @@ enum class PropertyKind {
   Name,       // a legal variable name the node introduces (output.publish)
   Template,   // L4: the name of one of the composite's templates (empty: placeholders)
   TemplateParameter,  // L4: a parameter name of that template (empty: none)
+  BoundaryFace,  // V1: one of the boundary's named faces (empty: the whole boundary)
 };
 
 struct PropertySpec {

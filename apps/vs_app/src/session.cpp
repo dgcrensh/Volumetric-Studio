@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "vs/core/hash.hpp"
+#include "vs/proc/check.hpp"
 #include "vs/proc/generator.hpp"
 #include "vs/proc/inputs.hpp"
 #include "vs/proc/inspect.hpp"
@@ -176,10 +177,16 @@ void Session::preview_job(std::uint64_t id, const NodePreviewRequest& request,
       if (doc.volumes[i].id == request.volume) index = i;
     }
     if (index && *index < s->evaluation.build.volumes.size()) {
-      const core::Hash256 key = detail::inputs_key(doc, request.volume);
+      // V1: the boundary faces the graph reads are part of its inputs.
+      const proc::GatherOptions gather{proc::boundary_faces_read(request.graph)};
+      core::Hasher h;
+      h.add(detail::inputs_key(doc, request.volume));
+      h.add(static_cast<std::uint64_t>(gather.boundary_faces.size()));
+      for (const auto& f : gather.boundary_faces) h.add(std::string_view(f));
+      const core::Hash256 key = h.finalize();
       inputs = preview_->find_inputs(key);
       if (!inputs) {
-        auto gathered = proc::gather_inputs(doc, s->evaluation.build, *index, settings_);
+        auto gathered = proc::gather_inputs(doc, s->evaluation.build, *index, settings_, gather);
         if (gathered) {
           inputs = std::make_shared<const proc::GraphInputs>(std::move(gathered).value());
           preview_->keep_inputs(key, inputs);

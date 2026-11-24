@@ -1,8 +1,11 @@
 #include "vs/proc/inputs.hpp"
 #include "vs/model/hierarchy.hpp"
 
+#include <algorithm>
+
 #include <fmt/format.h>
 
+#include "vs/feature/rebuild.hpp"
 #include "vs/kernel/queries.hpp"
 #include "vs/kernel/tessellate.hpp"
 #include "vs/mesh/tessellate.hpp"
@@ -32,7 +35,8 @@ std::string first_error(const core::Diagnostics& diagnostics) {
 
 core::Result<GraphInputs> gather_inputs(const model::Document& document,
                                         const model::DocumentBuild& layout, std::size_t index,
-                                        const core::ProductSettings& settings) {
+                                        const core::ProductSettings& settings,
+                                        const GatherOptions& gather) {
   const model::Volume& v = document.volumes.at(index);
   const model::VolumeBuild& vb = layout.volumes.at(index);
   GraphInputs in;
@@ -60,6 +64,48 @@ core::Result<GraphInputs> gather_inputs(const model::Document& document,
   }
   in.boundary = std::make_shared<const TriangleDistance>(vm.mesh, true);
   in.bounds = kernel::bounding_box(vb.boundary);
+
+  // V1: the named faces asked for, from one tessellation of the boundary.
+  if (!gather.boundary_faces.empty()) {
+    kernel::TessellationParams params;
+    params.deflection = kInputDeflection;
+    const auto tess = kernel::tessellate(vb.boundary, params, settings);
+    if (!tess) {
+      return Diagnostic::error(
+          "proc.input.boundary",
+          fmt::format("'{}': its boundary's faces can't be tessellated: [{}] {}",
+                      in.volume_subject.label, tess.error().code, tess.error().message),
+          {in.volume_subject});
+    }
+    for (const auto& name : gather.boundary_faces) {
+      if (in.boundary_faces.contains(name)) continue;
+      const auto named = std::find_if(vb.boundary_faces.begin(), vb.boundary_faces.end(),
+                                      [&](const feature::NamedFace& f) { return f.name == name; });
+      if (named == vb.boundary_faces.end()) {
+        return Diagnostic::error(
+            "proc.reference.boundary_face",
+            fmt::format("'{}': its graph reads boundary face '{}', which its boundary doesn't have",
+                        in.volume_subject.label, name),
+            {in.volume_subject});
+      }
+      mesh::Mesh face;
+      for (const auto& f : tess->faces) {
+        if (!feature::on_named_face(*named, f.face, settings.linear_tolerance_mm)) continue;
+        const auto base = static_cast<std::uint32_t>(face.vertex_count());
+        for (const auto& p : f.points) face.add_vertex(core::to_fp32(p));
+        for (const auto& t : f.triangles) face.add_triangle(base + t[0], base + t[1], base + t[2], v.id);
+      }
+      if (face.triangle_count() == 0) {
+        return Diagnostic::error(
+            "proc.reference.boundary_face",
+            fmt::format("'{}': its graph reads boundary face '{}', but no face of the built "
+                        "boundary lies on it (a keep-out may have cut it away)",
+                        in.volume_subject.label, name),
+            {in.volume_subject});
+      }
+      in.boundary_faces.emplace(name, std::make_shared<const TriangleDistance>(face, false));
+    }
+  }
 
   for (const auto& s : document.connections) {
     if (!model::joins(document, s, v.id)) continue;
