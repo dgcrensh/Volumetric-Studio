@@ -722,6 +722,16 @@ so they are registered. A new library must also be added to
   `output.publish`. Fields use `sin_det()` / `cos_det()`, never libm.
   Contents are always a field: meshes reach them by `convert.mesh_to_field`.
   Shared node helpers are in `src/node_helpers.hpp`.
+- **Voronoi walls** (V1, decision 0042): `field.voronoi` /
+  `voronoi_field()` is the exact distance to the cell walls round the
+  frames' origins (nearest bisector plane, less half the thickness);
+  seeds sit in a uniform grid in the node's numbers and are searched
+  shell by shell with a lower bound, equal to a brute-force minimum bit
+  for bit (`test_voronoi.cpp`); `voronoi()` in vs_gpu's `glsl.cpp` is
+  the same search, step for step. `frames.offset` moves frames along
+  their own z (`into_boundary` picks the inner side per frame, in
+  `layers` with a `margin`), so seeds scattered on a surface go in and
+  the cells follow it.
 - **Outputs**: the generator measures the mesh (`eval::measure_mesh()`)
   and fills `Published` outputs from `output.publish` nodes
   (`proc.output.unpublished` when missing).
@@ -743,7 +753,8 @@ so they are registered. A new library must also be added to
 - **Bake** (`bake.hpp`): `bake()` stores the generated mesh as a 3MF blob
   and keeps the graph; `unbake()` restores it, same content hash.
 - **Templates** (`templates.hpp`): `gyroid_infill`, `graded_lattice`,
-  `bolt_bosses` (needs a bolted flange); ids derive from the name, so a
+  `bolt_bosses` (needs a bolted flange), `voronoi_walls` (needs the
+  surface it seeds on); ids derive from the name, so a
   template is the same graph every time. Saved copies in
   `tests/data/templates`.
 - **Tests** build box rows in code (`tests/scenes.*`, and `mixed()`: a
@@ -794,7 +805,7 @@ so they are registered. A new library must also be added to
 - **What.** Procedural fields sampled on the GPU with exactly the CPU's
   values (decision 0018, plan `docs/plans/L1-gpu-field-evaluation.md`).
   `gpu::install()` opens an OpenGL 4.3 compute context (WGL; other
-  platforms say why not), runs `self_check()` (21 fields, every value
+  platforms say why not), runs `self_check()` (24 fields, every value
   compared) and installs itself as `proc::set_sampling_backend()`;
   `proc::sample()` then sends grids of 32k+ samples to it, `sample_cpu()`
   is the CPU alone. `sample_gpu()` forces the GPU (tests, benchmarks).
@@ -804,8 +815,9 @@ so they are registered. A new library must also be added to
   roots, `std::min`/`max`/`clamp` semantics, the boundary BVH walked in
   the CPU's order. `src/device.cpp` is the context's thread; GL entry
   points are loaded at run time (`src/gl.hpp`), so no GL SDK is needed.
-  **Any change to `FieldExpr::eval()`, `TriangleDistance` or the
-  infill maths must be mirrored in `glsl.cpp`**; `vs_gpu_tests` catches
+  **Any change to `FieldExpr::eval()`, `TriangleDistance`, the
+  infill maths or the Voronoi search must be mirrored in `glsl.cpp`**;
+  `vs_gpu_tests` catches
   a mismatch on a machine with a GPU.
 - **Meshing (L1b, decision 0019).** `src/meshing.cpp`: `clip_gpu()` (the
   boundary distance through the field shader) and `unmerged_net_gpu()`

@@ -142,3 +142,41 @@ TEST_CASE("Nodes read a curved surface's normal radially, not along its axis (H3
   CHECK_THAT(plane->eval({-900, 900, -900}),
              Catch::Matchers::WithinAbs(std::sqrt(2.0) * 900 - 10.0, 1e-9));
 }
+
+TEST_CASE("Offset moves points on a curved surface into either side's volume",
+          "[proc][curved][frames][offset]") {
+  // The band joins a shaft of radius 10 to a sleeve whose bore is 10: its
+  // normal points out of the shaft, so into the shaft is towards the axis
+  // and into the sleeve away from it.
+  const auto c = curved::make_curved({});
+  const auto& doc = c.project.document;
+  const auto layout = model::build_layout(doc, kSettings);
+  const bool into_shaft = GENERATE(true, false);
+  INFO((into_shaft ? "shaft" : "sleeve"));
+  std::size_t v = 0;
+  while (doc.volumes[v].id != (into_shaft ? c.shaft : c.sleeve)) ++v;
+  const auto inputs = gather_inputs(doc, layout, v, kSettings);
+  REQUIRE(inputs);
+
+  Graph g;
+  const Id points = g.add("scatter.surface", "Points",
+                          {{"surface", Setting(c.surface.to_string())}, {"count", Setting(30.0)}});
+  const Id moved = g.add("frames.offset", "Inward",
+                         {{"distance", Setting(2.0)}, {"layers", Setting(2.0)}, {"step", Setting(3.0)}});
+  g.link(points, "frames", moved, "frames");
+  EvaluateGraphOptions eo;
+  eo.keep_outputs = true;
+  eo.only_for = moved;
+  const auto result = evaluate_graph(g, *inputs, eo);
+  INFO(scenes::codes(result.diagnostics));
+  REQUIRE_FALSE(result.diagnostics.has_errors());
+  const auto& frames = std::get<Frames>(result.find(moved)->outputs[0])->frames;
+  REQUIRE(frames.size() == 60);
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    const core::dvec3 p = core::to_fp64(frames[i].translation);
+    const double r = std::hypot(p.x, p.y);
+    const double depth = i % 2 == 0 ? 2.0 : 5.0;
+    CHECK_THAT(r, Catch::Matchers::WithinAbs(into_shaft ? 10.0 - depth : 10.0 + depth, 0.05));  // chords of the tessellated band
+    CHECK(inputs->boundary->signed_distance(p) < 0.0);
+  }
+}

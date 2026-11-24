@@ -65,6 +65,22 @@ TEST_CASE("Field shaders depend on a tree's shape, not its numbers", "[gpu][fiel
   CHECK(gpu::glsl_double(0.1) == "packDouble2x32(uvec2(0x9999999au, 0x3fb99999u))");
 }
 
+TEST_CASE("Voronoi shaders depend on the tree's shape, not on the seeds", "[gpu][fields][voronoi]") {
+  const auto seeds = [](int count) {
+    proc::FrameSet set;
+    for (int i = 0; i < count; ++i) {
+      core::ftransform t;
+      t.translation = {static_cast<float>(i), static_cast<float>((i * 7) % 5), 0.5f * static_cast<float>(i % 3)};
+      set.frames.push_back(t);
+    }
+    return set;
+  };
+  const auto a = gpu::translate(*proc::voronoi_field(seeds(2), 1.0));
+  const auto b = gpu::translate(*proc::voronoi_field(seeds(500), 0.4));
+  CHECK(a.source == b.source);
+  CHECK(a.d != b.d);
+}
+
 TEST_CASE("Installed, sample() sends grids to the GPU and gives the CPU's hash", "[gpu][fields]") {
   if (!have_gpu()) return;
   const Installed installed;

@@ -63,6 +63,7 @@ vs_add_library_tests(vs_proc
     tests/test_nodes.cpp
     tests/test_templates.cpp
     tests/test_infill.cpp
+    tests/test_voronoi.cpp
     tests/test_frames.cpp
     tests/test_mesh_nodes.cpp
     tests/test_bake.cpp

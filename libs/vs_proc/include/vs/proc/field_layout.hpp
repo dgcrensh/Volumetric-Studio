@@ -41,4 +41,16 @@ inline constexpr std::size_t kInstanceOrigin = 9;
 inline constexpr std::size_t kInstanceReach = 12;
 inline constexpr std::size_t kInstanceStride = 13;
 
+// Voronoi (decision 0042): the wall thickness, the seed grid's corner,
+// its cell size and its cells per axis (whole numbers), then for each of
+// the nx * ny * nz cells (x fastest) the index of its first seed and, last,
+// the seed count (so cell c's seeds are [starts[c], starts[c + 1])), then
+// the seeds' x, y, z, sorted by cell and, within a cell, by input order.
+inline constexpr std::size_t kVoronoiThickness = 0;
+inline constexpr std::size_t kVoronoiOrigin = 1;
+inline constexpr std::size_t kVoronoiCell = 4;
+inline constexpr std::size_t kVoronoiDims = 5;
+inline constexpr std::size_t kVoronoiStarts = 8;
+inline constexpr std::size_t kVoronoiMaxDim = 128;
+
 }  // namespace vs::proc::field_layout

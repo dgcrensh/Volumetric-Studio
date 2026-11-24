@@ -1,0 +1,306 @@
+{
+  "format": "vstudio.graph",
+  "version": 1,
+  "parameters": [
+    {
+      "name": "wall",
+      "value": 1.0
+    },
+    {
+      "name": "count",
+      "value": 200.0
+    },
+    {
+      "name": "spacing",
+      "value": 0.0
+    },
+    {
+      "name": "depth",
+      "value": 2.0
+    },
+    {
+      "name": "layers",
+      "value": 1.0
+    },
+    {
+      "name": "step",
+      "value": 5.0
+    },
+    {
+      "name": "thickness",
+      "value": 0.8
+    }
+  ],
+  "nodes": [
+    {
+      "id": "bd177c4a815fb8ece17b2d028aaeb91f",
+      "type": "input.boundary",
+      "name": "Boundary",
+      "settings": {}
+    },
+    {
+      "id": "34c7ebdfbde14c417fb7a2ca614c97c1",
+      "type": "input.parameter",
+      "name": "wall",
+      "settings": {
+        "name": "wall"
+      }
+    },
+    {
+      "id": "f221084a4647108f2fa2420d4fc851df",
+      "type": "field.shell",
+      "name": "Skin",
+      "settings": {}
+    },
+    {
+      "id": "065983d91ae78d1b7c171fa43287203a",
+      "type": "scatter.surface",
+      "name": "Seeds",
+      "settings": {
+        "surface": "e022bb5320ea1ddb895c10d7d82c3c3e"
+      }
+    },
+    {
+      "id": "dc3be65d32fda3a96467b7905f2bddb6",
+      "type": "input.parameter",
+      "name": "count",
+      "settings": {
+        "name": "count"
+      }
+    },
+    {
+      "id": "6c99d93563c503513556640784f20bcc",
+      "type": "input.parameter",
+      "name": "spacing",
+      "settings": {
+        "name": "spacing"
+      }
+    },
+    {
+      "id": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+      "type": "frames.offset",
+      "name": "Inward",
+      "settings": {}
+    },
+    {
+      "id": "7627f14c084186d69583a4ec7a36c39f",
+      "type": "input.parameter",
+      "name": "depth",
+      "settings": {
+        "name": "depth"
+      }
+    },
+    {
+      "id": "7e8a0b9338e4ea1a5c642c64a41644cf",
+      "type": "input.parameter",
+      "name": "layers",
+      "settings": {
+        "name": "layers"
+      }
+    },
+    {
+      "id": "82e5d770e2723e8900e0c17f725bc2c6",
+      "type": "input.parameter",
+      "name": "step",
+      "settings": {
+        "name": "step"
+      }
+    },
+    {
+      "id": "53a94c6f7dfaa6e2dc86d0927abe25ca",
+      "type": "input.parameter",
+      "name": "thickness",
+      "settings": {
+        "name": "thickness"
+      }
+    },
+    {
+      "id": "5587c0acc2a8edab2cce371f8d224a16",
+      "type": "field.voronoi",
+      "name": "Cells",
+      "settings": {}
+    },
+    {
+      "id": "575379b94d8bf5c8e9f2092ba0ef064c",
+      "type": "field.intersection",
+      "name": "Infill in boundary",
+      "settings": {}
+    },
+    {
+      "id": "020e3063644431f51783fe8685aa1934",
+      "type": "field.union",
+      "name": "Skin and infill",
+      "settings": {}
+    },
+    {
+      "id": "6870fd49a9839787131f929b5c3396f5",
+      "type": "output",
+      "name": "Contents",
+      "settings": {
+        "cell_size": 0.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": {
+        "node": "bd177c4a815fb8ece17b2d028aaeb91f",
+        "port": "field"
+      },
+      "to": {
+        "node": "f221084a4647108f2fa2420d4fc851df",
+        "port": "field"
+      }
+    },
+    {
+      "from": {
+        "node": "34c7ebdfbde14c417fb7a2ca614c97c1",
+        "port": "value"
+      },
+      "to": {
+        "node": "f221084a4647108f2fa2420d4fc851df",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "dc3be65d32fda3a96467b7905f2bddb6",
+        "port": "value"
+      },
+      "to": {
+        "node": "065983d91ae78d1b7c171fa43287203a",
+        "port": "count"
+      }
+    },
+    {
+      "from": {
+        "node": "6c99d93563c503513556640784f20bcc",
+        "port": "value"
+      },
+      "to": {
+        "node": "065983d91ae78d1b7c171fa43287203a",
+        "port": "spacing"
+      }
+    },
+    {
+      "from": {
+        "node": "065983d91ae78d1b7c171fa43287203a",
+        "port": "frames"
+      },
+      "to": {
+        "node": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+        "port": "frames"
+      }
+    },
+    {
+      "from": {
+        "node": "7627f14c084186d69583a4ec7a36c39f",
+        "port": "value"
+      },
+      "to": {
+        "node": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+        "port": "distance"
+      }
+    },
+    {
+      "from": {
+        "node": "7e8a0b9338e4ea1a5c642c64a41644cf",
+        "port": "value"
+      },
+      "to": {
+        "node": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+        "port": "layers"
+      }
+    },
+    {
+      "from": {
+        "node": "82e5d770e2723e8900e0c17f725bc2c6",
+        "port": "value"
+      },
+      "to": {
+        "node": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+        "port": "step"
+      }
+    },
+    {
+      "from": {
+        "node": "53a94c6f7dfaa6e2dc86d0927abe25ca",
+        "port": "value"
+      },
+      "to": {
+        "node": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+        "port": "margin"
+      }
+    },
+    {
+      "from": {
+        "node": "b82ea6ac341fdc3c90f6839ffa4e45b9",
+        "port": "frames"
+      },
+      "to": {
+        "node": "5587c0acc2a8edab2cce371f8d224a16",
+        "port": "frames"
+      }
+    },
+    {
+      "from": {
+        "node": "53a94c6f7dfaa6e2dc86d0927abe25ca",
+        "port": "value"
+      },
+      "to": {
+        "node": "5587c0acc2a8edab2cce371f8d224a16",
+        "port": "thickness"
+      }
+    },
+    {
+      "from": {
+        "node": "5587c0acc2a8edab2cce371f8d224a16",
+        "port": "field"
+      },
+      "to": {
+        "node": "575379b94d8bf5c8e9f2092ba0ef064c",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "bd177c4a815fb8ece17b2d028aaeb91f",
+        "port": "field"
+      },
+      "to": {
+        "node": "575379b94d8bf5c8e9f2092ba0ef064c",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "f221084a4647108f2fa2420d4fc851df",
+        "port": "field"
+      },
+      "to": {
+        "node": "020e3063644431f51783fe8685aa1934",
+        "port": "a"
+      }
+    },
+    {
+      "from": {
+        "node": "575379b94d8bf5c8e9f2092ba0ef064c",
+        "port": "field"
+      },
+      "to": {
+        "node": "020e3063644431f51783fe8685aa1934",
+        "port": "b"
+      }
+    },
+    {
+      "from": {
+        "node": "020e3063644431f51783fe8685aa1934",
+        "port": "field"
+      },
+      "to": {
+        "node": "6870fd49a9839787131f929b5c3396f5",
+        "port": "contents"
+      }
+    }
+  ]
+}

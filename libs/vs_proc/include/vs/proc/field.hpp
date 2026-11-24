@@ -77,6 +77,8 @@ enum class FieldOp {
   Tpms,                // surface kind, cell, origin, thickness [, thickness field]
   Instances,           // the template at each frame: min over the copies
   Clamp,               // clamp(a, lo, hi)
+  // Voronoi walls (decision 0042): appended, so no other op's digest moves
+  Voronoi,             // thickness, seed grid, seeds (field_layout.hpp)
 };
 
 // Strut lattices: struts along a unit cell's edges (cubic), its four body
@@ -157,6 +159,19 @@ Field tpms_field(TpmsSurface kind, double cell, const dvec3& origin, double thic
 // (templ(q) >= |q| - radius), so copies that can't be the nearest are
 // skipped; 0 evaluates every copy.
 Field instances_field(Field templ, const FrameSet& frames, double radius);
+// Walls `thickness` thick centred on the faces of the Voronoi cells of the
+// frames' origins (decision 0042): at p, with a the nearest seed, the
+// distance to the nearest bisector plane of a and another seed b,
+//   min over b != a of (|p - b|^2 - |p - a|^2) / (2 |b - a|),
+// less half the thickness. That is the exact signed distance to the walls
+// inside every cell (a cell is convex, so its nearest face lies on the
+// nearest of its bisector planes). Seeds are bucketed in a uniform grid of
+// about one seed a cell (at most 128 a side) and searched shell by shell
+// outwards with a lower bound, so a point costs about the same with 50 or
+// 50,000 seeds; the value is a minimum, so it doesn't depend on the search
+// order, and it equals the brute-force minimum bit for bit. Needs at least
+// two seeds, no two at the same place (the node checks).
+Field voronoi_field(const FrameSet& frames, double thickness);
 
 // sin and cos from arithmetic alone (Cody-Waite reduction by pi/2 in three
 // parts, fdlibm's kernel polynomials, no fused multiply-add): within an ulp

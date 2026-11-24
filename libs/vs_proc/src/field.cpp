@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <atomic>
 #include <cmath>
 #include <limits>
@@ -269,6 +270,132 @@ constexpr double kPiLo = 1.2246467991473531772e-16;
 constexpr double kPio2Hi = 1.5707963267948965580e+00;
 constexpr double kPio2Lo = 6.1232339957367658860e-17;
 
+// --- Voronoi walls (decision 0042) ----------------------------------------------------
+//
+// vs_gpu's glsl.cpp spells the same search out in GLSL; change both.
+
+// Along one axis: the distance from coordinate `x` to the nearest cell
+// `r` cells from cell `c` (of `n`, `cell` wide from `lo`), or -1 when
+// neither cell c - r nor c + r exists.
+double voronoi_reach(double x, double lo, double cell, std::int64_t n, std::int64_t c, std::int64_t r) {
+  double best = -1.0;
+  if (c + r < n) {
+    const double face = lo + static_cast<double>(c + r) * cell;  // the cell's low face
+    best = std::max(0.0, face - x);
+  }
+  if (c - r >= 0) {
+    const double face = lo + static_cast<double>(c - r + 1) * cell;  // its high face
+    const double d = std::max(0.0, x - face);
+    if (best < 0.0 || d < best) best = d;
+  }
+  return best;
+}
+
+// A lower bound on the squared distance from p to any seed in the cells
+// exactly r cells (Chebyshev) from `c`, or -1 when there are none.
+double voronoi_shell_bound(const double* n, const dvec3& p, const std::int64_t* dims,
+                           const std::int64_t* c, std::int64_t r) {
+  namespace L = field_layout;
+  const double cell = n[L::kVoronoiCell];
+  const double pk[3] = {p.x, p.y, p.z};
+  double base = 0.0;
+  double gap2[3];
+  for (std::size_t k = 0; k < 3; ++k) {
+    const double g = voronoi_reach(pk[k], n[L::kVoronoiOrigin + k], cell, dims[k], c[k], 0);
+    gap2[k] = g * g;
+    base = base + gap2[k];
+  }
+  double extra = -1.0;
+  for (std::size_t k = 0; k < 3; ++k) {
+    const double a = voronoi_reach(pk[k], n[L::kVoronoiOrigin + k], cell, dims[k], c[k], r);
+    if (a < 0.0) continue;
+    const double e = a * a - gap2[k];
+    if (extra < 0.0 || e < extra) extra = e;
+  }
+  return extra < 0.0 ? -1.0 : base + extra;
+}
+
+double voronoi_d2(const double* s, const dvec3& p) {
+  const double dx = p.x - s[0];
+  const double dy = p.y - s[1];
+  const double dz = p.z - s[2];
+  return dx * dx + dy * dy + dz * dz;
+}
+
+// Calls visit(seed index) for every seed in the cells exactly r cells
+// from c, z, then y, then x ascending.
+template <class Visit>
+void voronoi_shell(const double* n, const std::int64_t* dims, const std::int64_t* c, std::int64_t r,
+                   Visit&& visit) {
+  namespace L = field_layout;
+  const std::int64_t z0 = std::max<std::int64_t>(0, c[2] - r), z1 = std::min(dims[2] - 1, c[2] + r);
+  const std::int64_t y0 = std::max<std::int64_t>(0, c[1] - r), y1 = std::min(dims[1] - 1, c[1] + r);
+  const std::int64_t x0 = std::max<std::int64_t>(0, c[0] - r), x1 = std::min(dims[0] - 1, c[0] + r);
+  for (std::int64_t z = z0; z <= z1; ++z) {
+    for (std::int64_t y = y0; y <= y1; ++y) {
+      const bool rim = std::abs(z - c[2]) == r || std::abs(y - c[1]) == r;
+      const std::int64_t step = rim ? 1 : 2 * r;
+      for (std::int64_t x = rim ? x0 : c[0] - r; x <= x1; x += step) {
+        if (x < x0) continue;
+        const auto cell = static_cast<std::size_t>((z * dims[1] + y) * dims[0] + x);
+        const auto first = static_cast<std::size_t>(n[L::kVoronoiStarts + cell]);
+        const auto last = static_cast<std::size_t>(n[L::kVoronoiStarts + cell + 1]);
+        for (std::size_t s = first; s < last; ++s) visit(s);
+      }
+    }
+  }
+}
+
+double voronoi_eval(const std::vector<double>& numbers, const dvec3& p) {
+  namespace L = field_layout;
+  const double* n = numbers.data();
+  const double cell = n[L::kVoronoiCell];
+  std::int64_t dims[3];
+  std::int64_t c[3];
+  const double pk[3] = {p.x, p.y, p.z};
+  for (std::size_t k = 0; k < 3; ++k) {
+    dims[k] = static_cast<std::int64_t>(n[L::kVoronoiDims + k]);
+    const double f = std::floor((pk[k] - n[L::kVoronoiOrigin + k]) / cell);
+    c[k] = static_cast<std::int64_t>(std::clamp(f, 0.0, static_cast<double>(dims[k] - 1)));
+  }
+  const std::size_t cells = static_cast<std::size_t>(dims[0] * dims[1] * dims[2]);
+  const double* seeds = n + L::kVoronoiStarts + cells + 1;
+
+  // The nearest seed a: the lowest index among the nearest.
+  double best = std::numeric_limits<double>::infinity();
+  std::size_t a = 0;
+  bool found = false;
+  for (std::int64_t r = 0;; ++r) {
+    const double bound = voronoi_shell_bound(n, p, dims, c, r);
+    if (bound < 0.0 || (found && bound > best)) break;
+    voronoi_shell(n, dims, c, r, [&](std::size_t s) {
+      const double d2 = voronoi_d2(seeds + 3 * s, p);
+      if (!found || d2 < best || (d2 == best && s < a)) {
+        best = d2;
+        a = s;
+        found = true;
+      }
+    });
+  }
+  const double da = std::sqrt(best);
+  const double* sa = seeds + 3 * a;
+
+  // The nearest bisector plane of a and another seed.
+  double wall = std::numeric_limits<double>::infinity();
+  for (std::int64_t r = 0;; ++r) {
+    const double bound = voronoi_shell_bound(n, p, dims, c, r);
+    if (bound < 0.0 || (std::sqrt(bound) - da) * 0.5 >= wall) break;
+    voronoi_shell(n, dims, c, r, [&](std::size_t s) {
+      if (s == a) return;
+      const double* sb = seeds + 3 * s;
+      const double ab = std::sqrt(voronoi_d2(sb, dvec3{sa[0], sa[1], sa[2]}));
+      const double w = (voronoi_d2(sb, p) - best) / (2.0 * ab);
+      if (w < wall) wall = w;
+    });
+  }
+  return wall - 0.5 * n[L::kVoronoiThickness];
+}
+
 }  // namespace
 
 double atan2_det(double y, double x) {
@@ -377,6 +504,8 @@ double FieldExpr::eval(const dvec3& p) const {
                            : tpms_distance(static_cast<TpmsSurface>(kind), p, origin, cell);
       return d - 0.5 * thickness;
     }
+    case FieldOp::Voronoi:
+      return voronoi_eval(n, p);
     case FieldOp::Instances: {
       // numbers: radius, then per copy the inverse's 3x3 (row major), the
       // frame's origin and the copy's reach (radius times its largest scale).
@@ -525,6 +654,86 @@ Field instances_field(Field templ, const FrameSet& frames, double radius) {
     n.push_back(radius * scale);
   }
   return make(FieldOp::Instances, std::move(n), {std::move(templ)});
+}
+
+Field voronoi_field(const FrameSet& frames, double thickness) {
+  namespace L = field_layout;
+  static_assert(L::kVoronoiThickness == 0 && L::kVoronoiOrigin == 1 && L::kVoronoiCell == 4 &&
+                    L::kVoronoiDims == 5 && L::kVoronoiStarts == 8,
+                "voronoi_field() writes in this order");
+  std::vector<dvec3> seeds;
+  seeds.reserve(frames.frames.size());
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  dvec3 lo{kInf, kInf, kInf};
+  dvec3 hi{-kInf, -kInf, -kInf};
+  for (const auto& f : frames.frames) {
+    const dvec3 s = core::to_fp64(f.translation);
+    seeds.push_back(s);
+    lo = dvec3{std::min(lo.x, s.x), std::min(lo.y, s.y), std::min(lo.z, s.z)};
+    hi = dvec3{std::max(hi.x, s.x), std::max(hi.y, s.y), std::max(hi.z, s.z)};
+  }
+  const std::size_t count = seeds.size();
+  if (count == 0) lo = hi = dvec3{};
+  const double sides[3] = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
+  const double longest = std::max(sides[0], std::max(sides[1], sides[2]));
+  // The finest grid of cells `longest / m` wide, m up to kVoronoiMaxDim,
+  // with no more cells than seeds; one cell when the seeds share a point.
+  // Whole-number arithmetic and one division: the same on every platform.
+  double cell = 1.0;
+  std::int64_t dims[3] = {1, 1, 1};
+  if (longest > 0.0) {
+    for (auto m = static_cast<std::int64_t>(L::kVoronoiMaxDim); m >= 1; --m) {
+      const double c = longest / static_cast<double>(m);
+      std::int64_t d[3];
+      double product = 1.0;
+      for (std::size_t k = 0; k < 3; ++k) {
+        d[k] = std::min<std::int64_t>(m, static_cast<std::int64_t>(std::floor(sides[k] / c)) + 1);
+        product *= static_cast<double>(d[k]);
+      }
+      if (product <= static_cast<double>(count) || m == 1) {
+        cell = c;
+        for (std::size_t k = 0; k < 3; ++k) dims[k] = d[k];
+        break;
+      }
+    }
+  }
+  const auto cells = static_cast<std::size_t>(dims[0] * dims[1] * dims[2]);
+  const double origin[3] = {lo.x, lo.y, lo.z};
+  std::vector<std::size_t> owner(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const double pk[3] = {seeds[i].x, seeds[i].y, seeds[i].z};
+    std::int64_t c[3];
+    for (std::size_t k = 0; k < 3; ++k) {
+      const double f = std::floor((pk[k] - origin[k]) / cell);
+      c[k] = static_cast<std::int64_t>(std::clamp(f, 0.0, static_cast<double>(dims[k] - 1)));
+    }
+    owner[i] = static_cast<std::size_t>((c[2] * dims[1] + c[1]) * dims[0] + c[0]);
+  }
+  std::vector<std::size_t> order(count);
+  for (std::size_t i = 0; i < count; ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(),
+                   [&](std::size_t x, std::size_t y) { return owner[x] < owner[y]; });
+
+  std::vector<double> n;
+  n.reserve(L::kVoronoiStarts + cells + 1 + 3 * count);
+  n.push_back(thickness);
+  n.push_back(lo.x);
+  n.push_back(lo.y);
+  n.push_back(lo.z);
+  n.push_back(cell);
+  for (std::size_t k = 0; k < 3; ++k) n.push_back(static_cast<double>(dims[k]));
+  std::size_t next = 0;
+  for (std::size_t c = 0; c < cells; ++c) {
+    n.push_back(static_cast<double>(next));
+    while (next < count && owner[order[next]] == c) ++next;
+  }
+  n.push_back(static_cast<double>(count));
+  for (const std::size_t i : order) {
+    n.push_back(seeds[i].x);
+    n.push_back(seeds[i].y);
+    n.push_back(seeds[i].z);
+  }
+  return make(FieldOp::Voronoi, std::move(n));
 }
 
 // --- sampling ------------------------------------------------------------------------
