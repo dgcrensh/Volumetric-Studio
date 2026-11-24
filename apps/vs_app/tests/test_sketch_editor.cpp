@@ -475,3 +475,37 @@ TEST_CASE("Importing an SVG is one undo step", "[app][sketch][svg]") {
   CHECK(ed.undo());
   CHECK(ed.sketch().entities().empty());
 }
+
+TEST_CASE("Offsetting is one undo step, whole chains or the selection", "[app][sketch][offset]") {
+  SketchEditor ed(sketch::Sketch(Id::random(), "Plate"), kSettings);
+  ed.set_tool(SketchTool::Rectangle);
+  ed.click({0, 0});
+  REQUIRE(ed.click({20, 10}).size() > 0);
+  const auto lines = of_kind(ed.sketch(), sketch::EntityKind::Line);
+  REQUIRE(lines.size() == 4);
+  const auto points = of_kind(ed.sketch(), sketch::EntityKind::Point);
+
+  // One side selected (with a point, ignored): the chain is the rectangle.
+  const std::vector<Id> picked{lines[0], points[0]};
+  CHECK(ed.offset_targets(picked, false) == std::vector<Id>{lines[0]});
+  CHECK(ed.offset_targets(picked, true) == lines);
+
+  const auto before = ed.sketch();
+  auto r = ed.offset(ed.offset_targets(picked, true), {.distance = -2.0});
+  REQUIRE(r);
+  CHECK(r->curves.size() == 4);
+  CHECK(count(ed.sketch(), sketch::EntityKind::Line) == 8);
+  // The inset nests in the rectangle: one profile with a hole.
+  CHECK(profiles(ed.sketch()) == 1);
+  CHECK(ed.undo());
+  CHECK(ed.sketch() == before);
+  CHECK(ed.redo());
+
+  // A refused offset changes nothing and leaves no step.
+  const auto now = ed.sketch();
+  auto deep = ed.offset(lines, {.distance = -6.0});
+  REQUIRE_FALSE(deep);
+  CHECK(ed.sketch() == now);
+  CHECK(ed.undo());
+  CHECK(ed.sketch() == before);
+}

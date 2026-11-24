@@ -33,7 +33,8 @@
 //               Only the ends snap; handles are new points.
 //
 // import_svg() adds an SVG file's outlines (vs_sketch's import_svg()) as one
-// step, like a finished shape.
+// step, like a finished shape; offset() adds the offset of curves
+// (vs_sketch's offset_curves(), decision 0041) the same way.
 //
 // The editor keeps its own undo stack for the session; finishing the
 // sketch hands the result to the app's History as one step.
@@ -45,6 +46,7 @@
 
 #include "vs/core/settings.hpp"
 #include "vs/feature/expression.hpp"
+#include "vs/sketch/offset.hpp"
 #include "vs/sketch/sketch.hpp"
 #include "vs/sketch/solver.hpp"
 #include "vs/sketch/svg.hpp"
@@ -112,6 +114,14 @@ class SketchEditor {
   // Adds an SVG document's outlines as one undo step and solves. On error
   // nothing changes. An unfinished shape is dropped first.
   core::Result<sketch::SvgImport> import_svg(std::string_view svg, const sketch::SvgImportOptions& options);
+
+  // --- offsetting (decision 0041)
+  // Adds the offset of `curves` as one undo step and solves. On error
+  // nothing changes. An unfinished shape is dropped first.
+  core::Result<sketch::SketchOffset> offset(const std::vector<Id>& curves, const sketch::OffsetOptions& options);
+  // The curves among `ids`, or (`whole_chains`) every curve on their
+  // chains (vs_sketch's connected_curves()), in sketch order.
+  [[nodiscard]] std::vector<Id> offset_targets(const std::vector<Id>& ids, bool whole_chains) const;
 
   // --- constraints and dimensions
   // Whether `kind` fits `refs` (sketch.hpp lists the forms).

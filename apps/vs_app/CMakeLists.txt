@@ -129,6 +129,8 @@ add_library(vs_app_ui STATIC
   src/model_dialogs.hpp
   src/node_editor.cpp
   src/node_editor.hpp
+  src/offset_dialog.cpp
+  src/offset_dialog.hpp
   src/session.cpp
   src/session.hpp
   src/sketch_mode.cpp
@@ -180,6 +182,7 @@ if(VS_BUILD_TESTS)
     tests/test_session.cpp
     tests/test_viewport_ui.cpp
     tests/test_ship_ui.cpp
+    tests/test_offset_ui.cpp
     tests/test_svg_import_ui.cpp
     tests/test_window.cpp)
   target_link_libraries(vs_app_tests PRIVATE vs_app_ui vs_model_test_fixtures Catch2::Catch2)

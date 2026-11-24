@@ -189,6 +189,9 @@ Strokes make(Icon icon) {
     case Icon::ImportSvg:
       return {{bezier_points({4, 9}, {8, 1}, {16, 15}, {20, 6}), false, false, false}, line(12, 11, 12, 19),
               poly({{8.5, 15.5}, {12, 19}, {15.5, 15.5}}), line(4, 21.5, 20, 21.5)};
+    case Icon::Offset:
+      return {poly({{10, 21}, {10, 14}, {14, 10}, {21, 10}}),
+              dashed(poly({{4, 21}, {4, 11.5}, {11.5, 4}, {21, 4}}))};
   }
   return {dot(12, 12)};
 }
@@ -204,7 +207,7 @@ constexpr std::array kIcons = {
     Icon::Delete, Icon::Cancel, Icon::Bake, Icon::Unbake, Icon::Drawing, Icon::View, Icon::Export, Icon::Close,
     Icon::Regenerate, Icon::Undo, Icon::Redo, Icon::FitAll, Icon::Error, Icon::Warning, Icon::ChevronLeft,
     Icon::ChevronRight, Icon::ChevronUp, Icon::ChevronDown, Icon::Browser, Icon::Variables, Icon::Bezier,
-    Icon::ImportSvg,
+    Icon::ImportSvg, Icon::Offset,
 };
 
 constexpr std::array<std::string_view, kIcons.size()> kNames = {
@@ -215,7 +218,7 @@ constexpr std::array<std::string_view, kIcons.size()> kNames = {
     "symmetric", "fix", "distance", "horizontal_distance", "vertical_distance", "angle", "radius", "diameter",
     "construction", "delete", "cancel", "bake", "unbake", "drawing", "view", "export", "close", "regenerate",
     "undo", "redo", "fit_all", "error", "warning", "chevron_left", "chevron_right", "chevron_up", "chevron_down",
-    "browser", "variables", "bezier", "import_svg",
+    "browser", "variables", "bezier", "import_svg", "offset",
 };
 
 }  // namespace

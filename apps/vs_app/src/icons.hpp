@@ -90,6 +90,8 @@ enum class Icon {
   // S1
   Bezier,
   ImportSvg,
+  // Decision 0041
+  Offset,
 };
 
 inline constexpr double kIconGrid = 24.0;

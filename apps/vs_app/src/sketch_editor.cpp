@@ -605,6 +605,29 @@ core::Result<sketch::SvgImport> SketchEditor::import_svg(std::string_view svg,
   return imported;
 }
 
+core::Result<sketch::SketchOffset> SketchEditor::offset(const std::vector<Id>& curves,
+                                                        const sketch::OffsetOptions& options) {
+  finish_tool();
+  sketch::Sketch next = sketch_;
+  auto added = sketch::offset_curves(next, curves, options, settings_);
+  if (!added) return added;
+  record();
+  sketch_ = std::move(next);
+  solve();
+  return added;
+}
+
+std::vector<Id> SketchEditor::offset_targets(const std::vector<Id>& ids, bool whole_chains) const {
+  if (whole_chains) return sketch::connected_curves(sketch_, ids);
+  std::vector<Id> out;
+  for (const auto& e : sketch_.entities()) {
+    if (e.kind() != sketch::EntityKind::Point && std::find(ids.begin(), ids.end(), e.id) != ids.end()) {
+      out.push_back(e.id);
+    }
+  }
+  return out;
+}
+
 bool SketchEditor::toggle_construction(const std::vector<Id>& ids) {
   bool any = false;
   for (const auto& id : ids) any = any || sketch_.find_entity(id) != nullptr;

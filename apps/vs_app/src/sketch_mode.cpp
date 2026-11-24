@@ -639,6 +639,26 @@ core::Result<sketch::SvgImport> SketchMode::preview_import(std::string_view svg,
 
 void SketchMode::keep_import() { import_previewing_ = false; }
 
+core::Result<sketch::SketchOffset> SketchMode::preview_offset(const std::vector<Id>& curves,
+                                                              const sketch::OffsetOptions& options) {
+  if (offset_previewing_) editor_->undo_and_forget();
+  auto added = editor_->offset(curves, options);
+  offset_previewing_ = added.ok();
+  refresh();
+  emit view_->edited();
+  return added;
+}
+
+void SketchMode::keep_offset() { offset_previewing_ = false; }
+
+void SketchMode::drop_offset() {
+  if (!offset_previewing_) return;
+  offset_previewing_ = false;
+  editor_->undo_and_forget();
+  refresh();
+  emit view_->edited();
+}
+
 void SketchMode::drop_import() {
   if (!import_previewing_) return;
   import_previewing_ = false;
